@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { x402HTTPResourceServer, HTTPAdapter } from "../../../src/http/x402HTTPResourceServer";
+import {
+  x402HTTPResourceServer,
+  HTTPAdapter,
+  RouteConfigurationError,
+  RouteValidationError,
+} from "../../../src/http/x402HTTPResourceServer";
 import { x402ResourceServer } from "../../../src/server/x402ResourceServer";
 import { FacilitatorResponseError, Network } from "../../../src/types";
 import {
@@ -112,5 +117,49 @@ describe("x402HTTPResourceServer facilitator response errors", () => {
     await expect(
       httpServer.processSettlement(buildPaymentPayload({ x402Version: 2, accepted }), accepted),
     ).rejects.toThrow(FacilitatorResponseError);
+  });
+});
+
+describe("RouteConfigurationError", () => {
+  it("stores errors array matching constructor input", () => {
+    const validationErrors: RouteValidationError[] = [
+      {
+        routePattern: "GET /api/weather",
+        scheme: "exact",
+        network: "eip155:8453",
+        message: "bad route",
+      },
+    ];
+    const error = new RouteConfigurationError(validationErrors);
+    expect(error.errors).toHaveLength(1);
+    expect(error.errors[0].message).toBe("bad route");
+  });
+
+  it("error.errors is RouteValidationError[] at runtime — each element has message field", () => {
+    const validationErrors: RouteValidationError[] = [
+      { routePattern: "GET /a", scheme: "exact", network: "eip155:8453", message: "err-1" },
+      { routePattern: "POST /b", scheme: "upto", network: "eip155:1", message: "err-2" },
+    ];
+    const error = new RouteConfigurationError(validationErrors);
+    expect(error.errors).toHaveLength(2);
+    expect(error.errors[0].message).toBe("err-1");
+    expect(error.errors[1].message).toBe("err-2");
+  });
+
+  it("error.name is RouteConfigurationError", () => {
+    const error = new RouteConfigurationError([
+      { routePattern: "GET /x", scheme: "exact", network: "eip155:8453", message: "x" },
+    ]);
+    expect(error.name).toBe("RouteConfigurationError");
+  });
+
+  it("error.message contains each validation error message joined with newlines", () => {
+    const validationErrors: RouteValidationError[] = [
+      { routePattern: "GET /a", scheme: "exact", network: "eip155:8453", message: "first error" },
+      { routePattern: "GET /b", scheme: "upto", network: "eip155:1", message: "second error" },
+    ];
+    const error = new RouteConfigurationError(validationErrors);
+    expect(error.message).toContain("first error");
+    expect(error.message).toContain("second error");
   });
 });

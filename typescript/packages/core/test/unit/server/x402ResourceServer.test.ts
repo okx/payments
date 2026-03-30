@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   x402ResourceServer,
   resolveSettlementOverrideAmount,
@@ -12,7 +12,7 @@ import {
   buildVerifyResponse,
   buildSettleResponse,
 } from "../../mocks";
-import { Network } from "../../../src/types";
+import { Network, ResourceServerExtension } from "../../../src/types";
 import { SettleError } from "../../../src/types/facilitator";
 
 describe("x402ResourceServer", () => {
@@ -1324,6 +1324,123 @@ describe("x402ResourceServer", () => {
       const extensions = server.getFacilitatorExtensions(2, "eip155:8453" as Network, "exact");
 
       expect(extensions).toEqual([]);
+    });
+  });
+
+  describe("Extension error isolation", () => {
+    it("enrichPaymentRequiredResponse hook that throws logs to console.error and does not abort the request", async () => {
+      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const mockClient = new MockFacilitatorClient(
+          buildSupportedResponse({
+            kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" as Network }],
+          }),
+        );
+
+        const throwingExtension: ResourceServerExtension = {
+          key: "test-ext",
+          enrichPaymentRequiredResponse: async () => {
+            throw new Error("ext-fail");
+          },
+        };
+
+        const server = new x402ResourceServer(mockClient);
+        server.register("eip155:8453" as Network, new MockSchemeNetworkServer("exact"));
+        server.registerExtension(throwingExtension);
+
+        // createPaymentRequiredResponse triggers enrichPaymentRequiredResponse
+        const result = await server.createPaymentRequiredResponse(
+          [buildPaymentRequirements({ scheme: "exact", network: "eip155:8453" as Network })],
+          { url: "https://example.com/api", description: "", mimeType: "" },
+          undefined,
+          { "test-ext": { config: true } },
+        );
+
+        // The response is returned even though the extension threw
+        expect(result).toBeDefined();
+        expect(consoleSpy).toHaveBeenCalledWith(
+          expect.stringContaining(
+            "Error in enrichPaymentRequiredResponse hook for extension test-ext:",
+          ),
+          expect.any(Error),
+        );
+      } finally {
+        consoleSpy.mockRestore();
+      }
+    });
+
+    it("enrichSettlementResponse hook that throws logs to console.error and does not abort settlement", async () => {
+      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const mockClient = new MockFacilitatorClient(
+          buildSupportedResponse({
+            kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" as Network }],
+          }),
+          buildVerifyResponse({ success: true }),
+          buildSettleResponse({ success: true }),
+        );
+
+        const throwingExtension: ResourceServerExtension = {
+          key: "settle-ext",
+          enrichSettlementResponse: async () => {
+            throw new Error("settle-ext-fail");
+          },
+        };
+
+        const server = new x402ResourceServer(mockClient);
+        server.register("eip155:8453" as Network, new MockSchemeNetworkServer("exact"));
+        server.registerExtension(throwingExtension);
+        await server.initialize();
+
+        const requirements = buildPaymentRequirements({
+          scheme: "exact",
+          network: "eip155:8453" as Network,
+          amount: "1000000",
+        });
+        const payload = buildPaymentPayload({ x402Version: 2 });
+
+        const result = await server.settlePayment(payload, requirements, {
+          "settle-ext": { config: true },
+        });
+
+        // Settlement succeeds even though the extension threw
+        expect(result).toBeDefined();
+        expect(consoleSpy).toHaveBeenCalledWith(
+          expect.stringContaining(
+            "Error in enrichSettlementResponse hook for extension settle-ext:",
+          ),
+          expect.any(Error),
+        );
+      } finally {
+        consoleSpy.mockRestore();
+      }
+    });
+
+    it("non-throwing extension hook executes normally and its return value is included in extensions", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse({
+          kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" as Network }],
+        }),
+      );
+
+      const normalExtension: ResourceServerExtension = {
+        key: "normal-ext",
+        enrichPaymentRequiredResponse: async () => {
+          return { enriched: true };
+        },
+      };
+
+      const server = new x402ResourceServer(mockClient);
+      server.registerExtension(normalExtension);
+
+      const result = await server.createPaymentRequiredResponse(
+        [buildPaymentRequirements({ scheme: "exact", network: "eip155:8453" as Network })],
+        { url: "https://example.com/api", description: "", mimeType: "" },
+        undefined,
+        { "normal-ext": { config: true } },
+      );
+
+      expect(result.extensions?.["normal-ext"]).toEqual({ enriched: true });
     });
   });
 });

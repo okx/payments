@@ -376,7 +376,7 @@ cd typescript && pnpm --filter @x402/core test && pnpm --filter @x402/core lint:
 | **Wave** | Wave 2 |
 | **Depends On** | T1 |
 | **Intent** | Add unit tests asserting `RouteConfigurationError` exposes `errors: RouteValidationError[]` with `message: string` per instance. Resolves TBC[2]. |
-| **Status** | READY |
+| **Status** | DONE |
 | **Spec Context** | spec.md §7.4 TBC[2]; `typescript/packages/core/src/http/x402HTTPResourceServer.ts` line 274+ |
 
 ### File Impact List
@@ -426,7 +426,7 @@ cd typescript && pnpm --filter @x402/core test && pnpm --filter @x402/core lint:
 | **Wave** | Wave 2 |
 | **Depends On** | T2 |
 | **Intent** | Add unit tests for `paymentMiddlewareFromConfig` in `@x402/fastify` and ensure `malformedPathBypass` behavior is fully covered. Tests verify the scheme guard added in T2 propagates correctly through the middleware stack. |
-| **Status** | READY |
+| **Status** | DONE |
 | **Spec Context** | spec.md §4.1, §5.1; `typescript/packages/http/fastify/src/index.ts`, `typescript/packages/http/fastify/src/malformedPathBypass.test.ts` |
 
 ### File Impact List
@@ -477,7 +477,7 @@ cd typescript && pnpm --filter @x402/fastify test && pnpm --filter @x402/fastify
 | **Wave** | Wave 2 |
 | **Depends On** | T4 |
 | **Intent** | Add unit tests proving that errors thrown in extension hooks are caught internally, logged to `console.error`, and do not abort the payment request. Spec §7.5 extension errors. |
-| **Status** | READY |
+| **Status** | DONE |
 | **Spec Context** | spec.md §7.5; `typescript/packages/extensions/src/`; `typescript/packages/core/src/server/x402ResourceServer.ts` |
 
 ### File Impact List

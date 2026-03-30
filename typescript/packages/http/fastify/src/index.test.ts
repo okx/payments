@@ -697,6 +697,40 @@ describe("paymentMiddlewareFromConfig", () => {
     expect(app.addHook).toHaveBeenCalledWith("onRequest", expect.any(Function));
     expect(app.addHook).toHaveBeenCalledWith("onSend", expect.any(Function));
   });
+
+  it("propagates SettleError from T2 scheme guard as 402 settlement failure through middleware", async () => {
+    // T2 scheme guard: exact scheme + amount override → processSettlement returns failure
+    setupMockHttpServer(
+      {
+        type: "payment-verified",
+        paymentPayload: mockPaymentPayload,
+        paymentRequirements: mockPaymentRequirements,
+      },
+      {
+        success: false,
+        errorReason: "settlement_override_not_supported",
+        headers: { "PAYMENT-RESPONSE": "failed" },
+        response: {
+          status: 402,
+          headers: { "PAYMENT-RESPONSE": "failed", "Content-Type": "application/json" },
+          body: { errorReason: "settlement_override_not_supported" },
+        },
+      },
+    );
+
+    const { app, hooks } = createMockApp();
+    paymentMiddlewareFromConfig(app, mockRoutes);
+
+    const request = createMockRequest();
+    const reply = createMockReply();
+
+    await hooks.onRequest[0](request, reply);
+    const payload = JSON.stringify({ data: "premium content" });
+    const result = await hooks.onSend[0](request, reply, payload);
+
+    expect(reply.status).toHaveBeenCalledWith(402);
+    expect(result).toBe(JSON.stringify({ errorReason: "settlement_override_not_supported" }));
+  });
 });
 
 describe("FastifyAdapter integration", () => {
