@@ -1,0 +1,325 @@
+"No","Test Dimension","Feature Category","Feature Subcategory","Test Case Name","Priority","Description","Preconditions","Test Steps","Expected Results","Remarks","Tags","Result","Actual Result"
+"1","E2E","Server Middleware","Express Integration","Initialize: Express middleware fetches supported kinds from facilitator on startup","P0","Verify that paymentMiddleware on an Express app calls the facilitator /supported endpoint during server initialization and caches the SupportedKind list.","1. Developer role (server-side)
+2. Express app is set up with @x402/express installed
+3. A mock or real facilitator is running and reachable
+4. Route config with at least one PaymentRequirements entry is prepared","1. Import paymentMiddleware from @x402/express
+2. Define routes config with accepts array (scheme: 'exact', network: 'eip155:8453')
+3. Call app.use(paymentMiddleware(routes, server))
+4. Start the Express server
+5. Inspect server.supportedResponsesMap","Server starts without error
+x402ResourceServer.initialize() is called once
+A GET to facilitator /supported is made
+server.supportedResponsesMap is populated with the returned SupportedKind[]","Covers §4.1 step 2 and §5.3 state management","Showcase, E2E Auto","Written",""
+"2","E2E","Server Middleware","Express Integration","Payment Required: Express returns HTTP 402 with PAYMENT-REQUIRED header for unauthenticated request","P0","Verify that a GET request without a PAYMENT-SIGNATURE header to a protected Express route returns HTTP 402 and a base64-encoded PaymentRequired in the PAYMENT-REQUIRED header.","1. Developer role (server-side)
+2. Express app with paymentMiddleware configured on 'GET /data'
+3. Facilitator initialized (supportedResponsesMap populated)","1. Start the Express server with paymentMiddleware on GET /data
+2. Send GET /data with no payment headers using fetch or axios
+3. Read the response status code
+4. Read the PAYMENT-REQUIRED response header
+5. Base64-decode and JSON-parse the header value","Response status is 402
+PAYMENT-REQUIRED header is present
+Decoded value is a valid PaymentRequired object with x402Version, resource.url, and accepts[] containing at least one entry","Covers §4.1 steps 2–3 and §8.3 UI state table row 1","Showcase, E2E Auto","Written",""
+"3","E2E","Client Wrapper","Fetch Integration","Full Round-Trip: wrapFetchWithPayment completes payment and receives HTTP 200","P0","Verify the full x402 happy path: wrapped fetch receives 402, auto-creates payment payload, retries with PAYMENT-SIGNATURE, and receives 200 with PAYMENT-RESPONSE header.","1. Client developer role
+2. @x402/fetch and @x402/evm installed
+3. Express server with paymentMiddleware running locally
+4. Client wallet funded with USDC on Base Sepolia testnet (or CashSchemeNetworkClient mock)
+5. Facilitator running (real or CashFacilitatorClient)","1. Construct x402Client with an EVM SchemeNetworkClient registered for 'eip155:84532'
+2. Call wrapFetchWithPayment(fetch, x402Client) to get wrappedFetch
+3. Call wrappedFetch('http://localhost:3000/data')
+4. Capture all network interactions (initial 402 + retry 200)","Initial request returns 402
+PAYMENT-REQUIRED header is decoded to valid PaymentRequired
+A second request is sent with PAYMENT-SIGNATURE header containing base64 PaymentPayload
+Second response status is 200
+PAYMENT-RESPONSE header is present
+Response body matches the protected resource","Core happy-path covering §4.1 and §4.2 full round-trip","Showcase, E2E Auto","Written",""
+"4","E2E","Client Wrapper","Axios Integration","Full Round-Trip: Axios interceptor completes payment and receives HTTP 200","P0","Verify that the @x402/axios interceptor handles the 402-then-retry cycle end-to-end just like the fetch wrapper.","1. Client developer role
+2. @x402/axios installed
+3. Express server with paymentMiddleware running
+4. CashSchemeNetworkClient registered for test network","1. Create axios instance
+2. Register x402 interceptor via wrapAxiosWithPayment(axiosInstance, x402Client)
+3. Make GET request to protected endpoint
+4. Observe interceptor intercepting the 402
+5. Observe retry request with PAYMENT-SIGNATURE
+6. Receive final 200 response","axios request resolves with status 200 and response body
+No unhandled rejection is thrown
+PAYMENT-RESPONSE header accessible in response.headers","Covers §4.2 via Axios adapter","Showcase, E2E Auto","Written",""
+"5","E2E","Facilitator","Verify and Settle","Facilitator: POST /verify returns isValid=true for well-formed payment payload","P0","Verify that the facilitator's /verify endpoint validates a correctly signed EIP-3009 payload and returns isValid=true.","1. Facilitator operator role
+2. x402Facilitator with EVM mechanism registered
+3. A valid ExactEIP3009Payload signed with test private key","1. Build a PaymentPayload using buildPaymentPayload() helper with valid EIP-3009 authorization
+2. POST to facilitator /verify with { x402Version: 2, paymentPayload, paymentRequirements }
+3. Parse the JSON response body","Response status is 200
+Response body has isValid: true
+payer field matches the signing address
+No invalidReason or invalidMessage present","Covers §4.3 and §7.1","Showcase, E2E Auto","Written",""
+"6","E2E","Facilitator","Verify and Settle","Facilitator: POST /settle submits transaction and returns success=true with transaction hash","P0","Verify that the facilitator's /settle endpoint executes the on-chain transfer and returns a SettleResponse with success=true and a transaction hash.","1. Facilitator operator role
+2. x402Facilitator with EVM mechanism registered
+3. Client wallet funded on Base Sepolia
+4. A PaymentPayload that has already passed /verify","1. Build a valid PaymentPayload (exact scheme, eip155:84532)
+2. POST to facilitator /settle with { x402Version: 2, paymentPayload, paymentRequirements }
+3. Wait for response (may take seconds for on-chain confirmation)
+4. Parse JSON response","Response status is 200
+success: true
+transaction field is a non-empty string (tx hash)
+network matches the submitted network
+amount field is present if applicable","Covers §4.3 settlement path","Showcase, E2E Auto","Written",""
+"7","E2E","Server Middleware","Hono Integration","Full Round-Trip: Hono paymentMiddleware completes payment cycle end-to-end","P0","Verify that the @x402/hono middleware processes a payment request identically to the Express adapter, confirming cross-framework parity.","1. Developer role (server-side)
+2. @x402/hono installed
+3. Hono app created with paymentMiddleware on GET /data
+4. CashFacilitatorClient used for test isolation","1. Create Hono app and register paymentMiddleware
+2. Start server
+3. Send unauthenticated GET /data
+4. Confirm 402 + PAYMENT-REQUIRED header
+5. Use wrapFetchWithPayment client to retry with payment
+6. Confirm 200 + PAYMENT-RESPONSE header","Hono server returns 402 on first request
+After payment payload sent, server returns 200
+PAYMENT-RESPONSE header present and decodable
+Response body is the protected resource content","Covers §4.1 via Hono adapter","Showcase, E2E Auto","Written",""
+"8","E2E","Server Middleware","Next.js Integration","Full Round-Trip: Next.js API route protected by paymentMiddleware returns 200 after payment","P0","Verify that the @x402/next middleware integrates with a Next.js API route and completes the full payment cycle.","1. Developer role (server-side)
+2. Next.js app with @x402/next installed
+3. API route /api/data wrapped with paymentMiddleware
+4. CashFacilitatorClient for test isolation","1. Start Next.js dev server
+2. Send GET /api/data without PAYMENT-SIGNATURE
+3. Confirm 402 + PAYMENT-REQUIRED header
+4. Client sends retry with PAYMENT-SIGNATURE
+5. Confirm 200 + PAYMENT-RESPONSE","Next.js route returns 402 without payment
+Returns 200 with resource after valid payment
+PAYMENT-RESPONSE header is base64 JSON SettleResponse","Covers Next.js adapter parity","Showcase, E2E Auto","Written",""
+"9","E2E","Payment Schemes","EVM: exact scheme","EVM Exact EIP-3009: payment payload is created, verified and settled successfully","P0","Verify the complete lifecycle of an exact/evm EIP-3009 payment: payload creation by client, verification by facilitator, and settlement on-chain.","1. Client developer role
+2. @x402/evm installed
+3. Private key with Base Sepolia USDC balance
+4. Permit2 NOT required (EIP-3009 path)","1. Register EVM SchemeNetworkClient (EIP-3009) with x402Client
+2. Call x402Client.createPaymentPayload() for exact scheme on eip155:84532
+3. Inspect PaymentPayload.payload to confirm ExactEIP3009Payload structure
+4. POST to /verify - confirm isValid: true
+5. POST to /settle - confirm success: true","createPaymentPayload resolves without error
+PaymentPayload has valid x402Version=2, accepted.scheme='exact'
+payload contains authorization with from, to, value, validAfter, validBefore, nonce fields
+/verify returns isValid: true
+/settle returns success: true and transaction hash","Covers §6.2 EIP-3009 payload type","Showcase, E2E Auto","Written",""
+"10","E2E","Payment Schemes","EVM: exact scheme (Permit2)","EVM Exact Permit2: payment payload is created, verified and settled successfully","P0","Verify the complete lifecycle of an exact/evm Permit2 payment: client creates ExactPermit2Payload, facilitator verifies and settles.","1. Client developer role
+2. @x402/evm installed
+3. Private key with USDC on Base Sepolia
+4. Permit2 contract approved (unlimited allowance granted)","1. Run scripts/permit2-approval.ts approve for USDC
+2. Register EVM SchemeNetworkClient (Permit2 method) with x402Client
+3. Call createPaymentPayload() for exact/Permit2 scheme
+4. Inspect payload for permit2Authorization structure
+5. POST /verify and /settle","payload.permit2Authorization contains from, permitted.token, spender, nonce, deadline, witness.to fields
+/verify returns isValid: true
+/settle returns success: true with transaction hash","Covers §6.2 ExactPermit2Payload type","Showcase, E2E Auto","Written",""
+"11","E2E","Payment Schemes","EVM: upto scheme","EVM Upto Permit2: settlement uses partial amount override via settlement-overrides header","P0","Verify that the upto scheme supports partial settlement when the settlement-overrides header provides a percentage amount.","1. Developer role (server and client)
+2. Express server with upto scheme configured
+3. Client with UptoPermit2Payload signing capability
+4. settlement-overrides: { amount: '50%' } set in response handler","1. Configure server route with upto/evm Permit2
+2. Client creates UptoPermit2Payload for max allowed amount
+3. Resource handler sets settlement-overrides header with amount='50%'
+4. Middleware calls settlePayment() with resolveSettlementOverrideAmount()
+5. Check settled amount on-chain","Settlement amount is 50% of the maximum authorized amount
+SettleResponse.amount reflects the partial amount
+Transaction succeeds on-chain","Covers §4.4 partial settlement and §6.3 SettlementOverrides","Showcase, E2E Auto","Written",""
+"12","E2E","Payment Schemes","Solana SVM","SVM Exact: SPL token payment is created, verified and settled on Solana","P0","Verify end-to-end SPL payment using @x402/svm: payload creation, facilitator verify, and settle on Solana devnet.","1. Client developer role
+2. @x402/svm installed
+3. Solana wallet with devnet USDC balance
+4. Facilitator with SVM mechanism registered","1. Register SVM SchemeNetworkClient with x402Client for network 'solana:devnet'
+2. Call createPaymentPayload() for exact/svm
+3. POST /verify with SVM payload
+4. POST /settle
+5. Check transaction on Solana explorer","PaymentPayload is created with svm-specific structure
+/verify returns isValid: true
+/settle returns success: true with Solana transaction signature","Covers SVM mechanism parity with EVM","Showcase, E2E Auto","Written",""
+"13","E2E","Paywall UI","Browser Flow","Paywall Rendered: HTTP 402 response includes HTML paywall body when Accept header signals browser","P0","Verify that the middleware detects browser Accept header and returns a 402 response with an HTML paywall body generated by @x402/paywall.","1. Developer role (server-side)
+2. Express server with paymentMiddleware and @x402/paywall configured
+3. paywall config with appName and sessionTokenEndpoint","1. Start Express server with paywall enabled in middleware config
+2. Send GET /data with Accept: text/html header
+3. Inspect response status, Content-Type, and body","Response status is 402
+Content-Type is text/html
+Body is non-empty HTML string containing paywall UI elements
+PAYMENT-REQUIRED header is still present","Covers §8.1 and §8.3 browser state","Showcase, E2E Auto","Written",""
+"14","E2E","Error Handling","Verification Failure","Verify Failure: middleware returns 402 with error field when facilitator rejects payment","P0","Verify that when the facilitator returns isValid=false, the middleware returns HTTP 402 with PaymentRequired.error set instead of forwarding the request.","1. Developer role (server-side)
+2. Express server with paymentMiddleware
+3. Mock facilitator configured to return isValid: false with invalidReason: 'insufficient_funds'","1. Start server with mock facilitator returning isValid: false
+2. Client sends request with a PAYMENT-SIGNATURE header (any payload)
+3. Middleware calls facilitator.verify()
+4. Facilitator returns isValid: false
+5. Client receives the response","Response status is 402
+PAYMENT-REQUIRED header is set
+Decoded PaymentRequired.error is set (non-empty)
+Request is NOT forwarded to the resource handler","Covers §4.4 verification failure path and §8.3","Showcase, E2E Auto","Written",""
+"15","E2E","Error Handling","Settlement Failure","Settle Failure: middleware returns 500 when settlement is rejected by facilitator","P0","Verify that when the facilitator rejects settlement (success=false), the middleware returns HTTP 500 and calls onSettleFailure hooks.","1. Developer role (server-side)
+2. Express server with paymentMiddleware
+3. Mock facilitator configured to throw SettleError
+4. onSettleFailure hook registered","1. Configure mock facilitator to throw SettleError on /settle
+2. Register onSettleFailure hook that records the call
+3. Send request with valid PAYMENT-SIGNATURE (passes verify)
+4. Observe settlement failure","Response status is 500
+onSettleFailure hook is called with the SettleError
+Request is NOT forwarded to the resource handler","Covers §4.4 and §7.5 settlement failure path","Showcase, E2E Auto","Written",""
+"16","E2E","Error Handling","Facilitator Unavailable","Facilitator Unavailable: initialize() fails fast when facilitator is unreachable","P0","Verify that x402ResourceServer.initialize() throws an error (fail-fast) when the facilitator /supported endpoint is unreachable.","1. Developer role (server-side)
+2. Express server configured to use a facilitator at an unreachable URL","1. Configure paymentMiddleware with facilitatorUrl pointing to a non-existent host
+2. Call server.initialize() (or start the app which calls it internally)
+3. Capture the thrown error","initialize() throws an error
+Error message references the unreachable facilitator
+Server does not silently ignore the failure
+Process exits or propagates the error to the startup caller","Covers §4.4 facilitator unavailable on startup","Showcase, E2E Auto","Written",""
+"17","E2E","Lifecycle Hooks","beforeVerify Hook","beforeVerify Abort: hook can block verification and return 402","P1","Verify that a beforeVerify hook returning { abort: true } prevents the facilitator call and returns HTTP 402.","1. Developer role (server-side)
+2. Express server with paymentMiddleware
+3. A beforeVerify hook registered that checks a condition and aborts","1. Register beforeVerify hook that returns { abort: true, reason: 'blocked' }
+2. Send request with PAYMENT-SIGNATURE header
+3. Observe response","Response status is 402
+Facilitator /verify is never called
+PaymentRequired error field reflects the hook abort reason","Covers §4.4 hook abort and §7.5 hook error handling","","Written",""
+"18","E2E","Lifecycle Hooks","afterVerify Hook","afterVerify: hook is called after successful verification with VerifyResponse","P1","Verify that afterVerify hooks receive the VerifyResponse and can inspect or mutate request context.","1. Developer role (server-side)
+2. Express server with paymentMiddleware
+3. afterVerify hook registered that records payer from VerifyResponse","1. Register afterVerify hook that saves payer address to a variable
+2. Send request with valid PAYMENT-SIGNATURE
+3. After 200 response, inspect the saved payer value","afterVerify hook is called once
+Hook receives VerifyResponse with isValid: true and payer address
+Recorded payer matches the signing wallet address","Covers §4.1 step 6 afterVerify hooks","","Written",""
+"19","E2E","Lifecycle Hooks","onSettleFailure Hook Recovery","onSettleFailure: hook can recover from settlement error and prevent 500","P1","Verify that an onSettleFailure hook returning { recovered: true, result } swallows the error and returns 200 with the recovery result.","1. Developer role (server-side)
+2. Express server with paymentMiddleware
+3. Mock facilitator that throws SettleError
+4. onSettleFailure hook registered returning { recovered: true, result: mockSettleResponse }","1. Configure SettleError-throwing mock facilitator
+2. Register recovery hook returning { recovered: true, result }
+3. Send request with valid PAYMENT-SIGNATURE (passes verify)
+4. Observe final response","Response status is 200 (not 500)
+Resource handler is called
+Recovery hook swallows the SettleError","Covers §7.5 hook recovery strategy","","Written",""
+"20","E2E","Error Handling","Malformed Facilitator Response","Facilitator Response Error: middleware returns 502 when facilitator response is malformed","P1","Verify that a malformed (non-JSON or schema-invalid) response from the facilitator causes the Express middleware to return HTTP 502.","1. Developer role (server-side)
+2. Express server with paymentMiddleware
+3. Mock facilitator returning invalid JSON body on /verify","1. Configure mock facilitator to return HTTP 200 with body 'not json'
+2. Send request with PAYMENT-SIGNATURE header
+3. Middleware calls facilitator.verify()
+4. Middleware fails to parse facilitator response
+5. Observe response from Express","Response status is 502
+Response body is JSON with error field
+FacilitatorResponseError is thrown internally","Covers §4.4 and §7.4 FacilitatorResponseError and §8.3","","Written",""
+"21","E2E","Error Handling","Version Mismatch","Version Mismatch: unsupported x402Version throws error on client payload matching","P1","Verify that findMatchingRequirements() throws 'Unsupported x402 version' when PaymentPayload.x402Version does not match any accepted version.","1. Client developer role
+2. x402Client configured for v2 only
+3. Server returning PaymentRequired with x402Version=99","1. Build a PaymentRequired with x402Version=99
+2. Build a PaymentPayload with x402Version=99
+3. Call x402Client.selectPaymentRequirements() or findMatchingRequirements() with the mismatched versions","Error is thrown with message containing 'Unsupported x402 version'
+Error propagates to wrappedFetch/axios caller
+No payment is attempted","Covers §4.4 version mismatch path","","Written",""
+"22","E2E","Error Handling","No Registered Scheme","No Scheme: selectPaymentRequirements throws when client has no matching scheme","P1","Verify that x402Client.selectPaymentRequirements() throws 'No network/scheme registered' when none of the server's PaymentRequirements match the client's registered schemes.","1. Client developer role
+2. x402Client with only SVM scheme registered
+3. Server returning PaymentRequired with only EVM-based requirements","1. Register only SVM scheme on x402Client
+2. Receive PaymentRequired with accepts containing only eip155 entries
+3. Call x402Client.selectPaymentRequirements()","Error thrown with message 'No network/scheme registered …'
+Error propagates to wrappedFetch caller
+No PAYMENT-SIGNATURE header is sent","Covers §4.4 no registered scheme path","","Written",""
+"23","E2E","Error Handling","Policy Filter","Policy Filtered: throws when all requirements are filtered by PaymentPolicy","P1","Verify that when all PaymentRequirements are filtered out by a PaymentPolicy, x402Client throws the 'All payment requirements were filtered out by policies' error.","1. Client developer role
+2. x402Client with a PaymentPolicy that blocks all schemes based on amount
+3. Server returning PaymentRequired with requirements exceeding policy limit","1. Register PaymentPolicy that rejects any amount > 0
+2. Receive PaymentRequired with requirements (amount = 1000)
+3. Call x402Client.selectPaymentRequirements()","Error thrown with message 'All payment requirements were filtered out by policies …'
+wrappedFetch propagates the error to the caller","Covers §4.4 policy filtering path","","Written",""
+"24","E2E","Error Handling","Settlement Override on exact scheme","Settlement Override: applying settlement-overrides to exact scheme causes on-chain rejection","P1","Verify the known risk: when resolveSettlementOverrideAmount is applied to an exact (non-upto) scheme, settlement proceeds but on-chain verification is expected to fail.","1. Developer role (server-side)
+2. Express server with exact scheme configured
+3. Resource handler sets settlement-overrides header with amount='50%'","1. Configure server with exact/evm scheme
+2. Resource handler sets response header settlement-overrides: { amount: '50%' }
+3. Client sends valid exact payment
+4. Middleware attempts settlement with overridden amount","Settlement is attempted with reduced amount (not the exact required amount)
+On-chain verification rejects the transaction OR facilitator returns success: false
+A SettleError or rejection is surfaced","Covers §10.1 TBC[6] risk and §4.4","","Written",""
+"25","Integration","Module Federation","Extensions: bazaar","Bazaar Extension: discovery endpoint returns extension metadata in PaymentRequired","P1","Verify that the bazaar extension correctly populates the PaymentRequired.extensions field with discovery metadata when the server has it registered.","1. Developer role (server-side)
+2. @x402/extensions installed with bazaar extension
+3. Extension registered via server.registerExtension(bazaarExtension)","1. Register bazaar extension on x402ResourceServer
+2. Send unauthenticated GET to protected endpoint
+3. Decode PAYMENT-REQUIRED header
+4. Inspect PaymentRequired.extensions","PaymentRequired.extensions contains bazaar-specific keys
+extensions field is a valid JSON object
+No error is thrown during middleware initialization","Covers §2 bazaar extension","","Written",""
+"26","Integration","Module Federation","Extensions: sign-in-with-x","Sign-In-With-X Extension: extension enriches payment payload with session token","P1","Verify that the sign-in-with-x extension allows the client to include a session token in the PaymentPayload.extensions, reducing repeat payment for cached sessions.","1. Client developer role
+2. @x402/extensions installed with sign-in-with-x extension
+3. Server configured with sessionTokenEndpoint","1. Client registers sign-in-with-x ClientExtension
+2. First request creates full payment and receives a session token in PAYMENT-RESPONSE
+3. Client stores session token
+4. Second request uses session token via extension
+5. Observe whether second request skips full payment flow","First request completes full payment cycle (402 → 200)
+Session token is returned and extractable
+Second request either skips 402 or is accepted with session token instead of new payment","Covers §4.2 onPaymentRequired hooks and §8.1 sessionTokenEndpoint config","","Written",""
+"27","Integration","Module Federation","Extensions: offer-receipt","Offer-Receipt Extension: SettleResponse extensions contain receipt data","P1","Verify that the offer-receipt extension populates SettleResponse.extensions with a receipt object that the client can inspect.","1. Developer role (server-side)
+2. @x402/extensions with offer-receipt registered on server
+3. Full payment cycle completed","1. Register offer-receipt ResourceServerExtension
+2. Complete full payment cycle (402 → 200)
+3. Decode PAYMENT-RESPONSE header
+4. Inspect SettleResponse.extensions for receipt data","PAYMENT-RESPONSE extensions contain receipt object
+Receipt includes amount, timestamp, or scheme-specific fields
+No error thrown during extension processing","Covers §2 offer-receipt extension","","Written",""
+"28","Integration","Module Federation","Extensions: eip2612 gas sponsoring","EIP-2612 Gas Sponsoring: client extension path is triggered when Permit2 allowance is zero","P1","Verify that when Permit2 allowance is revoked, the eip2612-gas-sponsoring extension activates and allows the payment to proceed via EIP-2612 signature.","1. Client developer role
+2. @x402/evm and @x402/extensions installed
+3. Permit2 allowance set to 0 via scripts/permit2-approval.ts revoke
+4. eip2612GasSponsoring extension declared in PaymentRequired.extensions","1. Run scripts/permit2-approval.ts revoke for USDC token
+2. Register eip2612GasSponsoring ClientExtension with x402Client
+3. Make request to protected endpoint
+4. Observe which signing path is used (EIP-2612 vs Permit2)","Client detects zero Permit2 allowance
+eip2612GasSponsoring extension activates
+Payment payload uses EIP-2612 signature
+/verify and /settle succeed","Covers §2 eip2612-gas-sponsoring extension and e2e/test.ts approvePermit2Approval flow","","Written",""
+"29","Integration","Multi-Facilitator","Fallback","Multi-Facilitator Fallback: second facilitator is tried when first does not support the scheme","P1","Verify that x402ResourceServer iterates registered facilitators when the first one returns unsupported for the given scheme/network.","1. Developer role (server-side)
+2. Two facilitators registered: facilitator A (EVM only), facilitator B (SVM only)
+3. Client sends SVM payment payload","1. Register facilitatorA (EVM support) and facilitatorB (SVM support) on x402ResourceServer
+2. Client sends request with SVM exact payment
+3. Middleware calls facilitatorA.verify() - unsupported
+4. Middleware falls back to facilitatorB.verify()
+5. facilitatorB returns isValid: true","facilitatorA.verify() is called first
+facilitatorA returns unsupported/null
+facilitatorB.verify() is called as fallback
+Final response is 200 after facilitatorB settles","Covers §4.4 multi-facilitator fallback and §7.5","","Written",""
+"30","E2E","Protocol","v1 Backward Compatibility","v1 Compat: client sending x402Version=1 payload is accepted and processed by v2 server","P1","Verify that the v1-to-v2 compatibility shim correctly transforms a v1 PaymentPayload so it can be processed by a v2-configured middleware.","1. Developer role (client)
+2. Server running @x402/core v2 with v1 shim enabled
+3. Client sending a v1-format PaymentPayload","1. Build a v1-format PaymentPayload (x402Version: 1)
+2. Send request with PAYMENT-SIGNATURE containing v1 payload
+3. Server decodes with PaymentPayloadSchema (v1 discriminator)
+4. Observe response","Server accepts v1 payload without rejecting
+v1 payload is up-converted by compatibility shim
+Server calls facilitator with normalized v2 data
+Response is 200 (or facilitator-specific result)","Covers §2 v1 backwards-compatibility shims and §6.4 discriminated union schemas","","Written",""
+"31","E2E","Protocol","Zod Schema Validation","Schema Validation: invalid PaymentPayload is rejected before facilitator call","P1","Verify that the Zod schema layer rejects a PaymentPayload missing required fields before any facilitator network call is made.","1. Developer role (server)
+2. Express server with paymentMiddleware
+3. Client sends malformed PaymentPayload (missing accepted.scheme field)","1. Encode a PaymentPayload without the accepted.scheme field as base64 JSON
+2. Set as PAYMENT-SIGNATURE header
+3. Send request to protected endpoint","Response status is 402
+Facilitator /verify is NOT called
+Error message references schema validation failure","Covers §6.4 Zod validation layer and §7.5 parsing errors as exceptions","","Written",""
+"32","E2E","Client Configuration","Payment Policy","Max Amount Policy: client refuses to pay when required amount exceeds policy ceiling","P1","Verify that a PaymentPolicy with a maximum amount filter prevents payment when the server requires more than the policy allows, protecting clients from unexpected charges.","1. Client developer role
+2. x402Client with policy: maxAmount = 100 USDC atomic units
+3. Server requiring 1000 USDC atomic units","1. Register PaymentPolicy maxAmount=100 on x402Client
+2. Receive PaymentRequired with amount=1000
+3. Call selectPaymentRequirements()","selectPaymentRequirements throws 'All payment requirements were filtered out by policies'
+No payment payload is created
+No PAYMENT-SIGNATURE header is sent","Covers §6.3 PaymentPolicy in x402ClientConfig","","Written",""
+"33","E2E","Client Configuration","Dynamic Pricing","Dynamic Price: server uses DynamicPrice function to compute per-request price","P2","Verify that a ResourceConfig using a DynamicPrice function (instead of a static price) computes the price at request time.","1. Developer role (server-side)
+2. ResourceConfig with price: (req) => computePrice(req) DynamicPrice function","1. Configure route with DynamicPrice returning different amounts based on request path
+2. Send request to /cheap-endpoint
+3. Send request to /expensive-endpoint
+4. Compare PAYMENT-REQUIRED amounts in both 402 responses","PAYMENT-REQUIRED for /cheap-endpoint has lower amount
+PAYMENT-REQUIRED for /expensive-endpoint has higher amount
+parsePrice() is called per-request","Covers §6.3 DynamicPrice in ResourceConfig","","Written",""
+"34","E2E","Client Configuration","Dynamic PayTo","Dynamic PayTo: server uses DynamicPayTo function to compute recipient per request","P2","Verify that a ResourceConfig using a DynamicPayTo function computes a different payTo address per request (e.g., for affiliate routing).","1. Developer role (server-side)
+2. ResourceConfig with payTo: (req) => resolveRecipient(req) DynamicPayTo function","1. Configure route with DynamicPayTo returning address A for user X and address B for user Y
+2. Send request from user X context
+3. Send request from user Y context
+4. Compare payTo fields in respective PAYMENT-REQUIRED 402 headers","PAYMENT-REQUIRED for user X has payTo = address A
+PAYMENT-REQUIRED for user Y has payTo = address B
+Neither request results in a static payTo value","Covers §6.3 DynamicPayTo in ResourceConfig","","Written",""
+"35","E2E","Paywall UI","Paywall Config","Paywall Config: generateHtml respects appName and testnet flag","P2","Verify that PaywallProvider.generateHtml() incorporates the appName and testnet config options into the rendered HTML output.","1. Developer role
+2. @x402/paywall installed","1. Call PaywallProvider.generateHtml(paymentRequired, { appName: 'MyApp', testnet: true })
+2. Inspect the returned HTML string","Returned HTML contains 'MyApp' text
+HTML contains testnet network indicator or label
+HTML is a valid non-empty string","Covers §8.1 Paywall config options","","Written",""
+"36","E2E","Error Handling","Extension Error Handling","Extension Error: failed extension hook is skipped and request processing continues","P2","Verify that if an extension hook throws an error, the error is logged to console.error but does not abort the middleware pipeline.","1. Developer role (server-side)
+2. An extension registered whose afterVerify hook throws an Error
+3. console.error is monitored","1. Register a broken extension that throws in afterVerify
+2. Send request with valid payment
+3. Observe response and console output","Response is still 200 (request not aborted by extension error)
+console.error is called with the extension error message
+PAYMENT-RESPONSE header is still present","Covers §7.5 extension errors","","Written",""
+"37","E2E","Protocol","PAYMENT-RESPONSE Header","Settle Response Header: PAYMENT-RESPONSE header is present and decodable on 200 response","P2","Verify that the PAYMENT-RESPONSE header is present on every successful 200 response and decodes to a valid SettleResponse object.","1. Developer role (client)
+2. Full payment cycle completed (402 → 200) against any framework adapter","1. Complete a full payment cycle
+2. On the 200 response, read the PAYMENT-RESPONSE header
+3. Base64-decode and JSON-parse the value
+4. Validate with SettleResponse type","PAYMENT-RESPONSE header is present
+Decoded value has success: true
+transaction field is a non-empty string
+network matches the payment network
+No schema validation errors","Covers §7.2 HTTP header protocol","","Written",""

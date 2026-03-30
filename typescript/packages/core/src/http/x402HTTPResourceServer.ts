@@ -885,9 +885,10 @@ export class x402HTTPResourceServer {
 
     if (isWebBrowser) {
       const html = this.generatePaywallHTML(paymentRequired, paywallConfig, customHtml);
+      const paymentRequiredHeaders = this.createHTTPPaymentRequiredResponse(paymentRequired);
       return {
         status,
-        headers: { "Content-Type": "text/html" },
+        headers: { "Content-Type": "text/html", ...paymentRequiredHeaders.headers },
         body: html,
         isHtml: true,
       };
