@@ -526,7 +526,7 @@ cd typescript && pnpm --filter @x402/core test && pnpm --filter @x402/core lint:
 | **Wave** | Wave 3 |
 | **Depends On** | T7 |
 | **Intent** | Assert `DEFAULT_FACILITATOR_URL` constant equals `https://x402.org/facilitator`. Add unit tests for `HTTPFacilitatorClient` covering `/verify`, `/settle`, `/supported` request construction and error handling. Resolves TBC[1]. |
-| **Status** | READY |
+| **Status** | DONE |
 | **Spec Context** | spec.md §7.1 TBC[1]; `typescript/packages/core/src/http/httpFacilitatorClient.ts` line 12 |
 
 ### File Impact List
@@ -581,7 +581,7 @@ cd typescript && pnpm --filter @x402/core test && pnpm --filter @x402/core lint:
 | **Wave** | Wave 3 |
 | **Depends On** | T3, T5 |
 | **Intent** | Add unit tests for `x402MCPClient` and `x402MCPServer` covering payment flow: tool call interception, payment injection, and MCP response processing. |
-| **Status** | READY |
+| **Status** | DONE |
 | **Spec Context** | spec.md §4.2; `typescript/packages/mcp/src/client/x402MCPClient.ts`, `typescript/packages/mcp/src/server/` |
 
 ### File Impact List

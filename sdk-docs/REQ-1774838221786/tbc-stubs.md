@@ -6,8 +6,8 @@ This document records all TBC (To Be Confirmed) items from the spec, their curre
 
 | ID | Section | Description | Assumption | Status | Linked Task |
 |----|---------|-------------|------------|--------|-------------|
-| TBC[1] | §7.1 | Default facilitator base URL in `HTTPFacilitatorClient` | `DEFAULT_FACILITATOR_URL = "https://x402.org/facilitator"` | Pending confirmation | T10 |
-| TBC[2] | §7.4 | `RouteConfigurationError.errors` typed field structure | `RouteValidationError[]` with `{ routePattern, scheme, network, reason, message }` fields | Pending confirmation | T7 |
+| TBC[1] | §7.1 | Default facilitator base URL in `HTTPFacilitatorClient` | `DEFAULT_FACILITATOR_URL = "https://x402.org/facilitator"` | CONFIRMED (T10) | T10 |
+| TBC[2] | §7.4 | `RouteConfigurationError.errors` typed field structure | `RouteValidationError[]` with `{ routePattern, scheme, network, reason, message }` fields | CONFIRMED (T7) | T7 |
 | TBC[3] | §8.2 | i18n requirement for paywall | English-only; no i18n infrastructure | Product decision required | None |
 | TBC[4] | §10.3 | Structured logging/metrics hooks in core | No structured logging hooks; operators add logging via lifecycle hooks | Architecture decision required | None |
 | TBC[5] | §5 | Python/Go parity gaps | Go has EVM+SVM only; Python has EVM+SVM only; TypeScript-only features may not be portable | Audit deferred | None |

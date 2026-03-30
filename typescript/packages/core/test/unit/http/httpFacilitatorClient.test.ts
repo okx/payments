@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { HTTPFacilitatorClient } from "../../../src/http/httpFacilitatorClient";
+import {
+  HTTPFacilitatorClient,
+  DEFAULT_FACILITATOR_URL,
+} from "../../../src/http/httpFacilitatorClient";
 import { FacilitatorResponseError, SettleError, VerifyError } from "../../../src/types";
 import { PaymentPayload, PaymentRequirements } from "../../../src/types/payments";
 
@@ -162,5 +165,117 @@ describe("HTTPFacilitatorClient", () => {
     expect(result.errorReason).toBeUndefined();
     expect(result.errorMessage).toBeUndefined();
     expect(result.payer).toBeUndefined();
+  });
+});
+
+describe("DEFAULT_FACILITATOR_URL", () => {
+  it("equals https://x402.org/facilitator", () => {
+    expect(DEFAULT_FACILITATOR_URL).toBe("https://x402.org/facilitator");
+  });
+});
+
+describe("HTTPFacilitatorClient — request construction and success paths", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("verify() with 200 response returns VerifyResponse object", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            isValid: true,
+            invalidReason: null,
+            invalidMessage: null,
+            payer: null,
+          }),
+          { status: 200 },
+        ),
+      ),
+    );
+
+    const client = new HTTPFacilitatorClient({ url: "https://facilitator.test" });
+    const result = await client.verify(paymentPayload, paymentRequirements);
+
+    expect(result).toMatchObject({ isValid: true });
+  });
+
+  it("verify() with non-OK response throws VerifyError", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            isValid: false,
+            invalidReason: "bad_signature",
+            invalidMessage: "Invalid",
+          }),
+          { status: 400 },
+        ),
+      ),
+    );
+
+    const client = new HTTPFacilitatorClient({ url: "https://facilitator.test" });
+    const error = await client.verify(paymentPayload, paymentRequirements).catch(e => e);
+
+    expect(error).toBeInstanceOf(VerifyError);
+    expect(error.statusCode).toBe(400);
+  });
+
+  it("settle() with 200 response returns SettleResponse object", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            success: true,
+            transaction: "0xdeadbeef",
+            network: "eip155:8453",
+          }),
+          { status: 200 },
+        ),
+      ),
+    );
+
+    const client = new HTTPFacilitatorClient({ url: "https://facilitator.test" });
+    const result = await client.settle(paymentPayload, paymentRequirements);
+
+    expect(result).toMatchObject({ success: true, transaction: "0xdeadbeef" });
+  });
+
+  it("getSupported() with 200 response returns SupportedResponse", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" }],
+          }),
+          { status: 200 },
+        ),
+      ),
+    );
+
+    const client = new HTTPFacilitatorClient({ url: "https://facilitator.test" });
+    const result = await client.getSupported();
+
+    expect(result).toMatchObject({
+      kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" }],
+    });
+  });
+
+  it("getFacilitatorResponseError() extracts FacilitatorResponseError from cause chain", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response("invalid-json-body", { status: 200 })),
+    );
+
+    const client = new HTTPFacilitatorClient({ url: "https://facilitator.test" });
+    const error = await client.verify(paymentPayload, paymentRequirements).catch(e => e);
+
+    expect(error).toBeInstanceOf(FacilitatorResponseError);
+    expect(error.message).toContain("Facilitator verify returned invalid JSON");
   });
 });

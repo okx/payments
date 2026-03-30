@@ -10,7 +10,7 @@ import {
 import { z } from "../schemas";
 
 // TBC[1]: DEFAULT_FACILITATOR_URL confirmed as https://x402.org/facilitator — see T10
-const DEFAULT_FACILITATOR_URL = "https://x402.org/facilitator";
+export const DEFAULT_FACILITATOR_URL = "https://x402.org/facilitator";
 
 export interface FacilitatorConfig {
   url?: string;
