@@ -13,6 +13,7 @@ import {
   buildSettleResponse,
 } from "../../mocks";
 import { Network } from "../../../src/types";
+import { SettleError } from "../../../src/types/facilitator";
 
 describe("x402ResourceServer", () => {
   describe("Construction", () => {
@@ -543,6 +544,16 @@ describe("x402ResourceServer", () => {
 
         expect(afterVerifyCalled).toBe(false);
       });
+
+      it("afterVerify hook that throws propagates the error", async () => {
+        server.onAfterVerify(async () => {
+          throw new Error("afterVerify-failure");
+        });
+
+        await expect(
+          server.verifyPayment(buildPaymentPayload(), buildPaymentRequirements()),
+        ).rejects.toThrow("afterVerify-failure");
+      });
     });
 
     describe("onVerifyFailure", () => {
@@ -713,6 +724,16 @@ describe("x402ResourceServer", () => {
         expect(hookExecuted).toBe(true);
         expect(hookResult).toBe(result);
       });
+
+      it("afterSettle hook that throws propagates the error", async () => {
+        server.onAfterSettle(async () => {
+          throw new Error("afterSettle-failure");
+        });
+
+        await expect(
+          server.settlePayment(buildPaymentPayload(), buildPaymentRequirements()),
+        ).rejects.toThrow("afterSettle-failure");
+      });
     });
 
     describe("onSettleFailure", () => {
@@ -850,7 +871,7 @@ describe("x402ResourceServer", () => {
     it("should override amount when settlementOverrides.amount is provided", async () => {
       const mockClient = new MockFacilitatorClient(
         buildSupportedResponse({
-          kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" as Network }],
+          kinds: [{ x402Version: 2, scheme: "upto", network: "eip155:8453" as Network }],
         }),
         undefined,
         buildSettleResponse({ success: true }),
@@ -860,7 +881,7 @@ describe("x402ResourceServer", () => {
 
       const payload = buildPaymentPayload();
       const requirements = buildPaymentRequirements({
-        scheme: "exact",
+        scheme: "upto",
         network: "eip155:8453" as Network,
         amount: "1000000",
       });
@@ -874,7 +895,7 @@ describe("x402ResourceServer", () => {
     it("should not mutate original requirements when overrides applied", async () => {
       const mockClient = new MockFacilitatorClient(
         buildSupportedResponse({
-          kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" as Network }],
+          kinds: [{ x402Version: 2, scheme: "upto", network: "eip155:8453" as Network }],
         }),
         undefined,
         buildSettleResponse({ success: true }),
@@ -884,7 +905,7 @@ describe("x402ResourceServer", () => {
 
       const payload = buildPaymentPayload();
       const requirements = buildPaymentRequirements({
-        scheme: "exact",
+        scheme: "upto",
         network: "eip155:8453" as Network,
         amount: "1000000",
       });
@@ -921,7 +942,7 @@ describe("x402ResourceServer", () => {
     it("should allow settling for zero amount", async () => {
       const mockClient = new MockFacilitatorClient(
         buildSupportedResponse({
-          kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" as Network }],
+          kinds: [{ x402Version: 2, scheme: "upto", network: "eip155:8453" as Network }],
         }),
         undefined,
         buildSettleResponse({ success: true }),
@@ -931,7 +952,7 @@ describe("x402ResourceServer", () => {
 
       const payload = buildPaymentPayload();
       const requirements = buildPaymentRequirements({
-        scheme: "exact",
+        scheme: "upto",
         network: "eip155:8453" as Network,
         amount: "1000000",
       });
@@ -961,6 +982,123 @@ describe("x402ResourceServer", () => {
       await server.settlePayment(payload, requirements, undefined, undefined, { amount: "300000" });
 
       expect(hookAmount).toBe("300000");
+    });
+
+    it("throws SettleError when settlement override applied to non-upto scheme (exact)", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse({
+          kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" as Network }],
+        }),
+        undefined,
+        buildSettleResponse({ success: true }),
+      );
+
+      const server = new x402ResourceServer(mockClient);
+      const payload = buildPaymentPayload();
+      const requirements = buildPaymentRequirements({
+        scheme: "exact",
+        network: "eip155:8453" as Network,
+        amount: "1000000",
+      });
+
+      await expect(
+        server.settlePayment(payload, requirements, undefined, undefined, { amount: "500" }),
+      ).rejects.toThrow(SettleError);
+    });
+
+    it("throws SettleError with settlement_override_not_supported reason for non-upto scheme", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse({
+          kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" as Network }],
+        }),
+        undefined,
+        buildSettleResponse({ success: true }),
+      );
+
+      const server = new x402ResourceServer(mockClient);
+      const payload = buildPaymentPayload();
+      const requirements = buildPaymentRequirements({
+        scheme: "exact",
+        network: "eip155:8453" as Network,
+        amount: "1000000",
+      });
+
+      let thrownError: SettleError | null = null;
+      try {
+        await server.settlePayment(payload, requirements, undefined, undefined, { amount: "500" });
+      } catch (e) {
+        thrownError = e as SettleError;
+      }
+
+      expect(thrownError).not.toBeNull();
+      expect(thrownError).toBeInstanceOf(SettleError);
+      expect(thrownError?.errorReason).toBe("settlement_override_not_supported");
+    });
+
+    it("does not throw when settlement override applied to upto scheme", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse({
+          kinds: [{ x402Version: 2, scheme: "upto", network: "eip155:8453" as Network }],
+        }),
+        undefined,
+        buildSettleResponse({ success: true }),
+      );
+
+      const server = new x402ResourceServer(mockClient);
+      const payload = buildPaymentPayload({
+        accepted: buildPaymentRequirements({ scheme: "upto", network: "eip155:8453" as Network }),
+      });
+      const requirements = buildPaymentRequirements({
+        scheme: "upto",
+        network: "eip155:8453" as Network,
+        amount: "1000000",
+      });
+
+      await expect(
+        server.settlePayment(payload, requirements, undefined, undefined, { amount: "500" }),
+      ).resolves.toBeDefined();
+    });
+
+    it("does not throw when empty SettlementOverrides with exact scheme", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse({
+          kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" as Network }],
+        }),
+        undefined,
+        buildSettleResponse({ success: true }),
+      );
+
+      const server = new x402ResourceServer(mockClient);
+      const payload = buildPaymentPayload();
+      const requirements = buildPaymentRequirements({
+        scheme: "exact",
+        network: "eip155:8453" as Network,
+        amount: "1000000",
+      });
+
+      await expect(
+        server.settlePayment(payload, requirements, undefined, undefined, {}),
+      ).resolves.toBeDefined();
+    });
+
+    it("does not throw when no settlementOverrides with exact scheme", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse({
+          kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" as Network }],
+        }),
+        undefined,
+        buildSettleResponse({ success: true }),
+      );
+
+      const server = new x402ResourceServer(mockClient);
+      const payload = buildPaymentPayload();
+      const requirements = buildPaymentRequirements({
+        scheme: "exact",
+        network: "eip155:8453" as Network,
+        amount: "1000000",
+      });
+
+      await expect(server.settlePayment(payload, requirements)).resolves.toBeDefined();
     });
   });
 

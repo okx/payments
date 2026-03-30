@@ -284,6 +284,7 @@ export interface RouteValidationError {
   message: string;
 }
 
+// TBC[2]: RouteConfigurationError.errors is RouteValidationError[] with {message: string} — see T7
 /**
  * Error thrown when route configuration validation fails.
  */

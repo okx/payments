@@ -783,9 +783,20 @@ export class x402ResourceServer {
     transportContext?: unknown,
     settlementOverrides?: SettlementOverrides,
   ): Promise<SettleResponse> {
-    // Apply settlement overrides (e.g., partial settlement for upto scheme)
+    // TBC[6]: scheme guard not yet implemented — see T2
+    // Apply settlement overrides (e.g., partial settlement for upto scheme).
+    // Guard: the 'exact' scheme does not support partial settlement overrides.
     let effectiveRequirements = requirements;
     if (settlementOverrides?.amount !== undefined) {
+      if (requirements.scheme === "exact") {
+        throw new SettleError(400, {
+          success: false,
+          errorReason: "settlement_override_not_supported",
+          errorMessage: `Settlement overrides are only valid for 'upto' scheme; received '${requirements.scheme}'`,
+          transaction: "",
+          network: requirements.network,
+        });
+      }
       effectiveRequirements = {
         ...requirements,
         amount: resolveSettlementOverrideAmount(settlementOverrides.amount, requirements),

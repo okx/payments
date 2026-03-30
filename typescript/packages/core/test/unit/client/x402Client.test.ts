@@ -671,3 +671,189 @@ describe("x402Client", () => {
     });
   });
 });
+
+// T3 — Policy Engine Unit Tests
+describe("x402Client — Policy Engine", () => {
+  it("registerPolicy that filters all requirements throws error", async () => {
+    const client = new x402Client();
+    const mockSchemeClient = new MockSchemeNetworkClient("test-scheme");
+    client.register("test:network" as Network, mockSchemeClient);
+
+    client.registerPolicy((_version, _reqs) => []);
+
+    const paymentRequired = buildPaymentRequired({
+      accepts: [
+        buildPaymentRequirements({ scheme: "test-scheme", network: "test:network" as Network }),
+      ],
+    });
+
+    await expect(client.createPaymentPayload(paymentRequired)).rejects.toThrow(
+      "All payment requirements were filtered out by policies",
+    );
+  });
+
+  it("registerPolicy that filters down to single requirement returns that requirement", async () => {
+    const client = new x402Client();
+    const mockSchemeClient = new MockSchemeNetworkClient("test-scheme");
+    client.register("test:network" as Network, mockSchemeClient);
+
+    const targetReq = buildPaymentRequirements({
+      scheme: "test-scheme",
+      network: "test:network" as Network,
+      amount: "50",
+    });
+
+    // Policy keeps only the requirement with amount "50"
+    client.registerPolicy((_version, reqs) => reqs.filter(r => r.amount === "50"));
+
+    const paymentRequired = buildPaymentRequired({
+      accepts: [
+        buildPaymentRequirements({
+          scheme: "test-scheme",
+          network: "test:network" as Network,
+          amount: "100",
+        }),
+        targetReq,
+      ],
+    });
+
+    await client.createPaymentPayload(paymentRequired);
+
+    expect(mockSchemeClient.createPaymentPayloadCalls[0].requirements).toEqual(targetReq);
+  });
+
+  it("no registered scheme matching any requirement throws error", async () => {
+    const client = new x402Client();
+    // Register a scheme that doesn't match the payment requirements
+    const mockSchemeClient = new MockSchemeNetworkClient("other-scheme");
+    client.register("test:network" as Network, mockSchemeClient);
+
+    const paymentRequired = buildPaymentRequired({
+      accepts: [
+        buildPaymentRequirements({ scheme: "test-scheme", network: "test:network" as Network }),
+      ],
+    });
+
+    await expect(client.createPaymentPayload(paymentRequired)).rejects.toThrow(
+      "No network/scheme registered",
+    );
+  });
+
+  it("multiple policies applied sequentially — each receives output of previous", async () => {
+    const client = new x402Client();
+    const mockSchemeClient = new MockSchemeNetworkClient("test-scheme");
+    client.register("test:network" as Network, mockSchemeClient);
+
+    const policyInputs: PaymentRequirements[][] = [];
+
+    const policy1: PaymentPolicy = (_version, reqs) => {
+      policyInputs.push([...reqs]);
+      // Remove amount "300"
+      return reqs.filter(r => r.amount !== "300");
+    };
+    const policy2: PaymentPolicy = (_version, reqs) => {
+      policyInputs.push([...reqs]);
+      // Keep only amount "100"
+      return reqs.filter(r => r.amount === "100");
+    };
+
+    client.registerPolicy(policy1).registerPolicy(policy2);
+
+    const paymentRequired = buildPaymentRequired({
+      accepts: [
+        buildPaymentRequirements({
+          scheme: "test-scheme",
+          network: "test:network" as Network,
+          amount: "100",
+        }),
+        buildPaymentRequirements({
+          scheme: "test-scheme",
+          network: "test:network" as Network,
+          amount: "200",
+        }),
+        buildPaymentRequirements({
+          scheme: "test-scheme",
+          network: "test:network" as Network,
+          amount: "300",
+        }),
+      ],
+    });
+
+    await client.createPaymentPayload(paymentRequired);
+
+    // Policy 1 received 3 requirements
+    expect(policyInputs[0]).toHaveLength(3);
+    // Policy 2 received 2 requirements (after policy1 removed "300")
+    expect(policyInputs[1]).toHaveLength(2);
+    // Final selection was amount "100"
+    expect(mockSchemeClient.createPaymentPayloadCalls[0].requirements.amount).toBe("100");
+  });
+
+  it("paymentRequirementsSelector override is called with filtered list and return value is used", async () => {
+    let selectorArgs: PaymentRequirements[] = [];
+    const customSelector = (_version: number, reqs: PaymentRequirements[]) => {
+      selectorArgs = reqs;
+      return reqs[reqs.length - 1]; // Pick last
+    };
+
+    const client = new x402Client(customSelector);
+    const mockSchemeClient = new MockSchemeNetworkClient("test-scheme");
+    client.register("test:network" as Network, mockSchemeClient);
+
+    const firstReq = buildPaymentRequirements({
+      scheme: "test-scheme",
+      network: "test:network" as Network,
+      amount: "100",
+    });
+    const lastReq = buildPaymentRequirements({
+      scheme: "test-scheme",
+      network: "test:network" as Network,
+      amount: "999",
+    });
+
+    const paymentRequired = buildPaymentRequired({
+      accepts: [firstReq, lastReq],
+    });
+
+    await client.createPaymentPayload(paymentRequired);
+
+    expect(selectorArgs).toHaveLength(2);
+    expect(mockSchemeClient.createPaymentPayloadCalls[0].requirements).toEqual(lastReq);
+  });
+
+  it("createPaymentPayload calls beforePaymentCreation hooks in order; abort hook prevents payload creation", async () => {
+    const client = new x402Client();
+    const mockSchemeClient = new MockSchemeNetworkClient("test-scheme");
+    client.register("test:network" as Network, mockSchemeClient);
+
+    const hookOrder: string[] = [];
+
+    client.onBeforePaymentCreation(async () => {
+      hookOrder.push("hook1");
+    });
+
+    client.onBeforePaymentCreation(async () => {
+      hookOrder.push("hook2");
+      return { abort: true, reason: "blocked-by-policy" };
+    });
+
+    client.onBeforePaymentCreation(async () => {
+      hookOrder.push("hook3"); // Should NOT be called after abort
+    });
+
+    const paymentRequired = buildPaymentRequired({
+      accepts: [
+        buildPaymentRequirements({ scheme: "test-scheme", network: "test:network" as Network }),
+      ],
+    });
+
+    await expect(client.createPaymentPayload(paymentRequired)).rejects.toThrow(
+      "Payment creation aborted",
+    );
+
+    // hook1 ran, hook2 aborted, hook3 never called
+    expect(hookOrder).toEqual(["hook1", "hook2"]);
+    // No actual payload creation happened
+    expect(mockSchemeClient.createPaymentPayloadCalls).toHaveLength(0);
+  });
+});

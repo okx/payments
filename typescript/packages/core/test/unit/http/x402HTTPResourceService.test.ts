@@ -831,7 +831,7 @@ describe("x402HTTPResourceServer", () => {
       const routes = {
         "/api/test": {
           accepts: {
-            scheme: "exact",
+            scheme: "upto",
             payTo: "0xabc",
             price: "$1.00" as Price,
             network: "eip155:8453" as Network,
@@ -843,7 +843,7 @@ describe("x402HTTPResourceServer", () => {
 
       const payload = buildPaymentPayload();
       const requirements = buildPaymentRequirements({
-        scheme: "exact",
+        scheme: "upto",
         network: "eip155:8453" as Network,
         amount: "1000000",
       });
@@ -869,7 +869,7 @@ describe("x402HTTPResourceServer", () => {
       const routes = {
         "/api/test": {
           accepts: {
-            scheme: "exact",
+            scheme: "upto",
             payTo: "0xabc",
             price: "$1.00" as Price,
             network: "eip155:8453" as Network,
@@ -881,7 +881,7 @@ describe("x402HTTPResourceServer", () => {
 
       const payload = buildPaymentPayload();
       const requirements = buildPaymentRequirements({
-        scheme: "exact",
+        scheme: "upto",
         network: "eip155:8453" as Network,
         amount: "1000000",
       });
@@ -950,7 +950,7 @@ describe("x402HTTPResourceServer", () => {
       const routes = {
         "/api/test": {
           accepts: {
-            scheme: "exact",
+            scheme: "upto",
             payTo: "0xabc",
             price: "$1.00" as Price,
             network: "eip155:8453" as Network,
@@ -962,7 +962,7 @@ describe("x402HTTPResourceServer", () => {
 
       const payload = buildPaymentPayload();
       const requirements = buildPaymentRequirements({
-        scheme: "exact",
+        scheme: "upto",
         network: "eip155:8453" as Network,
         amount: "1000000",
       });

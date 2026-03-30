@@ -5,6 +5,7 @@ import {
   HTTPAdapter,
   RouteConfig,
   ProtectedRequestHook,
+  PaywallProvider,
 } from "../../../src/http/x402HTTPResourceServer";
 import { x402ResourceServer } from "../../../src/server/x402ResourceServer";
 import {
@@ -953,5 +954,181 @@ describe("x402HTTPResourceServer Hooks", () => {
         expect(result.type).toBe("no-payment-required");
       });
     });
+  });
+});
+
+// T6 — Browser Paywall Path Unit Tests
+describe("x402HTTPResourceServer — Browser Paywall Path", () => {
+  let ResourceServer: x402ResourceServer;
+  let mockFacilitator: MockFacilitatorClient;
+  let mockScheme: MockSchemeNetworkServer;
+
+  const testNetwork = "eip155:8453" as Network;
+  const testRoutes = {
+    "/api/test": {
+      accepts: {
+        scheme: "exact",
+        payTo: "0xabc",
+        price: "$1.00" as Price,
+        network: testNetwork,
+      },
+    },
+  };
+
+  function makeBrowserAdapter(): HTTPAdapter {
+    return {
+      getHeader: () => undefined,
+      getMethod: () => "GET",
+      getPath: () => "/api/test",
+      getUrl: () => "https://example.com/api/test",
+      getAcceptHeader: () => "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      getUserAgent: () => "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+    };
+  }
+
+  function makeApiAdapter(): HTTPAdapter {
+    return {
+      getHeader: () => undefined,
+      getMethod: () => "GET",
+      getPath: () => "/api/test",
+      getUrl: () => "https://example.com/api/test",
+      getAcceptHeader: () => "application/json",
+      getUserAgent: () => "TestClient/1.0",
+    };
+  }
+
+  beforeEach(async () => {
+    mockFacilitator = new MockFacilitatorClient(
+      buildSupportedResponse({
+        kinds: [{ x402Version: 2, scheme: "exact", network: testNetwork }],
+      }),
+      buildVerifyResponse({ isValid: true }),
+    );
+
+    ResourceServer = new x402ResourceServer(mockFacilitator);
+
+    mockScheme = new MockSchemeNetworkServer("exact", {
+      amount: "1000000",
+      asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      extra: {},
+    });
+
+    ResourceServer.register(testNetwork, mockScheme);
+    await ResourceServer.initialize();
+  });
+
+  it("browser request (Accept: text/html + Mozilla user-agent) returns isHtml:true and Content-Type:text/html", async () => {
+    const httpServer = new x402HTTPResourceServer(ResourceServer, testRoutes);
+
+    const adapter = makeBrowserAdapter();
+    const context: HTTPRequestContext = {
+      adapter,
+      path: "/api/test",
+      method: "GET",
+    };
+
+    const result = await httpServer.processHTTPRequest(context);
+
+    expect(result.type).toBe("payment-error");
+    if (result.type === "payment-error") {
+      expect(result.response.isHtml).toBe(true);
+      expect(result.response.headers["Content-Type"]).toBe("text/html");
+    }
+  });
+
+  it("API client request (Accept: application/json) returns JSON 402 without HTML paywall body", async () => {
+    const httpServer = new x402HTTPResourceServer(ResourceServer, testRoutes);
+
+    const adapter = makeApiAdapter();
+    const context: HTTPRequestContext = {
+      adapter,
+      path: "/api/test",
+      method: "GET",
+    };
+
+    const result = await httpServer.processHTTPRequest(context);
+
+    expect(result.type).toBe("payment-error");
+    if (result.type === "payment-error") {
+      expect(result.response.isHtml).toBeFalsy();
+      expect(result.response.headers["Content-Type"]).toBe("application/json");
+    }
+  });
+
+  it("PaywallProvider.generateHtml is called for browser request and HTML body uses its output", async () => {
+    const mockPaywallHtml = "<html><body>Paywall Content</body></html>";
+    const mockProvider: PaywallProvider = {
+      generateHtml: vi.fn().mockReturnValue(mockPaywallHtml),
+    };
+
+    const httpServer = new x402HTTPResourceServer(ResourceServer, testRoutes);
+    httpServer.registerPaywallProvider(mockProvider);
+
+    const adapter = makeBrowserAdapter();
+    const context: HTTPRequestContext = {
+      adapter,
+      path: "/api/test",
+      method: "GET",
+    };
+
+    const result = await httpServer.processHTTPRequest(context);
+
+    expect(result.type).toBe("payment-error");
+    if (result.type === "payment-error") {
+      expect(mockProvider.generateHtml).toHaveBeenCalledOnce();
+      expect(result.response.body).toBe(mockPaywallHtml);
+    }
+  });
+
+  it("customPaywallHtml set on route config uses custom HTML for browser request", async () => {
+    const customHtml = "<html><body>Custom Paywall</body></html>";
+    const routesWithCustomHtml = {
+      "/api/test": {
+        accepts: {
+          scheme: "exact",
+          payTo: "0xabc",
+          price: "$1.00" as Price,
+          network: testNetwork,
+        },
+        customPaywallHtml: customHtml,
+      },
+    };
+
+    const httpServer = new x402HTTPResourceServer(ResourceServer, routesWithCustomHtml);
+
+    const adapter = makeBrowserAdapter();
+    const context: HTTPRequestContext = {
+      adapter,
+      path: "/api/test",
+      method: "GET",
+    };
+
+    const result = await httpServer.processHTTPRequest(context);
+
+    expect(result.type).toBe("payment-error");
+    if (result.type === "payment-error") {
+      expect(result.response.isHtml).toBe(true);
+      expect(result.response.body).toBe(customHtml);
+    }
+  });
+
+  it("no PaywallProvider registered — browser request returns fallback with isHtml:true but empty string body", async () => {
+    const httpServer = new x402HTTPResourceServer(ResourceServer, testRoutes);
+    // No paywallProvider registered
+
+    const adapter = makeBrowserAdapter();
+    const context: HTTPRequestContext = {
+      adapter,
+      path: "/api/test",
+      method: "GET",
+    };
+
+    const result = await httpServer.processHTTPRequest(context);
+
+    expect(result.type).toBe("payment-error");
+    if (result.type === "payment-error") {
+      expect(result.response.isHtml).toBe(true);
+      expect(result.response.headers["Content-Type"]).toBe("text/html");
+    }
   });
 });

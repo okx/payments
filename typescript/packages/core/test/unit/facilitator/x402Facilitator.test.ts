@@ -458,3 +458,65 @@ describe("x402Facilitator", () => {
     });
   });
 });
+
+// T5 — Multi-Facilitator Fallback Unit Tests
+describe("x402Facilitator — Multi-Facilitator Fallback", () => {
+  it("first registered facilitator gets precedence when both support same scheme/network", async () => {
+    const facilitator = new x402Facilitator();
+    const firstFacilitator = new TestFacilitator("exact", { isValid: true });
+    const secondFacilitator = new TestFacilitator("exact", { isValid: true });
+
+    // Register same scheme/network twice — first wins
+    facilitator.register("eip155:8453" as Network, firstFacilitator);
+    facilitator.register("eip155:8453" as Network, secondFacilitator);
+
+    const payload = buildPaymentPayload({ x402Version: 2 });
+    const requirements = buildPaymentRequirements({
+      scheme: "exact",
+      network: "eip155:8453" as Network,
+    });
+
+    const result = await facilitator.verify(payload, requirements);
+
+    expect(result.isValid).toBe(true);
+    expect(firstFacilitator.verifyCalls.length).toBe(1);
+    expect(secondFacilitator.verifyCalls.length).toBe(0);
+  });
+
+  it("settle path follows same first-registered precedence rule as verify", async () => {
+    const facilitator = new x402Facilitator();
+    const firstFacilitator = new TestFacilitator("exact");
+    const secondFacilitator = new TestFacilitator("exact");
+
+    facilitator.register("eip155:8453" as Network, firstFacilitator);
+    facilitator.register("eip155:8453" as Network, secondFacilitator);
+
+    const payload = buildPaymentPayload({ x402Version: 2 });
+    const requirements = buildPaymentRequirements({
+      scheme: "exact",
+      network: "eip155:8453" as Network,
+    });
+
+    const result = await facilitator.settle(payload, requirements);
+
+    expect(result.success).toBe(true);
+    expect(firstFacilitator.settleCalls.length).toBe(1);
+    expect(secondFacilitator.settleCalls.length).toBe(0);
+  });
+
+  it("no facilitator supports scheme — throws VerifyError-like error with unsupported scheme message", async () => {
+    const facilitator = new x402Facilitator();
+    const evmFacilitator = new TestFacilitator("exact");
+    facilitator.register("eip155:8453" as Network, evmFacilitator);
+
+    const payload = buildPaymentPayload({ x402Version: 2 });
+    const requirements = buildPaymentRequirements({
+      scheme: "upto", // not registered
+      network: "eip155:8453" as Network,
+    });
+
+    await expect(facilitator.verify(payload, requirements)).rejects.toThrow(
+      /No facilitator registered/,
+    );
+  });
+});
