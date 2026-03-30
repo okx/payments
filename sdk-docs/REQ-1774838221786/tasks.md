@@ -633,7 +633,7 @@ cd typescript && pnpm --filter @x402/mcp test && pnpm --filter @x402/mcp lint:ch
 | **Wave** | Wave 4 |
 | **Depends On** | T8, T9, T10, T11 |
 | **Intent** | Create `@changesets/cli` changeset fragments for every public API change introduced in prior tasks. The `settlePayment()` scheme guard (T2) is a breaking-change for callers relying on the previous behaviour; export of `DEFAULT_FACILITATOR_URL` (T10) is a minor addition. |
-| **Status** | READY |
+| **Status** | DONE |
 | **Spec Context** | spec.md §10.2; `typescript/CONTRIBUTING.md` §Changelog |
 
 ### File Impact List
