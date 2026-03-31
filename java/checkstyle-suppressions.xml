@@ -4,6 +4,8 @@
     "https://checkstyle.org/dtds/suppressions_1_2.dtd">
 
 <suppressions>
-  <!-- Suppress visibility checks on model classes -->
+  <!-- Suppress visibility checks on model/POJO classes -->
   <suppress checks="VisibilityModifier" files=".*[/\\]model[/\\].*\.java"/>
+  <suppress checks="VisibilityModifier" files=".*[/\\]client[/\\](VerificationResponse|SettlementResponse|Kind)\.java"/>
+  <suppress checks="VisibilityModifier" files=".*[/\\]server[/\\]PaymentFilter\.java"/>
 </suppressions>
