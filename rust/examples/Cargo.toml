@@ -1,0 +1,29 @@
+[package]
+name = "x402-examples"
+description = "Example servers using the x402 Rust Seller SDK"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+x402-core = { path = "../x402-core" }
+x402-axum = { path = "../x402-axum" }
+x402-evm = { path = "../x402-evm" }
+axum = { workspace = true }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { workspace = true }
+tracing-subscriber = "0.3"
+
+[[example]]
+name = "basic_server"
+path = "src/basic_server.rs"
+
+[[example]]
+name = "custom_config"
+path = "src/custom_config.rs"
+
+[[example]]
+name = "test_connectivity"
+path = "src/test_connectivity.rs"
