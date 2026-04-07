@@ -1,0 +1,22 @@
+[package]
+name = "x402-axum"
+description = "Axum middleware adapter for x402 payment protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+x402-core = { path = "../x402-core" }
+axum = { workspace = true }
+tower = { workspace = true }
+tower-service = { workspace = true }
+http = { workspace = true }
+http-body-util = { workspace = true }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+wiremock = { workspace = true }
+tokio = { workspace = true, features = ["test-util", "macros"] }
+x402-evm = { path = "../x402-evm" }

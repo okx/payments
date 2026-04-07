@@ -1,0 +1,15 @@
+[package]
+name = "x402-evm"
+description = "EVM mechanism implementation for x402 payment protocol (X Layer support)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+x402-core = { path = "../x402-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros"] }

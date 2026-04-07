@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__claude_ai_OKEngine_LARK_MCP__lark_wiki_get_node",
+      "mcp__claude_ai_OKEngine_LARK_MCP__lark_docx_rich_content",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)"
+    ]
+  }
+}
