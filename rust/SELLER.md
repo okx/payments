@@ -186,6 +186,33 @@ app.layer(payment_middleware_with_poll_deadline(routes, server, Duration::from_s
 
 // With timeout hook fallback
 app.layer(payment_middleware_with_timeout_hook(routes, server, hook));
+
+// With both timeout hook and custom poll deadline
+app.layer(payment_middleware_with_timeout_hook_and_deadline(routes, server, hook, Duration::from_secs(10)));
+
+// With dynamic payment resolver (override price/payTo per request)
+app.layer(payment_middleware_with_resolver(routes, server, resolver));
+
+// Full builder pattern with lifecycle hooks
+let layer = PaymentMiddlewareBuilder::new(routes, server)
+    .on_protected_request(Box::new(|ctx| Box::pin(async move {
+        ProtectedRequestResult { grant_access: false, abort: false, reason: None }
+    })))
+    .on_before_verify(Box::new(|ctx| Box::pin(async move {
+        BeforeHookResult { abort: false, reason: None }
+    })))
+    .on_after_verify(Box::new(|ctx| Box::pin(async move { () })))
+    .on_verify_failure(Box::new(|ctx, err| Box::pin(async move { None })))
+    .on_before_settle(Box::new(|ctx| Box::pin(async move {
+        BeforeHookResult { abort: false, reason: None }
+    })))
+    .on_after_settle(Box::new(|ctx| Box::pin(async move { () })))
+    .on_settle_failure(Box::new(|ctx, err| Box::pin(async move { None })))
+    .on_settlement_timeout(timeout_hook)
+    .poll_deadline(Duration::from_secs(10))
+    .resolver(resolver_fn)
+    .build();
+app.layer(layer);
 ```
 
 ## Supported Networks

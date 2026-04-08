@@ -141,6 +141,7 @@ Base path: `/api/v6/pay/x402`
 | `/supported` | GET | Query supported schemes and networks |
 | `/verify` | POST | Verify payment authorization (no on-chain tx) |
 | `/settle` | POST | Submit for on-chain settlement |
+| `/settle/status?txHash=` | GET | Query settlement status (used for timeout polling) |
 
 ### OKX Extensions
 
@@ -187,7 +188,8 @@ rust/
 │   └── aggr_deferred/  # AggrDeferredEvmScheme (OKX extension)
 └── examples/
     ├── basic_server.rs
-    └── custom_config.rs
+    ├── custom_config.rs
+    └── test_connectivity.rs
 ```
 
 ## License
