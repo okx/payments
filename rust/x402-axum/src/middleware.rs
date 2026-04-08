@@ -22,9 +22,9 @@ use x402_core::http::{
     encode_payment_response_header, OnAfterSettleHook, OnAfterVerifyHook, OnBeforeSettleHook,
     OnBeforeVerifyHook, OnProtectedRequestHook, OnSettleFailureHook, OnSettlementTimeoutHook,
     OnVerifyFailureHook, PaymentResolverFn, PollResult, ResolvedAccept, RoutePaymentConfig,
-    RoutesConfig, SettleContext, SettleResultContext, VerifyContext, VerifyResultContext,
-    DEFAULT_POLL_DEADLINE, DEFAULT_POLL_INTERVAL, PAYMENT_REQUIRED_HEADER,
-    PAYMENT_RESPONSE_HEADER,
+    RoutesConfig, SettleContext, SettleResultContext, SettlementOverrides, VerifyContext,
+    VerifyResultContext, DEFAULT_POLL_DEADLINE, DEFAULT_POLL_INTERVAL, PAYMENT_REQUIRED_HEADER,
+    PAYMENT_RESPONSE_HEADER, SETTLEMENT_OVERRIDES_HEADER,
 };
 use x402_core::server::X402ResourceServer;
 use x402_core::types::{PaymentPayload, PaymentRequired, PaymentRequirements, ResourceInfo};
@@ -328,7 +328,7 @@ where
             }
 
             // 8. Call the inner handler (pass through)
-            let inner_response = match inner.call(req).await {
+            let mut inner_response = match inner.call(req).await {
                 Ok(resp) => resp,
                 Err(e) => return Err(e),
             };
@@ -339,7 +339,21 @@ where
                 return Ok(inner_response);
             }
 
-            // 9. Hook: onBeforeSettle — can abort before settlement
+            // 9. Extract settlement overrides from response header (set by route handler)
+            let settlement_overrides: Option<SettlementOverrides> = inner_response
+                .headers()
+                .get(SETTLEMENT_OVERRIDES_HEADER)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| serde_json::from_str(s).ok());
+
+            // Remove the internal header so clients don't see it
+            if settlement_overrides.is_some() {
+                inner_response
+                    .headers_mut()
+                    .remove(SETTLEMENT_OVERRIDES_HEADER);
+            }
+
+            // 10. Hook: onBeforeSettle — can abort before settlement
             if let Some(hook) = &state.on_before_settle {
                 let ctx = SettleContext {
                     payment_payload: payment_payload.clone(),
@@ -352,10 +366,15 @@ where
                 }
             }
 
-            // 10. Settle payment via facilitator
+            // 11. Settle payment via facilitator
             let settle_result = state
                 .server
-                .settle_payment(&payment_payload, &payment_requirements, route_config.sync_settle)
+                .settle_payment(
+                    &payment_payload,
+                    &payment_requirements,
+                    route_config.sync_settle,
+                    settlement_overrides.as_ref(),
+                )
                 .await;
 
             // 11. Handle settle result per OKX spec:

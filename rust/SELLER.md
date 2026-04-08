@@ -46,12 +46,12 @@ async fn main() {
     //    HMAC-SHA256 signing is automatic on every request.
     let facilitator = OkxHttpFacilitatorClient::new(
         &api_key, &secret_key, &passphrase,
-    );
+    ).expect("Failed to create facilitator client");
     // Or with custom URL:
     // let facilitator = OkxHttpFacilitatorClient::with_url(
     //     "https://custom-facilitator.example.com",
     //     &api_key, &secret_key, &passphrase,
-    // );
+    // ).expect("Failed to create facilitator client");
 
     // 2. Create server and register payment schemes
     let mut server = X402ResourceServer::new(facilitator)
@@ -104,7 +104,7 @@ let facilitator = OkxHttpFacilitatorClient::new(
     api_key,     // OKX API key
     secret_key,  // OKX secret key (for HMAC-SHA256 signing)
     passphrase,  // OKX passphrase
-);
+)?;
 
 // Custom URL
 let facilitator = OkxHttpFacilitatorClient::with_url(
@@ -112,7 +112,7 @@ let facilitator = OkxHttpFacilitatorClient::with_url(
     api_key,
     secret_key,
     passphrase,
-);
+)?;
 ```
 
 HMAC-SHA256 signing is automatic on every Facilitator request.

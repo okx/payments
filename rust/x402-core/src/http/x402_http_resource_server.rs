@@ -38,6 +38,74 @@ pub const PAYMENT_REQUIRED_HEADER: &str = "PAYMENT-REQUIRED";
 /// HTTP header name for the payment response (server → client after settlement).
 pub const PAYMENT_RESPONSE_HEADER: &str = "PAYMENT-RESPONSE";
 
+/// HTTP header name for settlement overrides (handler → middleware, internal only).
+///
+/// Mirrors TS: `SETTLEMENT_OVERRIDES_HEADER` from `x402HTTPResourceServer.ts`
+pub const SETTLEMENT_OVERRIDES_HEADER: &str = "settlement-overrides";
+
+/// Settlement overrides for partial settlement (e.g., upto scheme billing by actual usage).
+///
+/// Mirrors TS: `export interface SettlementOverrides`
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SettlementOverrides {
+    /// Amount to settle. Supports three formats:
+    /// - Raw atomic units: `"1000"`
+    /// - Percent of PaymentRequirements.amount: `"50%"`
+    /// - Dollar price: `"$0.05"` (uses requirements.extra.decimals or defaults to 6)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub amount: Option<String>,
+}
+
+/// Resolve a settlement override amount string to a final atomic-unit string.
+///
+/// Supports three formats (mirrors TS `resolveSettlementOverrideAmount`):
+/// - Raw atomic units: `"1000"`
+/// - Percent: `"50%"` or `"33.33%"` (up to 2 decimal places, floored)
+/// - Dollar price: `"$0.05"` (uses requirements.extra.decimals or defaults to 6)
+pub fn resolve_settlement_override_amount(
+    raw_amount: &str,
+    requirements: &crate::types::PaymentRequirements,
+) -> Result<String, crate::error::X402Error> {
+    // Percent format: "50%" or "33.33%"
+    if let Some(pct) = raw_amount.strip_suffix('%') {
+        let parts: Vec<&str> = pct.split('.').collect();
+        let int_part: u128 = parts[0]
+            .parse()
+            .map_err(|_| crate::error::X402Error::PriceParse(format!("invalid percent: {}", raw_amount)))?;
+        let dec_part: u128 = if parts.len() > 1 {
+            let d = format!("{:0<2}", &parts[1][..parts[1].len().min(2)]);
+            d.parse().unwrap_or(0)
+        } else {
+            0
+        };
+        let scaled_percent = int_part * 100 + dec_part;
+        let base: u128 = requirements.amount.parse().map_err(|_| {
+            crate::error::X402Error::PriceParse(format!(
+                "invalid base amount: {}",
+                requirements.amount
+            ))
+        })?;
+        return Ok(((base * scaled_percent) / 10000).to_string());
+    }
+
+    // Dollar price format: "$0.05"
+    if let Some(dollars_str) = raw_amount.strip_prefix('$') {
+        let decimals: u32 = requirements
+            .extra
+            .get("decimals")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(6) as u32;
+        let dollars: f64 = dollars_str.parse().map_err(|_| {
+            crate::error::X402Error::PriceParse(format!("invalid dollar amount: {}", raw_amount))
+        })?;
+        let amount = (dollars * 10f64.powi(decimals as i32)).round() as u128;
+        return Ok(amount.to_string());
+    }
+
+    // Raw atomic units
+    Ok(raw_amount.to_string())
+}
+
 // ---------------------------------------------------------------------------
 // Header encoding/decoding (mirrors core/src/http/index.ts)
 // ---------------------------------------------------------------------------

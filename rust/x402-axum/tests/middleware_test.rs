@@ -46,7 +46,8 @@ async fn build_test_app(mock_server: &MockServer) -> Router {
     // Ensure /supported is mounted for initialize()
     mount_supported_mock(mock_server).await;
 
-    let facilitator = OkxHttpFacilitatorClient::with_url(&mock_server.uri(), "key", "secret", "pass");
+    let facilitator = OkxHttpFacilitatorClient::with_url(&mock_server.uri(), "key", "secret", "pass")
+        .expect("failed to create facilitator client");
 
     let mut server = X402ResourceServer::new(facilitator)
         .register("eip155:196", ExactEvmScheme::new());
@@ -328,7 +329,8 @@ fn test_routes() -> HashMap<String, RoutePaymentConfig> {
 /// Helper: build an initialized X402ResourceServer for hook tests.
 async fn build_initialized_server(mock_server: &MockServer) -> X402ResourceServer {
     mount_supported_mock(mock_server).await;
-    let facilitator = OkxHttpFacilitatorClient::with_url(&mock_server.uri(), "key", "secret", "pass");
+    let facilitator = OkxHttpFacilitatorClient::with_url(&mock_server.uri(), "key", "secret", "pass")
+        .expect("failed to create facilitator client");
     let mut server = X402ResourceServer::new(facilitator).register("eip155:196", ExactEvmScheme::new());
     server.initialize().await.expect("initialize failed");
     server
@@ -350,7 +352,8 @@ async fn build_initialized_server_with_deferred(mock_server: &MockServer) -> X40
         .mount(mock_server)
         .await;
 
-    let facilitator = OkxHttpFacilitatorClient::with_url(&mock_server.uri(), "key", "secret", "pass");
+    let facilitator = OkxHttpFacilitatorClient::with_url(&mock_server.uri(), "key", "secret", "pass")
+        .expect("failed to create facilitator client");
     let mut server = X402ResourceServer::new(facilitator)
         .register("eip155:196", ExactEvmScheme::new())
         .register("eip155:196", AggrDeferredEvmScheme::new());

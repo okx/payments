@@ -44,27 +44,11 @@ pub const XLAYER_MAINNET: ChainConfig = ChainConfig {
     chain_id: 196,
 };
 
-/// X Layer testnet chain config.
-pub const XLAYER_TESTNET: ChainConfig = ChainConfig {
-    network: "eip155:195",
-    chain_id: 195,
-};
-
 /// X Layer mainnet USDT
 /// EIP-712 name uses Unicode ₮ (U+20AE): "USD₮0"
 pub const XLAYER_MAINNET_USDT: DefaultAssetInfo = DefaultAssetInfo {
     address: "0x779ded0c9e1022225f8e0630b35a9b54be713736",
     name: "USD\u{20AE}0",
-    version: "1",
-    decimals: 6,
-    asset_transfer_method: None,
-    supports_eip2612: false,
-};
-
-/// X Layer testnet USDT (TBD — contract not yet deployed)
-pub const XLAYER_TESTNET_USDT: DefaultAssetInfo = DefaultAssetInfo {
-    address: "TBD",
-    name: "TBD",
     version: "1",
     decimals: 6,
     asset_transfer_method: None,
@@ -82,7 +66,6 @@ static DEFAULT_STABLECOINS: LazyLock<HashMap<&'static str, DefaultAssetInfo>> =
     LazyLock::new(|| {
         let mut map = HashMap::new();
         map.insert("eip155:196", XLAYER_MAINNET_USDT);
-        map.insert("eip155:195", XLAYER_TESTNET_USDT);
         map
     });
 
@@ -114,8 +97,6 @@ mod tests {
     #[test]
     fn test_xlayer_chain_ids() {
         assert_eq!(XLAYER_MAINNET.chain_id, 196);
-        assert_eq!(XLAYER_TESTNET.chain_id, 195);
         assert_eq!(XLAYER_MAINNET.network, "eip155:196");
-        assert_eq!(XLAYER_TESTNET.network, "eip155:195");
     }
 }

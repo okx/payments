@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 
 use x402_core::error::X402Error;
-use x402_core::types::{AssetAmount, Network, PaymentRequirements, Price, SupportedKind};
+use x402_core::types::{AssetAmount, MoneyParser, Network, PaymentRequirements, Price, SupportedKind};
 use x402_core::types::SchemeNetworkServer;
 
 use crate::constants::{get_default_asset, DefaultAssetInfo};
@@ -14,11 +14,29 @@ use crate::constants::{get_default_asset, DefaultAssetInfo};
 /// EVM server implementation for the "exact" payment scheme.
 ///
 /// Mirrors TS: `export class ExactEvmScheme implements SchemeNetworkServer`
-pub struct ExactEvmScheme;
+pub struct ExactEvmScheme {
+    money_parsers: Vec<MoneyParser>,
+}
 
 impl ExactEvmScheme {
     pub fn new() -> Self {
-        Self
+        Self {
+            money_parsers: Vec::new(),
+        }
+    }
+
+    /// Register a custom money parser in the parser chain.
+    ///
+    /// Multiple parsers can be registered — they are tried in registration order.
+    /// Each parser receives a decimal amount (e.g., 0.003 for "$0.003") and network.
+    /// Return `Some(AssetAmount)` to handle, or `None` to pass to the next parser.
+    /// The default conversion (using DEFAULT_STABLECOINS) is always the final fallback.
+    ///
+    /// Mirrors TS: `registerMoneyParser(parser: MoneyParser): ExactEvmScheme`
+    /// Mirrors Go: `func (s *ExactEvmScheme) RegisterMoneyParser(parser MoneyParser) *ExactEvmScheme`
+    pub fn register_money_parser(mut self, parser: MoneyParser) -> Self {
+        self.money_parsers.push(parser);
+        self
     }
 
     /// Strip currency symbols and whitespace from a money string.
@@ -28,10 +46,16 @@ impl ExactEvmScheme {
     /// Mirrors TS: `private parseMoneyToDecimal(money: string | number): number`
     fn parse_money_to_string(money: &str) -> Result<String, X402Error> {
         let clean = money.trim().trim_start_matches('$').trim().to_string();
-        // Validate it's a valid number
-        clean
+        // Validate it's a valid, finite, non-negative number
+        let value: f64 = clean
             .parse::<f64>()
             .map_err(|_| X402Error::PriceParse(format!("invalid money format: {}", money)))?;
+        if !value.is_finite() {
+            return Err(X402Error::PriceParse(format!("money must be finite: {}", money)));
+        }
+        if value < 0.0 {
+            return Err(X402Error::PriceParse(format!("money must be non-negative: {}", money)));
+        }
         Ok(clean)
     }
 
@@ -49,6 +73,14 @@ impl ExactEvmScheme {
 
         // Pad or truncate decimal part to match token decimals
         let padded_dec = if dec_part.len() >= decimals as usize {
+            let truncated = &dec_part[decimals as usize..];
+            if truncated.chars().any(|c| c != '0') {
+                return Err(X402Error::PriceParse(format!(
+                    "amount has {} decimal places but token only supports {}",
+                    dec_part.len(),
+                    decimals
+                )));
+            }
             &dec_part[..decimals as usize]
         } else {
             &format!("{:0<width$}", dec_part, width = decimals as usize)
@@ -136,9 +168,21 @@ impl SchemeNetworkServer for ExactEvmScheme {
                 }
                 Ok(asset_amount.clone())
             }
-            // Parse Money string and convert using string arithmetic (no f64 precision loss)
+            // Parse Money string: try custom parsers first, then default conversion
             Price::Money(money) => {
                 let amount_str = Self::parse_money_to_string(money)?;
+
+                // Try custom money parsers in registration order
+                let amount_f64: f64 = amount_str.parse().map_err(|_| {
+                    X402Error::PriceParse(format!("invalid money format: {}", money))
+                })?;
+                for parser in &self.money_parsers {
+                    if let Some(result) = parser(amount_f64, network) {
+                        return Ok(result);
+                    }
+                }
+
+                // All custom parsers returned None — use default conversion
                 Self::default_money_conversion(&amount_str, network)
             }
         }

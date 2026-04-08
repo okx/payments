@@ -28,7 +28,8 @@ async fn main() {
     let facilitator_client = match std::env::var("FACILITATOR_URL") {
         Ok(url) => OkxHttpFacilitatorClient::with_url(&url, &api_key, &secret_key, &passphrase),
         Err(_) => OkxHttpFacilitatorClient::new(&api_key, &secret_key, &passphrase),
-    };
+    }
+    .expect("Failed to create facilitator client");
 
     let mut server = X402ResourceServer::new(facilitator_client)
         .register("eip155:196", ExactEvmScheme::new())

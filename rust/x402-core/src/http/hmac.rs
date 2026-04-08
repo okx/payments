@@ -34,15 +34,15 @@ pub(crate) fn sign_request(
     method: &str,
     request_path: &str,
     body: &str,
-) -> String {
+) -> Result<String, crate::error::X402Error> {
     let message = format!("{}{}{}{}", timestamp, method.to_uppercase(), request_path, body);
 
-    let mut mac =
-        HmacSha256::new_from_slice(secret_key.as_bytes()).expect("HMAC accepts any key length");
+    let mut mac = HmacSha256::new_from_slice(secret_key.as_bytes())
+        .map_err(|e| crate::error::X402Error::Config(format!("invalid HMAC key: {}", e)))?;
     mac.update(message.as_bytes());
     let result = mac.finalize().into_bytes();
 
-    STANDARD.encode(result)
+    Ok(STANDARD.encode(result))
 }
 
 /// Build the complete set of OKX authentication headers.
@@ -66,7 +66,7 @@ pub fn build_auth_headers(
     body: &str,
 ) -> Result<HeaderMap, crate::error::X402Error> {
     let timestamp = Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
-    let signature = sign_request(secret_key, &timestamp, method, request_path, body);
+    let signature = sign_request(secret_key, &timestamp, method, request_path, body)?;
 
     let mut headers = HeaderMap::new();
     headers.insert(
@@ -104,7 +104,8 @@ mod tests {
             "POST",
             "/api/v6/pay/x402/verify",
             r#"{"x402Version":2}"#,
-        );
+        )
+        .unwrap();
         // Signature should be a valid base64 string
         assert!(!sig.is_empty());
         assert!(STANDARD.decode(&sig).is_ok());
@@ -116,7 +117,8 @@ mod tests {
             "POST",
             "/api/v6/pay/x402/verify",
             r#"{"x402Version":2}"#,
-        );
+        )
+        .unwrap();
         assert_eq!(sig, sig2);
     }
 

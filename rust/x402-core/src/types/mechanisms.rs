@@ -11,6 +11,15 @@ use async_trait::async_trait;
 use super::{AssetAmount, Network, PaymentRequirements, Price, SupportedKind};
 use crate::error::X402Error;
 
+/// Custom money parser function.
+///
+/// Receives a decimal amount (e.g., 0.003 for "$0.003") and network identifier.
+/// Returns `Some(AssetAmount)` to handle this price, or `None` to pass to the next parser.
+///
+/// Mirrors TS: `type MoneyParser = (amount: number, network: Network) => Promise<AssetAmount | null>`
+/// Mirrors Go: `type MoneyParser func(amount float64, network Network) (*AssetAmount, error)`
+pub type MoneyParser = Box<dyn Fn(f64, &str) -> Option<AssetAmount> + Send + Sync>;
+
 /// Server-side mechanism for a specific scheme/network combination.
 /// Converts user-friendly prices to on-chain amounts and enhances payment requirements.
 ///

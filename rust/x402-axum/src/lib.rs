@@ -31,7 +31,8 @@ pub use x402_core::http::{
     OnBeforeVerifyHook, OnProtectedRequestHook, OnSettleFailureHook, OnSettlementTimeoutHook,
     OnVerifyFailureHook, PaymentResolverFn, PollResult, ProtectedRequestResult, RequestContext,
     ResolvedAccept, RoutePaymentConfig, RoutesConfig, SettleContext, SettleRecoveryResult,
-    SettleResultContext, SettlementTimeoutResult, VerifyContext, VerifyRecoveryResult,
-    VerifyResultContext, DEFAULT_POLL_DEADLINE, DEFAULT_POLL_INTERVAL,
+    SettleResultContext, SettlementOverrides, SettlementTimeoutResult, VerifyContext,
+    VerifyRecoveryResult, VerifyResultContext, DEFAULT_POLL_DEADLINE, DEFAULT_POLL_INTERVAL,
+    SETTLEMENT_OVERRIDES_HEADER,
 };
 pub use x402_core::server::X402ResourceServer;
