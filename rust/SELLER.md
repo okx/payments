@@ -11,9 +11,9 @@ x402 is the HTTP 402 Payment Required protocol. It lets you charge for API acces
 
 ```toml
 [dependencies]
-x402-core = { git = "https://gitlab.okg.com/okfe/tools/payments-sdk.git", branch = "feat/rust-seller-sdk" }
-x402-axum = { git = "https://gitlab.okg.com/okfe/tools/payments-sdk.git", branch = "feat/rust-seller-sdk" }
-x402-evm  = { git = "https://gitlab.okg.com/okfe/tools/payments-sdk.git", branch = "feat/rust-seller-sdk" }
+x402-core = { git = "https://github.com/okx/payments" }
+x402-axum = { git = "https://github.com/okx/payments" }
+x402-evm  = { git = "https://github.com/okx/payments" }
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 serde_json = "1"
