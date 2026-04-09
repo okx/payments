@@ -15,6 +15,7 @@ use x402_core::types::*;
 /// Helper: create a test client pointing at the mock server.
 fn test_client(server_url: &str) -> OkxHttpFacilitatorClient {
     OkxHttpFacilitatorClient::with_url(server_url, "test-api-key", "test-secret", "test-passphrase")
+        .expect("failed to create test client")
 }
 
 /// Helper: build a minimal VerifyRequest.

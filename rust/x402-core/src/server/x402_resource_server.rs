@@ -121,7 +121,10 @@ impl X402ResourceServer {
             .ok_or_else(|| X402Error::UnsupportedScheme(format!("{}:{}", scheme, network)))?;
 
         // Parse the price using the scheme's parser
-        let price_obj = crate::types::Price::Money(price.to_string());
+        // Try JSON AssetAmount first (e.g. {"asset":"0x...","amount":"1000"}), fall back to Money string
+        let price_obj = serde_json::from_str::<crate::types::AssetAmount>(price)
+            .map(crate::types::Price::Asset)
+            .unwrap_or_else(|_| crate::types::Price::Money(price.to_string()));
         let asset_amount = scheme_impl.parse_price(&price_obj, &network.to_string()).await?;
 
         // Merge extra: start with parsed price extras, then overlay config extras
@@ -233,17 +236,37 @@ impl X402ResourceServer {
 
     /// Settle a verified payment.
     ///
+    /// If `settlement_overrides` is provided with an amount, the effective
+    /// `payment_requirements.amount` is replaced before settlement (partial
+    /// settlement for upto scheme).
+    ///
     /// Mirrors TS: `server.settlePayment()`
     pub async fn settle_payment(
         &self,
         payment_payload: &PaymentPayload,
         payment_requirements: &PaymentRequirements,
         sync_settle: Option<bool>,
+        settlement_overrides: Option<&crate::http::SettlementOverrides>,
     ) -> Result<SettleResponse, X402Error> {
+        // Apply settlement overrides (e.g., partial settlement for upto scheme)
+        let effective_requirements = if let Some(overrides) = settlement_overrides {
+            if let Some(ref raw_amount) = overrides.amount {
+                let resolved =
+                    crate::http::resolve_settlement_override_amount(raw_amount, payment_requirements)?;
+                let mut reqs = payment_requirements.clone();
+                reqs.amount = resolved;
+                reqs
+            } else {
+                payment_requirements.clone()
+            }
+        } else {
+            payment_requirements.clone()
+        };
+
         let request = SettleRequest {
             x402_version: payment_payload.x402_version,
             payment_payload: payment_payload.clone(),
-            payment_requirements: payment_requirements.clone(),
+            payment_requirements: effective_requirements,
             sync_settle,
         };
         self.facilitator.settle(&request).await

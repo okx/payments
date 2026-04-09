@@ -31,7 +31,7 @@ async fn main() {
         "your-api-key",
         "your-secret-key",
         "your-passphrase",
-    );
+    ).expect("Failed to create facilitator client");
 
     // 2. Create server and register schemes
     let mut server = X402ResourceServer::new(facilitator)
@@ -100,9 +100,8 @@ Headers added automatically to every Facilitator request:
 | Chain | Network ID | Token | Contract | Decimals |
 |-------|-----------|-------|----------|----------|
 | X Layer | `eip155:196` | USDT | `0x779ded0c9e1022225f8e0630b35a9b54be713736` | 6 |
-| X Layer Testnet | `eip155:195` | USDT | TBD | 6 |
 
-X Layer assets are pre-registered — no manual configuration needed.
+X Layer assets are pre-registered — no manual configuration needed. For other tokens (e.g., USDG), use `register_money_parser()` or specify an `AssetAmount` directly in the price field.
 
 ## Payment Schemes
 
@@ -142,6 +141,7 @@ Base path: `/api/v6/pay/x402`
 | `/supported` | GET | Query supported schemes and networks |
 | `/verify` | POST | Verify payment authorization (no on-chain tx) |
 | `/settle` | POST | Submit for on-chain settlement |
+| `/settle/status?txHash=` | GET | Query settlement status (used for timeout polling) |
 
 ### OKX Extensions
 
@@ -188,7 +188,8 @@ rust/
 │   └── aggr_deferred/  # AggrDeferredEvmScheme (OKX extension)
 └── examples/
     ├── basic_server.rs
-    └── custom_config.rs
+    ├── custom_config.rs
+    └── test_connectivity.rs
 ```
 
 ## License

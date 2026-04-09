@@ -6,6 +6,8 @@
 //! OKX Facilitator responses are wrapped in `{"code":0, "data": {...}, "msg":""}`.
 //! This client automatically unwraps the `data` field.
 
+use std::time::Duration;
+
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::de::DeserializeOwned;
@@ -46,6 +48,7 @@ struct OkxApiResponse<T> {
 ///
 /// # Example
 /// ```no_run
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use x402_core::http::OkxHttpFacilitatorClient;
 ///
 /// // With default URL (https://web3.okx.com)
@@ -53,7 +56,7 @@ struct OkxApiResponse<T> {
 ///     "your-api-key",
 ///     "your-secret-key",
 ///     "your-passphrase",
-/// );
+/// )?;
 ///
 /// // With custom URL
 /// let client = OkxHttpFacilitatorClient::with_url(
@@ -61,7 +64,9 @@ struct OkxApiResponse<T> {
 ///     "your-api-key",
 ///     "your-secret-key",
 ///     "your-passphrase",
-/// );
+/// )?;
+/// # Ok(())
+/// # }
 /// ```
 pub struct OkxHttpFacilitatorClient {
     http: Client,
@@ -84,7 +89,7 @@ impl OkxHttpFacilitatorClient {
         api_key: &str,
         secret_key: &str,
         passphrase: &str,
-    ) -> Self {
+    ) -> Result<Self, X402Error> {
         Self::with_url(DEFAULT_FACILITATOR_URL, api_key, secret_key, passphrase)
     }
 
@@ -100,17 +105,20 @@ impl OkxHttpFacilitatorClient {
         api_key: &str,
         secret_key: &str,
         passphrase: &str,
-    ) -> Self {
-        Self {
-            http: Client::builder()
-                .use_native_tls()
-                .build()
-                .expect("failed to build HTTP client"),
+    ) -> Result<Self, X402Error> {
+        let http = Client::builder()
+            .use_native_tls()
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30))
+            .build()
+            .map_err(|e| X402Error::Config(format!("failed to build HTTP client: {}", e)))?;
+        Ok(Self {
+            http,
             base_url: base_url.trim_end_matches('/').to_string(),
             api_key: api_key.to_string(),
             secret_key: secret_key.to_string(),
             passphrase: passphrase.to_string(),
-        }
+        })
     }
 
     /// Build the full URL for a given API path.
@@ -151,7 +159,6 @@ impl FacilitatorClient for OkxHttpFacilitatorClient {
     async fn get_supported(&self) -> Result<SupportedResponse, X402Error> {
         let path = "/supported";
         let url = self.url(path);
-        tracing::debug!("[x402] GET {}", url);
 
         let headers = build_auth_headers(
             &self.api_key,
@@ -170,7 +177,7 @@ impl FacilitatorClient for OkxHttpFacilitatorClient {
             .await?;
 
         let status = response.status();
-        let body = response.text().await.unwrap_or_default();
+        let body = response.text().await?;
 
         if !status.is_success() {
             return Err(X402Error::Other(format!(
@@ -187,7 +194,6 @@ impl FacilitatorClient for OkxHttpFacilitatorClient {
         let path = "/verify";
         let url = self.url(path);
         let req_body = serde_json::to_string(request)?;
-        tracing::debug!("[x402] POST {} request={}", url, req_body);
 
         let headers = build_auth_headers(
             &self.api_key,
@@ -208,7 +214,7 @@ impl FacilitatorClient for OkxHttpFacilitatorClient {
             .await?;
 
         let status = response.status();
-        let body = response.text().await.unwrap_or_default();
+        let body = response.text().await?;
 
         if !status.is_success() {
             return Err(X402Error::Other(format!(
@@ -225,7 +231,6 @@ impl FacilitatorClient for OkxHttpFacilitatorClient {
         let path = "/settle";
         let url = self.url(path);
         let req_body = serde_json::to_string(request)?;
-        tracing::debug!("[x402] POST {} request={}", url, req_body);
 
         let headers = build_auth_headers(
             &self.api_key,
@@ -246,8 +251,7 @@ impl FacilitatorClient for OkxHttpFacilitatorClient {
             .await?;
 
         let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        tracing::debug!("[x402] POST {} → {} body={}", url, status.as_u16(), body);
+        let body = response.text().await?;
 
         if !status.is_success() {
             return Err(X402Error::Other(format!(
@@ -273,7 +277,6 @@ impl FacilitatorClient for OkxHttpFacilitatorClient {
             .collect();
         let path = format!("/settle/status?txHash={}", encoded_hash);
         let url = self.url(&path);
-        tracing::debug!("[x402] GET {}", url);
 
         let headers = build_auth_headers(
             &self.api_key,
@@ -292,8 +295,7 @@ impl FacilitatorClient for OkxHttpFacilitatorClient {
             .await?;
 
         let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        tracing::debug!("[x402] GET {} → {} body={}", url, status.as_u16(), body);
+        let body = response.text().await?;
 
         if !status.is_success() {
             return Err(X402Error::Other(format!(

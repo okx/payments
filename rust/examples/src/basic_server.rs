@@ -15,6 +15,7 @@ use serde_json::{json, Value};
 use x402_axum::{payment_middleware, AcceptConfig, RoutePaymentConfig};
 use x402_core::http::OkxHttpFacilitatorClient;
 use x402_core::server::X402ResourceServer;
+use x402_core::types::AssetAmount;
 use x402_evm::{AggrDeferredEvmScheme, ExactEvmScheme};
 
 #[tokio::main]
@@ -32,12 +33,30 @@ async fn main() {
     let facilitator_client = match std::env::var("FACILITATOR_URL") {
         Ok(url) => OkxHttpFacilitatorClient::with_url(&url, &api_key, &secret_key, &passphrase),
         Err(_) => OkxHttpFacilitatorClient::new(&api_key, &secret_key, &passphrase),
-    };
+    }
+    .expect("Failed to create facilitator client");
 
     // 2. Create Server and register schemes (mirrors TS: new x402ResourceServer(fc).register(n, s))
+    // Register a custom MoneyParser so "$0.003" maps to USDG on X Layer
+    let aggr_deferred = AggrDeferredEvmScheme::new()
+        .register_money_parser(Box::new(|amount, network| {
+            if network == "eip155:196" {
+                Some(AssetAmount {
+                    asset: "0x4ae46a509f6b1d9056937ba4500cb143933d2dc8".into(),
+                    amount: format!("{:.0}", amount * 1e6), // USDG: 6 decimals
+                    extra: Some(HashMap::from([
+                        ("name".into(), json!("USDG")),
+                        ("version".into(), json!("1")),
+                    ])),
+                })
+            } else {
+                None // Other networks use default stablecoin
+            }
+        }));
+
     let mut server = X402ResourceServer::new(facilitator_client)
         .register("eip155:196", ExactEvmScheme::new())
-        .register("eip155:196", AggrDeferredEvmScheme::new());
+        .register("eip155:196", aggr_deferred);
 
     // MUST initialize before use (fetches facilitator's supported schemes)
     // Mirrors TS: await server.initialize()
@@ -58,7 +77,7 @@ async fn main() {
                 },
                 AcceptConfig {
                     scheme: "aggr_deferred".into(),
-                    price: "$0.003".into(),
+                    price: "$0.00145".into(), // MoneyParser converts to USDG automatically
                     network: "eip155:196".into(),
                     pay_to: pay_to.clone(),
                     max_timeout_seconds: None,

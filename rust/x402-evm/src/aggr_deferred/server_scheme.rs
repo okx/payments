@@ -11,7 +11,7 @@
 use async_trait::async_trait;
 
 use x402_core::error::X402Error;
-use x402_core::types::{AssetAmount, Network, PaymentRequirements, Price, SupportedKind};
+use x402_core::types::{AssetAmount, MoneyParser, Network, PaymentRequirements, Price, SupportedKind};
 use x402_core::types::SchemeNetworkServer;
 
 use crate::exact::ExactEvmScheme;
@@ -31,6 +31,12 @@ impl AggrDeferredEvmScheme {
         Self {
             exact: ExactEvmScheme::new(),
         }
+    }
+
+    /// Register a custom money parser (delegates to inner ExactEvmScheme).
+    pub fn register_money_parser(mut self, parser: MoneyParser) -> Self {
+        self.exact = self.exact.register_money_parser(parser);
+        self
     }
 }
 
