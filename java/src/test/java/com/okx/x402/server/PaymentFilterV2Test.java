@@ -102,7 +102,7 @@ class PaymentFilterV2Test {
         sr.transaction = "0xdef";
         sr.network = "eip155:196";
         sr.payer = "0xPayer";
-        when(fac.settle(any(), any())).thenReturn(sr);
+        when(fac.settle(any(), any(), anyBoolean())).thenReturn(sr);
 
         filter.doFilter(req, resp, chain);
 
@@ -134,7 +134,7 @@ class PaymentFilterV2Test {
         sr.success = true;
         sr.transaction = "0x123";
         sr.network = "eip155:196";
-        when(fac.settle(any(), any())).thenReturn(sr);
+        when(fac.settle(any(), any(), anyBoolean())).thenReturn(sr);
 
         filter.doFilter(req, resp, chain);
         verify(chain).doFilter(req, resp);
@@ -178,7 +178,7 @@ class PaymentFilterV2Test {
         SettleResponse sr = new SettleResponse();
         sr.success = false;
         sr.errorReason = "insufficient_funds";
-        when(fac.settle(any(), any())).thenReturn(sr);
+        when(fac.settle(any(), any(), anyBoolean())).thenReturn(sr);
 
         filter.doFilter(req, resp, chain);
 
@@ -231,7 +231,7 @@ class PaymentFilterV2Test {
         filter.doFilter(req, resp, chain);
 
         verify(chain).doFilter(req, resp);
-        verify(fac, never()).settle(any(), any());
+        verify(fac, never()).settle(any(), any(), anyBoolean());
     }
 
     @Test
@@ -259,6 +259,146 @@ class PaymentFilterV2Test {
         when(req.getHeader("X-PAYMENT")).thenReturn(null);
 
         multiFilter.doFilter(req, resp, chain);
+        verify(resp).setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
+    }
+
+    // -----------------------------------------------------------------------
+    // Settlement timeout polling + hook tests
+    // -----------------------------------------------------------------------
+
+    @Test
+    void settleTimeoutPollsAndRecovers() throws Exception {
+        when(req.getMethod()).thenReturn("GET");
+        when(req.getRequestURI()).thenReturn("/protected/xlayer-usdt");
+        when(req.getRequestURL()).thenReturn(new StringBuffer("http://localhost/protected/xlayer-usdt"));
+
+        PaymentPayload pp = new PaymentPayload();
+        pp.x402Version = 2;
+        pp.payload = Map.of("signature", "0xabc");
+        pp.accepted = new PaymentRequirements();
+        pp.accepted.scheme = "exact";
+        pp.accepted.network = "eip155:196";
+        when(req.getHeader("PAYMENT-SIGNATURE")).thenReturn(pp.toHeader());
+
+        VerifyResponse vr = new VerifyResponse();
+        vr.isValid = true;
+        vr.payer = "0xPayer";
+        when(fac.verify(any(), any())).thenReturn(vr);
+
+        // settle returns timeout
+        SettleResponse sr = new SettleResponse();
+        sr.success = true;
+        sr.transaction = "0xTimeoutTx";
+        sr.network = "eip155:196";
+        sr.status = "timeout";
+        sr.payer = "0xPayer";
+        when(fac.settle(any(), any(), anyBoolean())).thenReturn(sr);
+
+        // settleStatus poll returns success
+        SettleResponse polled = new SettleResponse();
+        polled.success = true;
+        polled.transaction = "0xTimeoutTx";
+        polled.network = "eip155:196";
+        polled.status = "success";
+        polled.payer = "0xPayer";
+        when(fac.settleStatus("0xTimeoutTx")).thenReturn(polled);
+
+        when(resp.getStatus()).thenReturn(200);
+
+        filter.pollDeadline(java.time.Duration.ofSeconds(3))
+              .pollInterval(java.time.Duration.ofMillis(200));
+
+        filter.doFilter(req, resp, chain);
+
+        verify(chain).doFilter(req, resp);
+        verify(fac).settleStatus("0xTimeoutTx");
+        verify(resp).setHeader(eq("PAYMENT-RESPONSE"), any());
+    }
+
+    @Test
+    void settleTimeoutHookGrantsAccess() throws Exception {
+        when(req.getMethod()).thenReturn("GET");
+        when(req.getRequestURI()).thenReturn("/protected/xlayer-usdt");
+        when(req.getRequestURL()).thenReturn(new StringBuffer("http://localhost/protected/xlayer-usdt"));
+
+        PaymentPayload pp = new PaymentPayload();
+        pp.x402Version = 2;
+        pp.payload = Map.of("signature", "0xabc");
+        pp.accepted = new PaymentRequirements();
+        pp.accepted.scheme = "exact";
+        pp.accepted.network = "eip155:196";
+        when(req.getHeader("PAYMENT-SIGNATURE")).thenReturn(pp.toHeader());
+
+        VerifyResponse vr = new VerifyResponse();
+        vr.isValid = true;
+        when(fac.verify(any(), any())).thenReturn(vr);
+
+        SettleResponse sr = new SettleResponse();
+        sr.success = true;
+        sr.transaction = "0xTimeoutTx";
+        sr.network = "eip155:196";
+        sr.status = "timeout";
+        when(fac.settle(any(), any(), anyBoolean())).thenReturn(sr);
+
+        // Poll returns pending (never confirms)
+        SettleResponse pending = new SettleResponse();
+        pending.success = true;
+        pending.status = "pending";
+        when(fac.settleStatus("0xTimeoutTx")).thenReturn(pending);
+
+        when(resp.getStatus()).thenReturn(200);
+
+        // Hook grants access
+        filter.pollDeadline(java.time.Duration.ofMillis(500))
+              .pollInterval(java.time.Duration.ofMillis(200))
+              .onSettlementTimeout((txHash, network) -> true);
+
+        filter.doFilter(req, resp, chain);
+
+        verify(chain).doFilter(req, resp);
+        verify(resp).setHeader(eq("PAYMENT-RESPONSE"), any());
+    }
+
+    @Test
+    void settleTimeoutNoHookReturns402() throws Exception {
+        when(req.getMethod()).thenReturn("GET");
+        when(req.getRequestURI()).thenReturn("/protected/xlayer-usdt");
+        when(req.getRequestURL()).thenReturn(new StringBuffer("http://localhost/protected/xlayer-usdt"));
+
+        PaymentPayload pp = new PaymentPayload();
+        pp.x402Version = 2;
+        pp.payload = Map.of("signature", "0xabc");
+        pp.accepted = new PaymentRequirements();
+        pp.accepted.scheme = "exact";
+        pp.accepted.network = "eip155:196";
+        when(req.getHeader("PAYMENT-SIGNATURE")).thenReturn(pp.toHeader());
+
+        VerifyResponse vr = new VerifyResponse();
+        vr.isValid = true;
+        when(fac.verify(any(), any())).thenReturn(vr);
+
+        SettleResponse sr = new SettleResponse();
+        sr.success = true;
+        sr.transaction = "0xTimeoutTx";
+        sr.network = "eip155:196";
+        sr.status = "timeout";
+        when(fac.settle(any(), any(), anyBoolean())).thenReturn(sr);
+
+        SettleResponse pending = new SettleResponse();
+        pending.success = true;
+        pending.status = "pending";
+        when(fac.settleStatus("0xTimeoutTx")).thenReturn(pending);
+
+        when(resp.getStatus()).thenReturn(200);
+        when(resp.isCommitted()).thenReturn(false);
+
+        // No hook — should return 402 after poll deadline
+        filter.pollDeadline(java.time.Duration.ofMillis(500))
+              .pollInterval(java.time.Duration.ofMillis(200));
+
+        filter.doFilter(req, resp, chain);
+
+        verify(chain).doFilter(req, resp);
         verify(resp).setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
     }
 }

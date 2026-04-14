@@ -7,6 +7,7 @@ import com.okx.x402.model.v2.SettleResponse;
 import com.okx.x402.model.v2.SupportedResponse;
 import com.okx.x402.model.v2.VerifyRequest;
 import com.okx.x402.model.v2.VerifyResponse;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.okx.x402.util.Json;
 import com.okx.x402.util.OKXAuth;
 
@@ -27,6 +28,7 @@ public class OKXFacilitatorClient implements FacilitatorClient {
     private static final String DEFAULT_BASE_URL = "https://www.okx.com";
     private static final String VERIFY_PATH = "/api/v6/pay/x402/verify";
     private static final String SETTLE_PATH = "/api/v6/pay/x402/settle";
+    private static final String SETTLE_STATUS_PATH = "/api/v6/pay/x402/settle/status";
     private static final String SUPPORTED_PATH = "/api/v6/pay/x402/supported";
 
     private static final Map<String, String> ERROR_MAP = Map.of(
@@ -86,13 +88,32 @@ public class OKXFacilitatorClient implements FacilitatorClient {
     public SettleResponse settle(PaymentPayload payload,
                                  PaymentRequirements requirements)
             throws IOException, InterruptedException {
+        return settle(payload, requirements, false);
+    }
+
+    @Override
+    public SettleResponse settle(PaymentPayload payload,
+                                 PaymentRequirements requirements,
+                                 boolean syncSettle)
+            throws IOException, InterruptedException {
         SettleRequest req = new SettleRequest();
         req.x402Version = 2;
         req.paymentPayload = payload;
         req.paymentRequirements = requirements;
+        if (syncSettle) {
+            req.syncSettle = true;
+        }
 
         String body = Json.MAPPER.writeValueAsString(req);
         String responseBody = doPost(SETTLE_PATH, body);
+        return Json.MAPPER.readValue(responseBody, SettleResponse.class);
+    }
+
+    @Override
+    public SettleResponse settleStatus(String txHash)
+            throws IOException, InterruptedException {
+        String path = SETTLE_STATUS_PATH + "?txHash=" + txHash;
+        String responseBody = doGet(path);
         return Json.MAPPER.readValue(responseBody, SettleResponse.class);
     }
 
@@ -134,13 +155,55 @@ public class OKXFacilitatorClient implements FacilitatorClient {
         return handleResponse(resp, path);
     }
 
+    /**
+     * Handles the OKX API response, unwrapping the envelope if present.
+     *
+     * <p>OKX APIs return responses in two formats:
+     * <ul>
+     *   <li>Envelope: {@code {"code":0,"data":{...},"msg":""}} — unwrap to data</li>
+     *   <li>Direct: the response body is the payload itself (e.g. from WireMock/tests)</li>
+     * </ul>
+     */
     private String handleResponse(HttpResponse<String> resp, String path)
             throws IOException {
-        if (resp.statusCode() == 200) {
-            return resp.body();
+        if (resp.statusCode() != 200) {
+            return handleErrorResponse(resp, path);
         }
+
+        String body = resp.body();
         try {
-            var node = Json.MAPPER.readTree(resp.body());
+            JsonNode root = Json.MAPPER.readTree(body);
+
+            // Check for OKX envelope: {"code":...,"data":...}
+            if (root.has("code") && root.has("data")) {
+                int code = root.get("code").asInt(-1);
+                if (code != 0) {
+                    // Non-zero code = business error even on HTTP 200
+                    String msg = root.has("msg") ? root.get("msg").asText() : "Unknown error";
+                    String errCode = root.get("code").asText();
+                    String mapped = ERROR_MAP.getOrDefault(errCode, msg);
+                    throw new IOException("OKX API error on " + path
+                            + " (code=" + errCode + "): " + mapped);
+                }
+                // Unwrap: return the "data" node as JSON string
+                return Json.MAPPER.writeValueAsString(root.get("data"));
+            }
+
+            // No envelope — return body as-is (direct V2 format)
+            return body;
+
+        } catch (IOException rethrow) {
+            throw rethrow;
+        } catch (Exception e) {
+            // Not valid JSON or unexpected structure — return raw body
+            return body;
+        }
+    }
+
+    private String handleErrorResponse(HttpResponse<String> resp, String path)
+            throws IOException {
+        try {
+            JsonNode node = Json.MAPPER.readTree(resp.body());
             String code = node.has("code") ? node.get("code").asText() : "";
             String msg = ERROR_MAP.getOrDefault(code,
                     node.has("msg") ? node.get("msg").asText() : "Unknown error");

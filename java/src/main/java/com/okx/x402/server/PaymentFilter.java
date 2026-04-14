@@ -21,6 +21,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
@@ -28,7 +29,17 @@ import java.util.Objects;
 
 /**
  * Servlet filter that enforces x402 V2 payments on configured routes.
- * Supports route-level pricing, multi-chain, and dynamic price resolution.
+ * Supports route-level pricing, multi-chain, dynamic price resolution,
+ * and settlement timeout polling with developer hook fallback.
+ *
+ * <p>Settlement timeout recovery flow (when settle returns status="timeout"):
+ * <ol>
+ *   <li>SDK auto-polls GET /settle/status (interval 1s, deadline configurable, default 5s)</li>
+ *   <li>If status="success" during polling → return 200 + resource</li>
+ *   <li>If polling expires and developer configured a timeout hook → call hook</li>
+ *   <li>Hook returns confirmed=true → return 200; confirmed=false → return 402</li>
+ *   <li>No hook configured → return 402</li>
+ * </ol>
  */
 public class PaymentFilter implements Filter {
 
@@ -36,8 +47,32 @@ public class PaymentFilter implements Filter {
     private static final String HEADER_PAYMENT_RESPONSE = "PAYMENT-RESPONSE";
     private static final String HEADER_X_PAYMENT = "X-PAYMENT";
 
+    /** Default polling interval for settle/status checks. */
+    public static final Duration DEFAULT_POLL_INTERVAL = Duration.ofSeconds(1);
+    /** Default polling deadline before calling timeout hook. */
+    public static final Duration DEFAULT_POLL_DEADLINE = Duration.ofSeconds(5);
+
     private final FacilitatorClient facilitator;
     private final Map<String, RouteConfig> routes;
+    private Duration pollInterval = DEFAULT_POLL_INTERVAL;
+    private Duration pollDeadline = DEFAULT_POLL_DEADLINE;
+    private OnSettlementTimeoutHook timeoutHook;
+
+    /**
+     * Hook called when settlement polling times out.
+     * Developer decides whether to grant access (confirmed=true) or deny (confirmed=false).
+     */
+    @FunctionalInterface
+    public interface OnSettlementTimeoutHook {
+        /**
+         * Called when settle status polling expires without success.
+         *
+         * @param txHash the transaction hash being polled
+         * @param network the CAIP-2 network identifier
+         * @return true to grant access (200), false to deny (402)
+         */
+        boolean onTimeout(String txHash, String network);
+    }
 
     /**
      * Per-route payment configuration.
@@ -55,6 +90,8 @@ public class PaymentFilter implements Filter {
         public String asset;
         /** Maximum timeout in seconds (default 24h per spec). */
         public int maxTimeoutSeconds = 86400;
+        /** Whether to use syncSettle (default false). */
+        public boolean syncSettle;
     }
 
     /**
@@ -78,6 +115,40 @@ public class PaymentFilter implements Filter {
     public static PaymentFilter create(FacilitatorClient facilitator,
                                        Map<String, RouteConfig> routes) {
         return new PaymentFilter(facilitator, routes);
+    }
+
+    /**
+     * Set the polling interval for settle/status checks.
+     *
+     * @param interval polling interval (default 1s)
+     * @return this filter for chaining
+     */
+    public PaymentFilter pollInterval(Duration interval) {
+        this.pollInterval = Objects.requireNonNull(interval);
+        return this;
+    }
+
+    /**
+     * Set the polling deadline before calling timeout hook.
+     *
+     * @param deadline max duration to poll (default 5s)
+     * @return this filter for chaining
+     */
+    public PaymentFilter pollDeadline(Duration deadline) {
+        this.pollDeadline = Objects.requireNonNull(deadline);
+        return this;
+    }
+
+    /**
+     * Register a settlement timeout hook. Called when settle status polling
+     * expires without success. Developer decides whether to grant access.
+     *
+     * @param hook timeout hook (txHash, network) → confirmed
+     * @return this filter for chaining
+     */
+    public PaymentFilter onSettlementTimeout(OnSettlementTimeoutHook hook) {
+        this.timeoutHook = hook;
+        return this;
     }
 
     @Override
@@ -158,9 +229,10 @@ public class PaymentFilter implements Filter {
             return;
         }
 
-        // Settle
+        // Settle (with timeout polling + hook recovery)
         try {
-            SettleResponse sr = facilitator.settle(payload, requirements);
+            SettleResponse sr = facilitator.settle(payload, requirements, config.syncSettle);
+
             if (!sr.success) {
                 if (!response.isCommitted()) {
                     respond402(response, request, config,
@@ -168,6 +240,21 @@ public class PaymentFilter implements Filter {
                 }
                 return;
             }
+
+            // If status="timeout", attempt recovery via polling + hook
+            if ("timeout".equals(sr.status) && sr.transaction != null
+                    && !sr.transaction.isEmpty()) {
+                sr = recoverFromTimeout(sr.transaction, requirements.network);
+            }
+
+            if (!sr.success) {
+                if (!response.isCommitted()) {
+                    respond402(response, request, config,
+                            sr.errorReason != null ? sr.errorReason : "settlement timeout");
+                }
+                return;
+            }
+
             SettlementResponseHeader srh = new SettlementResponseHeader(
                     true, sr.transaction, sr.network, sr.payer);
             String b64 = Base64.getEncoder().encodeToString(
@@ -179,6 +266,80 @@ public class PaymentFilter implements Filter {
                 respond402(response, request, config, "settlement error: " + e.getMessage());
             }
         }
+    }
+
+    /**
+     * Attempt to recover from a settlement timeout by polling settle/status
+     * and falling back to the developer's timeout hook.
+     */
+    private SettleResponse recoverFromTimeout(String txHash, String network) {
+        // Step 1: Poll settle/status
+        SettleResponse polled = pollSettleStatus(txHash);
+        if (polled != null && polled.success && "success".equals(polled.status)) {
+            return polled;
+        }
+        if (polled != null && !polled.success && "failed".equals(polled.status)) {
+            return polled;
+        }
+
+        // Step 2: Polling inconclusive — call timeout hook if configured
+        if (timeoutHook != null) {
+            boolean confirmed = timeoutHook.onTimeout(txHash, network);
+            if (confirmed) {
+                SettleResponse recovered = new SettleResponse();
+                recovered.success = true;
+                recovered.transaction = txHash;
+                recovered.network = network;
+                recovered.status = "success";
+                return recovered;
+            }
+        }
+
+        // Step 3: No hook or hook denied — return failure
+        SettleResponse denied = new SettleResponse();
+        denied.success = false;
+        denied.errorReason = "settlement_timeout";
+        denied.errorMessage = "Settlement timed out and was not confirmed";
+        denied.transaction = txHash;
+        denied.network = network;
+        return denied;
+    }
+
+    /**
+     * Poll GET /settle/status at regular intervals until success, failure, or deadline.
+     *
+     * @return the final SettleResponse, or null if all polls errored
+     */
+    private SettleResponse pollSettleStatus(String txHash) {
+        long deadlineMs = System.currentTimeMillis() + pollDeadline.toMillis();
+        long intervalMs = pollInterval.toMillis();
+        SettleResponse last = null;
+
+        while (System.currentTimeMillis() < deadlineMs) {
+            try {
+                last = facilitator.settleStatus(txHash);
+                if (last.success && "success".equals(last.status)) {
+                    return last;
+                }
+                if (!last.success || "failed".equals(last.status)) {
+                    return last;
+                }
+            } catch (Exception e) {
+                // Log and retry within deadline
+            }
+
+            long remaining = deadlineMs - System.currentTimeMillis();
+            if (remaining <= 0) {
+                break;
+            }
+            try {
+                Thread.sleep(Math.min(intervalMs, remaining));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        return last;
     }
 
     private PaymentRequirements buildRequirements(HttpServletRequest request,

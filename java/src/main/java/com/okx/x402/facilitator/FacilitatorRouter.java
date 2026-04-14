@@ -42,6 +42,25 @@ public class FacilitatorRouter implements FacilitatorClient {
     }
 
     @Override
+    public SettleResponse settle(PaymentPayload payload, PaymentRequirements req,
+                                 boolean syncSettle)
+            throws IOException, InterruptedException {
+        return getClient(req.network).settle(payload, req, syncSettle);
+    }
+
+    @Override
+    public SettleResponse settleStatus(String txHash)
+            throws IOException, InterruptedException {
+        if (defaultClient != null) {
+            return defaultClient.settleStatus(txHash);
+        }
+        for (FacilitatorClient client : routeMap.values()) {
+            return client.settleStatus(txHash);
+        }
+        throw new IllegalStateException("No facilitator configured for settleStatus");
+    }
+
+    @Override
     public SupportedResponse supported() throws IOException, InterruptedException {
         // Return from default client if available
         if (defaultClient != null) {

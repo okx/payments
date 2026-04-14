@@ -39,6 +39,34 @@ public interface FacilitatorClient {
             throws IOException, InterruptedException;
 
     /**
+     * Settles a verified payment with optional sync mode.
+     *
+     * @param payload the V2 payment payload to settle
+     * @param requirements the payment requirements for settlement
+     * @param syncSettle if true, wait for on-chain confirmation before returning
+     * @return settlement response with transaction details and status
+     * @throws IOException if request fails
+     * @throws InterruptedException if the request is interrupted
+     */
+    default SettleResponse settle(PaymentPayload payload,
+                                  PaymentRequirements requirements,
+                                  boolean syncSettle)
+            throws IOException, InterruptedException {
+        return settle(payload, requirements);
+    }
+
+    /**
+     * Queries the settlement status of a previously submitted transaction.
+     * Used for async polling when syncSettle=false.
+     *
+     * @param txHash the on-chain transaction hash to check
+     * @return settlement response with current status
+     * @throws IOException if request fails
+     * @throws InterruptedException if the request is interrupted
+     */
+    SettleResponse settleStatus(String txHash) throws IOException, InterruptedException;
+
+    /**
      * Retrieves the payment kinds supported by this facilitator.
      *
      * @return supported response with available kinds

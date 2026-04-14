@@ -125,4 +125,73 @@ class OKXFacilitatorClientTest {
         assertThrows(IOException.class,
                 () -> client.verify(new PaymentPayload(), new PaymentRequirements()));
     }
+
+    @Test
+    void settleSyncSettleTrueIncludesField() throws Exception {
+        wm.stubFor(post(urlEqualTo("/api/v6/pay/x402/settle"))
+                .willReturn(aResponse()
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"success\":true,\"transaction\":\"0xdef\","
+                                + "\"network\":\"eip155:196\",\"status\":\"success\"}")));
+
+        PaymentPayload payload = new PaymentPayload();
+        PaymentRequirements req = new PaymentRequirements();
+
+        SettleResponse sr = client.settle(payload, req, true);
+        assertTrue(sr.success);
+        assertEquals("success", sr.status);
+
+        wm.verify(postRequestedFor(urlEqualTo("/api/v6/pay/x402/settle"))
+                .withRequestBody(containing("\"syncSettle\":true")));
+    }
+
+    @Test
+    void settleSyncSettleFalseOmitsField() throws Exception {
+        wm.stubFor(post(urlEqualTo("/api/v6/pay/x402/settle"))
+                .willReturn(aResponse()
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"success\":true,\"transaction\":\"0xdef\","
+                                + "\"network\":\"eip155:196\",\"status\":\"pending\"}")));
+
+        PaymentPayload payload = new PaymentPayload();
+        PaymentRequirements req = new PaymentRequirements();
+
+        SettleResponse sr = client.settle(payload, req, false);
+        assertTrue(sr.success);
+        assertEquals("pending", sr.status);
+
+        // syncSettle should not be in the body when false
+        wm.verify(postRequestedFor(urlEqualTo("/api/v6/pay/x402/settle"))
+                .withRequestBody(notContaining("syncSettle")));
+    }
+
+    @Test
+    void settleStatusHappyPath() throws Exception {
+        wm.stubFor(get(urlPathEqualTo("/api/v6/pay/x402/settle/status"))
+                .withQueryParam("txHash", equalTo("0xabc123"))
+                .willReturn(aResponse()
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"success\":true,\"transaction\":\"0xabc123\","
+                                + "\"network\":\"eip155:196\",\"status\":\"success\","
+                                + "\"payer\":\"0xpayer\"}")));
+
+        SettleResponse sr = client.settleStatus("0xabc123");
+        assertTrue(sr.success);
+        assertEquals("0xabc123", sr.transaction);
+        assertEquals("success", sr.status);
+        assertEquals("0xpayer", sr.payer);
+    }
+
+    @Test
+    void settleStatusNotFound() throws Exception {
+        wm.stubFor(get(urlPathEqualTo("/api/v6/pay/x402/settle/status"))
+                .willReturn(aResponse()
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"success\":false,\"errorReason\":\"not_found\","
+                                + "\"errorMessage\":\"Transaction not found\"}")));
+
+        SettleResponse sr = client.settleStatus("0xnonexistent");
+        assertFalse(sr.success);
+        assertEquals("not_found", sr.errorReason);
+    }
 }

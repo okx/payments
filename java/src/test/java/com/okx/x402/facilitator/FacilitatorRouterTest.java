@@ -32,6 +32,15 @@ class FacilitatorRouterTest {
                 return sr;
             }
             @Override
+            public SettleResponse settleStatus(String txHash) {
+                SettleResponse sr = new SettleResponse();
+                sr.success = true;
+                sr.transaction = txHash;
+                sr.status = "success";
+                sr.payer = payerLabel;
+                return sr;
+            }
+            @Override
             public SupportedResponse supported() {
                 SupportedResponse sr = new SupportedResponse();
                 SupportedKind kind = new SupportedKind();
