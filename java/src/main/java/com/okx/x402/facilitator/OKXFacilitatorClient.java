@@ -31,11 +31,17 @@ public class OKXFacilitatorClient implements FacilitatorClient {
     private static final String SETTLE_STATUS_PATH = "/api/v6/pay/x402/settle/status";
     private static final String SUPPORTED_PATH = "/api/v6/pay/x402/supported";
 
+    private static final int MAX_RETRIES = 3;
+    private static final long BASE_RETRY_DELAY_MS = 1000;
+
     private static final Map<String, String> ERROR_MAP = Map.of(
             "50103", "Invalid API key",
             "50104", "Invalid API key or IP",
             "50113", "Invalid passphrase",
-            "50001", "Service temporarily unavailable"
+            "50001", "Service temporarily unavailable",
+            "50011", "Too many requests (rate limit)",
+            "8000", "TEE operation failed",
+            "10002", "x402 AA account not found"
     );
 
     private final OKXAuth auth;
@@ -124,35 +130,75 @@ public class OKXFacilitatorClient implements FacilitatorClient {
     }
 
     private String doPost(String path, String body) throws IOException, InterruptedException {
-        Map<String, String> headers = auth.createHeaders("POST", path, body);
+        for (int attempt = 0; ; attempt++) {
+            // Generate fresh auth headers each attempt (timestamp must be current)
+            Map<String, String> headers = auth.createHeaders("POST", path, body);
 
-        HttpRequest.Builder builder = HttpRequest.newBuilder()
-                .uri(URI.create(baseUrl + path))
-                .POST(HttpRequest.BodyPublishers.ofString(body))
-                .timeout(Duration.ofSeconds(30));
+            HttpRequest.Builder builder = HttpRequest.newBuilder()
+                    .uri(URI.create(baseUrl + path))
+                    .POST(HttpRequest.BodyPublishers.ofString(body))
+                    .timeout(Duration.ofSeconds(30));
 
-        headers.forEach(builder::header);
+            headers.forEach(builder::header);
 
-        HttpResponse<String> resp = http.send(builder.build(),
-                HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> resp = http.send(builder.build(),
+                    HttpResponse.BodyHandlers.ofString());
 
-        return handleResponse(resp, path);
+            if (shouldRetry(resp, attempt)) {
+                Thread.sleep(BASE_RETRY_DELAY_MS * (1L << attempt));
+                continue;
+            }
+
+            return handleResponse(resp, path);
+        }
     }
 
     private String doGet(String path) throws IOException, InterruptedException {
-        Map<String, String> headers = auth.createHeaders("GET", path, "");
+        for (int attempt = 0; ; attempt++) {
+            Map<String, String> headers = auth.createHeaders("GET", path, "");
 
-        HttpRequest.Builder builder = HttpRequest.newBuilder()
-                .uri(URI.create(baseUrl + path))
-                .GET()
-                .timeout(Duration.ofSeconds(30));
+            HttpRequest.Builder builder = HttpRequest.newBuilder()
+                    .uri(URI.create(baseUrl + path))
+                    .GET()
+                    .timeout(Duration.ofSeconds(30));
 
-        headers.forEach(builder::header);
+            headers.forEach(builder::header);
 
-        HttpResponse<String> resp = http.send(builder.build(),
-                HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> resp = http.send(builder.build(),
+                    HttpResponse.BodyHandlers.ofString());
 
-        return handleResponse(resp, path);
+            if (shouldRetry(resp, attempt)) {
+                Thread.sleep(BASE_RETRY_DELAY_MS * (1L << attempt));
+                continue;
+            }
+
+            return handleResponse(resp, path);
+        }
+    }
+
+    /**
+     * Determines if the request should be retried based on HTTP status
+     * or OKX rate-limit error code (50011).
+     */
+    private boolean shouldRetry(HttpResponse<String> resp, int attempt) {
+        if (attempt >= MAX_RETRIES) {
+            return false;
+        }
+        if (resp.statusCode() == 429) {
+            return true;
+        }
+        // Check for OKX rate-limit code in 200 envelope
+        if (resp.statusCode() == 200) {
+            try {
+                JsonNode root = Json.MAPPER.readTree(resp.body());
+                if (root.has("code") && "50011".equals(root.get("code").asText())) {
+                    return true;
+                }
+            } catch (Exception ignored) {
+                // Not parseable — don't retry
+            }
+        }
+        return false;
     }
 
     /**

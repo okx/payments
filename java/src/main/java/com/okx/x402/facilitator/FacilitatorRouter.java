@@ -7,8 +7,12 @@ import com.okx.x402.model.v2.SupportedResponse;
 import com.okx.x402.model.v2.VerifyResponse;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Routes facilitator calls to the appropriate client based on network.
@@ -62,15 +66,42 @@ public class FacilitatorRouter implements FacilitatorClient {
 
     @Override
     public SupportedResponse supported() throws IOException, InterruptedException {
-        // Return from default client if available
-        if (defaultClient != null) {
-            return defaultClient.supported();
+        SupportedResponse merged = new SupportedResponse();
+        Set<FacilitatorClient> visited = new HashSet<>();
+
+        if (defaultClient != null && visited.add(defaultClient)) {
+            mergeSupported(merged, defaultClient.supported());
         }
-        // Return first available
         for (FacilitatorClient client : routeMap.values()) {
-            return client.supported();
+            if (visited.add(client)) {
+                mergeSupported(merged, client.supported());
+            }
         }
-        return new SupportedResponse();
+        return merged;
+    }
+
+    private static void mergeSupported(SupportedResponse target, SupportedResponse source) {
+        if (source.kinds != null) {
+            target.kinds.addAll(source.kinds);
+        }
+        if (source.extensions != null) {
+            for (String ext : source.extensions) {
+                if (!target.extensions.contains(ext)) {
+                    target.extensions.add(ext);
+                }
+            }
+        }
+        if (source.signers != null) {
+            source.signers.forEach((key, addrs) ->
+                    target.signers.merge(key, new ArrayList<>(addrs), (existing, incoming) -> {
+                        for (String a : incoming) {
+                            if (!existing.contains(a)) {
+                                existing.add(a);
+                            }
+                        }
+                        return existing;
+                    }));
+        }
     }
 
     private FacilitatorClient getClient(String network) {

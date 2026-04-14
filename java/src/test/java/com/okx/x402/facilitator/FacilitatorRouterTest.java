@@ -135,6 +135,32 @@ class FacilitatorRouterTest {
     }
 
     @Test
+    void supportedAggregatesFromAllClients() throws Exception {
+        FacilitatorRouter router = FacilitatorRouter.builder()
+                .route("eip155:196", stubClient("xlayer"))
+                .route("eip155:8453", stubClient("base"))
+                .defaultFacilitator(stubClient("default"))
+                .build();
+
+        SupportedResponse sr = router.supported();
+        assertEquals(3, sr.kinds.size(),
+                "Should aggregate kinds from default + 2 distinct route clients");
+    }
+
+    @Test
+    void supportedDeduplicatesSameClient() throws Exception {
+        FacilitatorClient shared = stubClient("shared");
+        FacilitatorRouter router = FacilitatorRouter.builder()
+                .route("eip155:196", shared)
+                .route("eip155:195", shared)
+                .build();
+
+        SupportedResponse sr = router.supported();
+        assertEquals(1, sr.kinds.size(),
+                "Same client instance routed to 2 networks should only appear once");
+    }
+
+    @Test
     void multipleRoutesSelectCorrect() throws Exception {
         FacilitatorRouter router = FacilitatorRouter.builder()
                 .route("eip155:196", stubClient("xlayer"))

@@ -61,6 +61,7 @@ public class OKXHttpClient {
 
     /**
      * Generic request with auto 402 handling.
+     * Preserves the original HTTP method, headers, and body on retry.
      *
      * @param initial the initial HTTP request
      * @return HTTP response after handling any 402
@@ -97,12 +98,10 @@ public class OKXHttpClient {
         pp.resource = paymentRequired.resource;
         pp.payload = signedPayload;
 
-        // Retry with PAYMENT-SIGNATURE
+        // Retry: copy original request (method, headers, body) and add payment header
         String header = pp.toHeader();
-        HttpRequest retry = HttpRequest.newBuilder()
-                .uri(initial.uri())
+        HttpRequest retry = HttpRequest.newBuilder(initial, (name, value) -> true)
                 .header("PAYMENT-SIGNATURE", header)
-                .GET()
                 .build();
 
         return http.send(retry, HttpResponse.BodyHandlers.ofString());

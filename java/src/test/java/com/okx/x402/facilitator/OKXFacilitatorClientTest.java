@@ -194,4 +194,49 @@ class OKXFacilitatorClientTest {
         assertFalse(sr.success);
         assertEquals("not_found", sr.errorReason);
     }
+
+    @Test
+    void retryOnHttp429() throws Exception {
+        // First call returns 429, second succeeds
+        wm.stubFor(post(urlEqualTo("/api/v6/pay/x402/verify"))
+                .inScenario("retry429")
+                .whenScenarioStateIs("Started")
+                .willReturn(aResponse().withStatus(429).withBody("rate limited"))
+                .willSetStateTo("retried"));
+
+        wm.stubFor(post(urlEqualTo("/api/v6/pay/x402/verify"))
+                .inScenario("retry429")
+                .whenScenarioStateIs("retried")
+                .willReturn(aResponse()
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"isValid\":true,\"payer\":\"0xretried\"}")));
+
+        VerifyResponse vr = client.verify(new PaymentPayload(), new PaymentRequirements());
+        assertTrue(vr.isValid);
+        assertEquals("0xretried", vr.payer);
+    }
+
+    @Test
+    void retryOnOkx50011RateLimit() throws Exception {
+        // First call returns OKX rate-limit envelope, second succeeds
+        wm.stubFor(post(urlEqualTo("/api/v6/pay/x402/verify"))
+                .inScenario("retry50011")
+                .whenScenarioStateIs("Started")
+                .willReturn(aResponse()
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"code\":\"50011\",\"msg\":\"Too many requests\",\"data\":{}}"))
+                .willSetStateTo("retried"));
+
+        wm.stubFor(post(urlEqualTo("/api/v6/pay/x402/verify"))
+                .inScenario("retry50011")
+                .whenScenarioStateIs("retried")
+                .willReturn(aResponse()
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"isValid\":true,\"payer\":\"0xretried\"}")));
+
+        VerifyResponse vr = client.verify(new PaymentPayload(), new PaymentRequirements());
+        assertTrue(vr.isValid);
+        assertEquals("0xretried", vr.payer);
+    }
+
 }

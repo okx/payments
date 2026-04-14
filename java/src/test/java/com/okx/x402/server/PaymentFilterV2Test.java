@@ -113,6 +113,21 @@ class PaymentFilterV2Test {
     }
 
     @Test
+    void paymentRequiredHeaderSetOn402() throws Exception {
+        when(req.getMethod()).thenReturn("GET");
+        when(req.getRequestURI()).thenReturn("/protected/xlayer-usdt");
+        when(req.getRequestURL()).thenReturn(new StringBuffer("http://localhost/protected/xlayer-usdt"));
+        when(req.getHeader("PAYMENT-SIGNATURE")).thenReturn(null);
+        when(req.getHeader("X-PAYMENT")).thenReturn(null);
+
+        filter.doFilter(req, resp, chain);
+
+        verify(resp).setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
+        verify(resp).setHeader(eq("PAYMENT-REQUIRED"), any());
+        verify(resp).setHeader(eq("Access-Control-Expose-Headers"), eq("PAYMENT-REQUIRED"));
+    }
+
+    @Test
     void v1FallbackHeaderWorks() throws Exception {
         when(req.getMethod()).thenReturn("GET");
         when(req.getRequestURI()).thenReturn("/protected/xlayer-usdt");

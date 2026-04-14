@@ -21,6 +21,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Base64;
 import java.util.List;
@@ -367,8 +368,16 @@ public class PaymentFilter implements Filter {
         pr.resource.mimeType = "application/json";
         pr.accepts = List.of(buildRequirements(req, config));
 
+        String json = Json.MAPPER.writeValueAsString(pr);
+
+        // Set PAYMENT-REQUIRED header for cross-SDK compatibility (Go/TS expect it)
+        String b64 = Base64.getEncoder().encodeToString(
+                json.getBytes(StandardCharsets.UTF_8));
+        resp.setHeader("PAYMENT-REQUIRED", b64);
+        resp.setHeader("Access-Control-Expose-Headers", "PAYMENT-REQUIRED");
+
         resp.setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
         resp.setContentType("application/json");
-        resp.getWriter().write(Json.MAPPER.writeValueAsString(pr));
+        resp.getWriter().write(json);
     }
 }
