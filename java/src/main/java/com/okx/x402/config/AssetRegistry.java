@@ -24,6 +24,16 @@ public final class AssetRegistry {
                 .transferMethod("eip3009")
                 .build());
 
+        // X Layer Mainnet USDG
+        register("eip155:196", AssetConfig.builder()
+                .symbol("USDG")
+                .contractAddress("0x4ae46a509f6b1d9056937ba4500cb143933d2dc8")
+                .decimals(6)
+                .eip712Name("USDG")
+                .eip712Version("2")
+                .transferMethod("eip3009")
+                .build());
+
         // X Layer Testnet USDT
         register("eip155:195", AssetConfig.builder()
                 .symbol("USDT")

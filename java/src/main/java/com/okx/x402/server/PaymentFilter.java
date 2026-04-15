@@ -23,6 +23,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
@@ -59,6 +60,29 @@ public class PaymentFilter implements Filter {
     private Duration pollDeadline = DEFAULT_POLL_DEADLINE;
     private OnSettlementTimeoutHook timeoutHook;
 
+    // Lifecycle hooks
+    private final List<PaymentHooks.BeforeVerifyHook> beforeVerifyHooks = new ArrayList<>();
+    private final List<PaymentHooks.AfterVerifyHook> afterVerifyHooks = new ArrayList<>();
+    private final List<PaymentHooks.OnVerifyFailureHook> verifyFailureHooks = new ArrayList<>();
+    private final List<PaymentHooks.BeforeSettleHook> beforeSettleHooks = new ArrayList<>();
+    private final List<PaymentHooks.AfterSettleHook> afterSettleHooks = new ArrayList<>();
+    private final List<PaymentHooks.OnSettleFailureHook> settleFailureHooks = new ArrayList<>();
+
+    /**
+     * Dynamic pricing function. Resolves price per-request at runtime.
+     * Matches Go's DynamicPriceFunc and TypeScript's DynamicPrice pattern.
+     */
+    @FunctionalInterface
+    public interface DynamicPrice {
+        /**
+         * Resolve the price for the given request.
+         *
+         * @param request the HTTP request to price
+         * @return price string (e.g. "$0.01" or atomic units)
+         */
+        String resolve(HttpServletRequest request);
+    }
+
     /**
      * Hook called when settlement polling times out.
      * Developer decides whether to grant access (confirmed=true) or deny (confirmed=false).
@@ -93,6 +117,8 @@ public class PaymentFilter implements Filter {
         public int maxTimeoutSeconds = 86400;
         /** Whether to use syncSettle (default false). */
         public boolean syncSettle;
+        /** Optional dynamic pricing function (overrides static price if set). */
+        public DynamicPrice priceFunction;
     }
 
     /**
@@ -152,6 +178,42 @@ public class PaymentFilter implements Filter {
         return this;
     }
 
+    /** Register a before-verify lifecycle hook. */
+    public PaymentFilter onBeforeVerify(PaymentHooks.BeforeVerifyHook hook) {
+        beforeVerifyHooks.add(Objects.requireNonNull(hook));
+        return this;
+    }
+
+    /** Register an after-verify lifecycle hook. */
+    public PaymentFilter onAfterVerify(PaymentHooks.AfterVerifyHook hook) {
+        afterVerifyHooks.add(Objects.requireNonNull(hook));
+        return this;
+    }
+
+    /** Register a verify-failure lifecycle hook. */
+    public PaymentFilter onVerifyFailure(PaymentHooks.OnVerifyFailureHook hook) {
+        verifyFailureHooks.add(Objects.requireNonNull(hook));
+        return this;
+    }
+
+    /** Register a before-settle lifecycle hook. */
+    public PaymentFilter onBeforeSettle(PaymentHooks.BeforeSettleHook hook) {
+        beforeSettleHooks.add(Objects.requireNonNull(hook));
+        return this;
+    }
+
+    /** Register an after-settle lifecycle hook. */
+    public PaymentFilter onAfterSettle(PaymentHooks.AfterSettleHook hook) {
+        afterSettleHooks.add(Objects.requireNonNull(hook));
+        return this;
+    }
+
+    /** Register a settle-failure lifecycle hook. */
+    public PaymentFilter onSettleFailure(PaymentHooks.OnSettleFailureHook hook) {
+        settleFailureHooks.add(Objects.requireNonNull(hook));
+        return this;
+    }
+
     @Override
     public void doFilter(ServletRequest req, ServletResponse res, FilterChain chain)
             throws IOException, ServletException {
@@ -201,26 +263,57 @@ public class PaymentFilter implements Filter {
         }
 
         PaymentRequirements requirements = buildRequirements(request, config);
+
+        // --- Before-verify hooks ---
+        for (PaymentHooks.BeforeVerifyHook hook : beforeVerifyHooks) {
+            PaymentHooks.AbortResult ar = hook.beforeVerify(payload, requirements);
+            if (ar != null && ar.abort) {
+                respond402(response, request, config, ar.reason);
+                return;
+            }
+        }
+
         VerifyResponse vr;
         try {
             vr = facilitator.verify(payload, requirements);
-        } catch (IOException e) {
-            response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
-            response.setContentType("application/json");
-            response.getWriter().write(
-                    "{\"error\":\"Payment verification failed: " + e.getMessage() + "\"}");
-            return;
         } catch (Exception e) {
-            response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
-            response.setContentType("application/json");
-            response.getWriter().write(
-                    "{\"error\":\"Internal server error during payment verification\"}");
+            // --- Verify-failure hooks (can recover) ---
+            for (PaymentHooks.OnVerifyFailureHook hook : verifyFailureHooks) {
+                PaymentHooks.RecoverResult<VerifyResponse> rr =
+                        hook.onVerifyFailure(payload, requirements, e);
+                if (rr != null && rr.recovered && rr.result != null) {
+                    vr = rr.result;
+                    // recovered — skip the error handling below
+                    if (!vr.isValid) {
+                        respond402(response, request, config, vr.invalidReason);
+                        return;
+                    }
+                    break;
+                }
+            }
+            // If no hook recovered, return error
+            if (e instanceof IOException) {
+                response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+                response.setContentType("application/json");
+                response.getWriter().write(
+                        "{\"error\":\"Payment verification failed: " + e.getMessage() + "\"}");
+            } else {
+                response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+                response.setContentType("application/json");
+                response.getWriter().write(
+                        "{\"error\":\"Internal server error during payment verification\"}");
+            }
             return;
         }
 
         if (!vr.isValid) {
             respond402(response, request, config, vr.invalidReason);
             return;
+        }
+
+        // --- After-verify hooks ---
+        for (PaymentHooks.AfterVerifyHook hook : afterVerifyHooks) {
+            hook.afterVerify(payload, requirements, vr);
         }
 
         // Execute business logic
@@ -230,16 +323,38 @@ public class PaymentFilter implements Filter {
             return;
         }
 
+        // --- Before-settle hooks ---
+        for (PaymentHooks.BeforeSettleHook hook : beforeSettleHooks) {
+            PaymentHooks.AbortResult ar = hook.beforeSettle(payload, requirements);
+            if (ar != null && ar.abort) {
+                if (!response.isCommitted()) {
+                    respond402(response, request, config, ar.reason);
+                }
+                return;
+            }
+        }
+
         // Settle (with timeout polling + hook recovery)
         try {
             SettleResponse sr = facilitator.settle(payload, requirements, config.syncSettle);
 
             if (!sr.success) {
-                if (!response.isCommitted()) {
-                    respond402(response, request, config,
-                            sr.errorReason != null ? sr.errorReason : "settlement failed");
+                // --- Settle-failure hooks (can recover) ---
+                for (PaymentHooks.OnSettleFailureHook hook : settleFailureHooks) {
+                    PaymentHooks.RecoverResult<SettleResponse> rr =
+                            hook.onSettleFailure(payload, requirements, null);
+                    if (rr != null && rr.recovered && rr.result != null) {
+                        sr = rr.result;
+                        break;
+                    }
                 }
-                return;
+                if (!sr.success) {
+                    if (!response.isCommitted()) {
+                        respond402(response, request, config,
+                                sr.errorReason != null ? sr.errorReason : "settlement failed");
+                    }
+                    return;
+                }
             }
 
             // If status="timeout", attempt recovery via polling + hook
@@ -254,6 +369,11 @@ public class PaymentFilter implements Filter {
                             sr.errorReason != null ? sr.errorReason : "settlement timeout");
                 }
                 return;
+            }
+
+            // --- After-settle hooks ---
+            for (PaymentHooks.AfterSettleHook hook : afterSettleHooks) {
+                hook.afterSettle(payload, requirements, sr);
             }
 
             SettlementResponseHeader srh = new SettlementResponseHeader(
@@ -345,7 +465,9 @@ public class PaymentFilter implements Filter {
 
     private PaymentRequirements buildRequirements(HttpServletRequest request,
                                                   RouteConfig config) {
-        ResolvedPrice resolved = AssetRegistry.resolvePrice(config.price, config.network);
+        String price = config.priceFunction != null
+                ? config.priceFunction.resolve(request) : config.price;
+        ResolvedPrice resolved = AssetRegistry.resolvePrice(price, config.network);
 
         PaymentRequirements pr = new PaymentRequirements();
         pr.scheme = config.scheme;

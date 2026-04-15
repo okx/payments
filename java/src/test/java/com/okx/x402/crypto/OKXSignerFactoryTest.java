@@ -27,6 +27,14 @@ class OKXSignerFactoryTest {
     }
 
     @Test
+    void errorMessageSaysPrivateKey() {
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> OKXSignerFactory.createOKXSigner(null));
+        assertTrue(ex.getMessage().contains("privateKey"),
+                "Error should mention privateKey, got: " + ex.getMessage());
+    }
+
+    @Test
     void validPrivateKeyCreates() {
         // Well-known test private key
         String testKey = "0x4c0883a69102937d6231471b5dbb6204fe512961708279f78305b2a49a22b3e6";

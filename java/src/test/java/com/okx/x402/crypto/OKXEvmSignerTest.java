@@ -109,4 +109,55 @@ class OKXEvmSignerTest {
         assertThrows(CryptoSignException.class,
                 () -> signer.sign(Map.of("test", "data")));
     }
+
+    @Test
+    void nullRequirementsThrows() {
+        assertThrows(CryptoSignException.class,
+                () -> signer.signPaymentRequirements(null));
+    }
+
+    @Test
+    void nullExtraThrows() {
+        PaymentRequirements req = new PaymentRequirements();
+        req.network = "eip155:196";
+        req.payTo = "0x1234567890123456789012345678901234567890";
+        req.amount = "10000";
+        req.extra = null;
+
+        CryptoSignException ex = assertThrows(CryptoSignException.class,
+                () -> signer.signPaymentRequirements(req));
+        assertTrue(ex.getMessage().contains("name"));
+    }
+
+    @Test
+    void missingNameInExtraThrows() {
+        PaymentRequirements req = new PaymentRequirements();
+        req.network = "eip155:196";
+        req.payTo = "0x1234567890123456789012345678901234567890";
+        req.amount = "10000";
+        req.extra = Map.of("version", "1");
+
+        assertThrows(CryptoSignException.class,
+                () -> signer.signPaymentRequirements(req));
+    }
+
+    @Test
+    void nullPayToThrows() {
+        PaymentRequirements req = new PaymentRequirements();
+        req.network = "eip155:196";
+        req.payTo = null;
+        req.amount = "10000";
+        req.extra = Map.of("name", "USD\u20AE0", "version", "1");
+
+        assertThrows(CryptoSignException.class,
+                () -> signer.signPaymentRequirements(req));
+    }
+
+    @Test
+    void invalidNetworkFormatThrows() {
+        assertThrows(IllegalArgumentException.class,
+                () -> OKXEvmSigner.extractChainId("eip155"));
+        assertThrows(IllegalArgumentException.class,
+                () -> OKXEvmSigner.extractChainId(null));
+    }
 }

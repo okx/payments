@@ -108,6 +108,10 @@ public class OKXHttpClient {
     }
 
     private PaymentRequirements selectRequirement(java.util.List<PaymentRequirements> accepts) {
+        if (accepts == null || accepts.isEmpty()) {
+            throw new IllegalStateException(
+                    "Server returned 402 with no payment options");
+        }
         return accepts.stream()
                 .filter(r -> r.network.equals(network))
                 .findFirst()

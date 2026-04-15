@@ -53,6 +53,17 @@ class AssetRegistryTest {
     }
 
     @Test
+    void usdgRegisteredForXLayer() {
+        AssetConfig usdg = AssetRegistry.get("eip155:196", "USDG");
+        assertNotNull(usdg, "USDG should be registered for eip155:196");
+        assertEquals("0x4ae46a509f6b1d9056937ba4500cb143933d2dc8",
+                usdg.getContractAddress());
+        assertEquals(6, usdg.getDecimals());
+        assertEquals("USDG", usdg.getEip712Name());
+        assertEquals("2", usdg.getEip712Version());
+    }
+
+    @Test
     void customAssetRegistration() {
         AssetRegistry.register("eip155:999", AssetConfig.builder()
                 .symbol("TEST")

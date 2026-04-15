@@ -55,6 +55,20 @@ public class OKXEvmSigner implements EvmSigner {
     @Override
     public Map<String, Object> signPaymentRequirements(PaymentRequirements requirements)
             throws CryptoSignException {
+        if (requirements == null) {
+            throw new CryptoSignException("PaymentRequirements must not be null");
+        }
+        if (requirements.extra == null || !requirements.extra.containsKey("name")
+                || !requirements.extra.containsKey("version")) {
+            throw new CryptoSignException(
+                    "PaymentRequirements.extra must contain 'name' and 'version'"
+                            + " for EIP-712 signing");
+        }
+        if (requirements.payTo == null || requirements.amount == null
+                || requirements.network == null) {
+            throw new CryptoSignException(
+                    "PaymentRequirements.payTo, amount, and network are required");
+        }
         try {
             long now = Instant.now().getEpochSecond();
             String validAfter = String.valueOf(now - 5);
@@ -147,6 +161,11 @@ public class OKXEvmSigner implements EvmSigner {
      * @return chain ID
      */
     static int extractChainId(String network) {
+        if (network == null || !network.contains(":")) {
+            throw new IllegalArgumentException(
+                    "Invalid CAIP-2 network: " + network
+                            + " (expected 'eip155:<chainId>')");
+        }
         String[] parts = network.split(":");
         return Integer.parseInt(parts[1]);
     }

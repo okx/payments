@@ -46,8 +46,7 @@ public final class OKXSignerFactory {
     public static OKXEvmSigner createOKXSigner(OKXSignerConfig config) {
         if (config == null || config.getPrivateKey() == null
                 || config.getPrivateKey().isEmpty()) {
-            throw new IllegalArgumentException(
-                    "Must provide either tee or privateKey");
+            throw new IllegalArgumentException("privateKey is required");
         }
         return new OKXEvmSigner(config.getPrivateKey());
     }

@@ -1,6 +1,7 @@
 package com.okx.x402.server;
 
 import com.okx.x402.facilitator.FacilitatorClient;
+import com.okx.x402.server.PaymentHooks;
 import com.okx.x402.model.v2.PaymentPayload;
 import com.okx.x402.model.v2.PaymentRequirements;
 import com.okx.x402.model.v2.ResourceInfo;
@@ -22,6 +23,7 @@ import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 class PaymentFilterV2Test {
@@ -373,6 +375,118 @@ class PaymentFilterV2Test {
         verify(chain).doFilter(req, resp);
         verify(resp).setHeader(eq("PAYMENT-RESPONSE"), any());
     }
+
+    // -----------------------------------------------------------------------
+    // Lifecycle hook tests
+    // -----------------------------------------------------------------------
+
+    @Test
+    void beforeVerifyHookCanAbort() throws Exception {
+        when(req.getMethod()).thenReturn("GET");
+        when(req.getRequestURI()).thenReturn("/protected/xlayer-usdt");
+        when(req.getRequestURL()).thenReturn(new StringBuffer("http://localhost/protected/xlayer-usdt"));
+
+        PaymentPayload pp = new PaymentPayload();
+        pp.x402Version = 2;
+        pp.payload = Map.of("signature", "0xabc");
+        when(req.getHeader("PAYMENT-SIGNATURE")).thenReturn(pp.toHeader());
+
+        filter.onBeforeVerify((payload, requirements) ->
+                PaymentHooks.AbortResult.abort("blocked_by_hook"));
+
+        filter.doFilter(req, resp, chain);
+
+        verify(resp).setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
+        verify(fac, never()).verify(any(), any());
+    }
+
+    @Test
+    void afterVerifyHookCalledOnSuccess() throws Exception {
+        when(req.getMethod()).thenReturn("GET");
+        when(req.getRequestURI()).thenReturn("/protected/xlayer-usdt");
+        when(req.getRequestURL()).thenReturn(new StringBuffer("http://localhost/protected/xlayer-usdt"));
+
+        PaymentPayload pp = new PaymentPayload();
+        pp.x402Version = 2;
+        pp.payload = Map.of("signature", "0xabc");
+        when(req.getHeader("PAYMENT-SIGNATURE")).thenReturn(pp.toHeader());
+
+        VerifyResponse vr = new VerifyResponse();
+        vr.isValid = true;
+        when(fac.verify(any(), any())).thenReturn(vr);
+        when(resp.getStatus()).thenReturn(200);
+
+        SettleResponse sr = new SettleResponse();
+        sr.success = true;
+        sr.transaction = "0xdef";
+        sr.network = "eip155:196";
+        when(fac.settle(any(), any(), anyBoolean())).thenReturn(sr);
+
+        boolean[] hookCalled = {false};
+        filter.onAfterVerify((payload, requirements, result) -> hookCalled[0] = true);
+
+        filter.doFilter(req, resp, chain);
+
+        assertTrue(hookCalled[0], "afterVerify hook should have been called");
+    }
+
+    @Test
+    void beforeSettleHookCanAbort() throws Exception {
+        when(req.getMethod()).thenReturn("GET");
+        when(req.getRequestURI()).thenReturn("/protected/xlayer-usdt");
+        when(req.getRequestURL()).thenReturn(new StringBuffer("http://localhost/protected/xlayer-usdt"));
+
+        PaymentPayload pp = new PaymentPayload();
+        pp.x402Version = 2;
+        pp.payload = Map.of("signature", "0xabc");
+        when(req.getHeader("PAYMENT-SIGNATURE")).thenReturn(pp.toHeader());
+
+        VerifyResponse vr = new VerifyResponse();
+        vr.isValid = true;
+        when(fac.verify(any(), any())).thenReturn(vr);
+        when(resp.getStatus()).thenReturn(200);
+        when(resp.isCommitted()).thenReturn(false);
+
+        filter.onBeforeSettle((payload, requirements) ->
+                PaymentHooks.AbortResult.abort("settle_blocked"));
+
+        filter.doFilter(req, resp, chain);
+
+        verify(chain).doFilter(req, resp);
+        verify(fac, never()).settle(any(), any(), anyBoolean());
+        verify(resp).setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
+    }
+
+    // -----------------------------------------------------------------------
+    // Dynamic pricing test
+    // -----------------------------------------------------------------------
+
+    @Test
+    void dynamicPricingResolvesFromRequest() throws Exception {
+        PaymentFilter.RouteConfig dynamicConfig = new PaymentFilter.RouteConfig();
+        dynamicConfig.network = "eip155:196";
+        dynamicConfig.payTo = "0xReceiver";
+        dynamicConfig.priceFunction = request -> "$1.00"; // dynamic: always $1
+
+        PaymentFilter dynamicFilter = PaymentFilter.create(fac, Map.of(
+                "GET /dynamic", dynamicConfig
+        ));
+
+        when(req.getMethod()).thenReturn("GET");
+        when(req.getRequestURI()).thenReturn("/dynamic");
+        when(req.getRequestURL()).thenReturn(new StringBuffer("http://localhost/dynamic"));
+        when(req.getHeader("PAYMENT-SIGNATURE")).thenReturn(null);
+        when(req.getHeader("X-PAYMENT")).thenReturn(null);
+
+        dynamicFilter.doFilter(req, resp, chain);
+
+        // Should return 402 with amount resolved from dynamic function ($1.00 = 1000000)
+        verify(resp).setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
+    }
+
+    // -----------------------------------------------------------------------
+    // Settlement timeout tests
+    // -----------------------------------------------------------------------
 
     @Test
     void settleTimeoutNoHookReturns402() throws Exception {
