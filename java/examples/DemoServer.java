@@ -14,6 +14,7 @@ package com.okx.x402.examples;
 
 import com.okx.x402.facilitator.OKXFacilitatorClient;
 import com.okx.x402.server.PaymentFilter;
+import com.okx.x402.server.PaymentProcessor;
 
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
@@ -54,13 +55,13 @@ public class DemoServer {
         OKXFacilitatorClient facilitator = new OKXFacilitatorClient(
                 apiKey, secretKey, passphrase);
 
-        PaymentFilter.RouteConfig xlayerUsdt = new PaymentFilter.RouteConfig();
+        PaymentProcessor.RouteConfig xlayerUsdt = new PaymentProcessor.RouteConfig();
         xlayerUsdt.scheme = "exact";
         xlayerUsdt.network = "eip155:196";
         xlayerUsdt.payTo = payTo;
         xlayerUsdt.price = "$0.01";
 
-        PaymentFilter.RouteConfig xlayerTestnet = new PaymentFilter.RouteConfig();
+        PaymentProcessor.RouteConfig xlayerTestnet = new PaymentProcessor.RouteConfig();
         xlayerTestnet.scheme = "exact";
         xlayerTestnet.network = "eip155:195";
         xlayerTestnet.payTo = payTo;

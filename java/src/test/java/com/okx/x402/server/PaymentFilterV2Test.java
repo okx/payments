@@ -40,7 +40,7 @@ class PaymentFilterV2Test {
         MockitoAnnotations.openMocks(this);
         when(resp.getWriter()).thenReturn(new PrintWriter(new ByteArrayOutputStream(), true));
 
-        PaymentFilter.RouteConfig xlayerConfig = new PaymentFilter.RouteConfig();
+        PaymentProcessor.RouteConfig xlayerConfig = new PaymentProcessor.RouteConfig();
         xlayerConfig.network = "eip155:196";
         xlayerConfig.payTo = "0xReceiver";
         xlayerConfig.price = "$0.01";
@@ -253,12 +253,12 @@ class PaymentFilterV2Test {
 
     @Test
     void routeLevelPricing() throws Exception {
-        PaymentFilter.RouteConfig cheapConfig = new PaymentFilter.RouteConfig();
+        PaymentProcessor.RouteConfig cheapConfig = new PaymentProcessor.RouteConfig();
         cheapConfig.network = "eip155:196";
         cheapConfig.payTo = "0xReceiver";
         cheapConfig.price = "$0.01";
 
-        PaymentFilter.RouteConfig expensiveConfig = new PaymentFilter.RouteConfig();
+        PaymentProcessor.RouteConfig expensiveConfig = new PaymentProcessor.RouteConfig();
         expensiveConfig.network = "eip155:196";
         expensiveConfig.payTo = "0xReceiver";
         expensiveConfig.price = "$1.00";
@@ -322,7 +322,7 @@ class PaymentFilterV2Test {
 
         when(resp.getStatus()).thenReturn(200);
 
-        filter.pollDeadline(java.time.Duration.ofSeconds(3))
+        filter.processor().pollDeadline(java.time.Duration.ofSeconds(3))
               .pollInterval(java.time.Duration.ofMillis(200));
 
         filter.doFilter(req, resp, chain);
@@ -366,7 +366,7 @@ class PaymentFilterV2Test {
         when(resp.getStatus()).thenReturn(200);
 
         // Hook grants access
-        filter.pollDeadline(java.time.Duration.ofMillis(500))
+        filter.processor().pollDeadline(java.time.Duration.ofMillis(500))
               .pollInterval(java.time.Duration.ofMillis(200))
               .onSettlementTimeout((txHash, network) -> true);
 
@@ -391,7 +391,7 @@ class PaymentFilterV2Test {
         pp.payload = Map.of("signature", "0xabc");
         when(req.getHeader("PAYMENT-SIGNATURE")).thenReturn(pp.toHeader());
 
-        filter.onBeforeVerify((payload, requirements) ->
+        filter.processor().onBeforeVerify((payload, requirements) ->
                 PaymentHooks.AbortResult.abort("blocked_by_hook"));
 
         filter.doFilter(req, resp, chain);
@@ -423,7 +423,7 @@ class PaymentFilterV2Test {
         when(fac.settle(any(), any(), anyBoolean())).thenReturn(sr);
 
         boolean[] hookCalled = {false};
-        filter.onAfterVerify((payload, requirements, result) -> hookCalled[0] = true);
+        filter.processor().onAfterVerify((payload, requirements, result) -> hookCalled[0] = true);
 
         filter.doFilter(req, resp, chain);
 
@@ -447,7 +447,7 @@ class PaymentFilterV2Test {
         when(resp.getStatus()).thenReturn(200);
         when(resp.isCommitted()).thenReturn(false);
 
-        filter.onBeforeSettle((payload, requirements) ->
+        filter.processor().onBeforeSettle((payload, requirements) ->
                 PaymentHooks.AbortResult.abort("settle_blocked"));
 
         filter.doFilter(req, resp, chain);
@@ -463,7 +463,7 @@ class PaymentFilterV2Test {
 
     @Test
     void dynamicPricingResolvesFromRequest() throws Exception {
-        PaymentFilter.RouteConfig dynamicConfig = new PaymentFilter.RouteConfig();
+        PaymentProcessor.RouteConfig dynamicConfig = new PaymentProcessor.RouteConfig();
         dynamicConfig.network = "eip155:196";
         dynamicConfig.payTo = "0xReceiver";
         dynamicConfig.priceFunction = request -> "$1.00"; // dynamic: always $1
@@ -522,7 +522,7 @@ class PaymentFilterV2Test {
         when(resp.isCommitted()).thenReturn(false);
 
         // No hook — should return 402 after poll deadline
-        filter.pollDeadline(java.time.Duration.ofMillis(500))
+        filter.processor().pollDeadline(java.time.Duration.ofMillis(500))
               .pollInterval(java.time.Duration.ofMillis(200));
 
         filter.doFilter(req, resp, chain);

@@ -87,6 +87,45 @@ FacilitatorClient facilitator = FacilitatorRouter.builder()
         .build();
 ```
 
+### Skip Payment (Billing Interceptor Integration)
+
+When an upstream billing interceptor determines a request is free, it sets a request attribute:
+
+```java
+// Approach 1: Default attribute convention (zero coupling)
+// Your billing interceptor sets this before PaymentFilter/PaymentInterceptor runs:
+request.setAttribute(PaymentProcessor.PAYMENT_REQUIRED_ATTRIBUTE, false);  // "paymentRequired"
+
+// Approach 2: Custom predicate
+PaymentFilter filter = PaymentFilter.create(facilitator, Map.of("GET /api/data", route));
+filter.processor().paymentRequiredWhen(req ->
+    !Boolean.TRUE.equals(req.getAttribute("billing.free")));
+```
+
+See [INTEGRATION.md](INTEGRATION.md) for the complete billing interceptor integration guide.
+
+### Async Settlement
+
+Settle in a background thread — return 200 immediately after verify, without waiting for on-chain settlement:
+
+```java
+PaymentFilter.RouteConfig route = new PaymentFilter.RouteConfig();
+route.network = "eip155:196";
+route.payTo = "0xYourWalletAddress";
+route.price = "$0.01";
+route.asyncSettle = true;  // enable async settle
+
+PaymentFilter filter = PaymentFilter.create(facilitator, Map.of("GET /api/data", route))
+    .settleExecutor(bizThreadPool)  // required — must inject your own thread pool
+    .onAsyncSettleComplete((payload, requirements, result, error) -> {
+        if (error != null) {
+            log.error("Settlement failed", error);
+        } else {
+            log.info("Settlement tx={}", result.transaction);
+        }
+    });
+```
+
 ### Spring Boot Integration
 
 ```java
@@ -245,7 +284,8 @@ com.okx.x402
 │   ├── v2/                    — V2 protocol types (PaymentPayload, SettleRequest, etc.)
 │   └── v1/                    — V1 compat types
 ├── server/
-│   └── PaymentFilter          — V2 servlet filter with route-level pricing
+│   ├── PaymentFilter          — V2 servlet filter (skip / verify / settle / async settle)
+│   └── PaymentHooks           — Lifecycle hooks (before/after verify & settle)
 ├── config/
 │   ├── AssetRegistry          — X Layer USDT pre-registered, extensible
 │   └── AssetConfig            — Token metadata (address, decimals, EIP-712 domain)

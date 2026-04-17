@@ -20,6 +20,7 @@ import com.okx.x402.model.v2.SupportedKind;
 import com.okx.x402.model.v2.SupportedResponse;
 import com.okx.x402.model.v2.VerifyResponse;
 import com.okx.x402.server.PaymentFilter;
+import com.okx.x402.server.PaymentProcessor;
 import com.okx.x402.util.Json;
 import com.okx.x402.util.OKXAuth;
 
@@ -114,12 +115,12 @@ class E2EPaymentFlowTest {
                 "http://localhost:" + wireMock.port());
 
         // 3. Configure route for protected endpoint
-        PaymentFilter.RouteConfig mainRoute = new PaymentFilter.RouteConfig();
+        PaymentProcessor.RouteConfig mainRoute = new PaymentProcessor.RouteConfig();
         mainRoute.network = "eip155:196";
         mainRoute.payTo = RECEIVER_ADDRESS;
         mainRoute.price = "$0.01";
 
-        PaymentFilter.RouteConfig expensiveRoute = new PaymentFilter.RouteConfig();
+        PaymentProcessor.RouteConfig expensiveRoute = new PaymentProcessor.RouteConfig();
         expensiveRoute.network = "eip155:196";
         expensiveRoute.payTo = RECEIVER_ADDRESS;
         expensiveRoute.price = "$1.00";
@@ -653,7 +654,7 @@ class E2EPaymentFlowTest {
         OKXFacilitatorClient client = new OKXFacilitatorClient(
                 "k", "s", "p", "http://localhost:" + wireMock.port());
 
-        PaymentFilter.RouteConfig rc = new PaymentFilter.RouteConfig();
+        PaymentProcessor.RouteConfig rc = new PaymentProcessor.RouteConfig();
         rc.network = "eip155:196";
         rc.payTo = RECEIVER_ADDRESS;
         rc.price = "$0.05";

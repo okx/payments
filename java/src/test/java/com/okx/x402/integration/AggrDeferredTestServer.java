@@ -2,6 +2,7 @@ package com.okx.x402.integration;
 
 import com.okx.x402.facilitator.OKXFacilitatorClient;
 import com.okx.x402.server.PaymentFilter;
+import com.okx.x402.server.PaymentProcessor;
 
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
@@ -43,14 +44,14 @@ public class AggrDeferredTestServer {
         // 2. Configure routes — accept BOTH exact and aggr_deferred
         //    The PaymentFilter uses scheme from the incoming payment header,
         //    so we create two route entries for the same path.
-        PaymentFilter.RouteConfig exactRoute = new PaymentFilter.RouteConfig();
+        PaymentProcessor.RouteConfig exactRoute = new PaymentProcessor.RouteConfig();
         exactRoute.scheme = "exact";
         exactRoute.network = "eip155:196";
         exactRoute.payTo = PAY_TO;
         exactRoute.price = "$0.000001"; // 1 atomic unit = minimum
         exactRoute.maxTimeoutSeconds = 86400;
 
-        PaymentFilter.RouteConfig deferredRoute = new PaymentFilter.RouteConfig();
+        PaymentProcessor.RouteConfig deferredRoute = new PaymentProcessor.RouteConfig();
         deferredRoute.scheme = "aggr_deferred";
         deferredRoute.network = "eip155:196";
         deferredRoute.payTo = PAY_TO;
