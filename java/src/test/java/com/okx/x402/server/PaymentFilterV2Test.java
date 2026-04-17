@@ -1,5 +1,7 @@
 package com.okx.x402.server;
 
+import com.okx.x402.config.AssetRegistry;
+import com.okx.x402.config.ResolvedPrice;
 import com.okx.x402.facilitator.FacilitatorClient;
 import com.okx.x402.server.PaymentHooks;
 import com.okx.x402.model.v2.PaymentPayload;
@@ -50,6 +52,36 @@ class PaymentFilterV2Test {
         ));
     }
 
+    /**
+     * Build a PaymentPayload that passes PaymentPayloadValidator against
+     * the default {@code xlayerConfig} (network=eip155:196, payTo=0xReceiver,
+     * price=$0.01). Fully populates {@code accepted} and the inner
+     * {@code authorization} map so the validator admits the payload into the
+     * verify/settle path.
+     */
+    private static PaymentPayload validPayload() {
+        ResolvedPrice price = AssetRegistry.resolvePrice("$0.01", "eip155:196");
+        PaymentPayload pp = new PaymentPayload();
+        pp.x402Version = 2;
+        pp.accepted = new PaymentRequirements();
+        pp.accepted.scheme = "exact";
+        pp.accepted.network = "eip155:196";
+        pp.accepted.asset = price.asset();
+        pp.accepted.payTo = "0xReceiver";
+        pp.accepted.amount = price.amount();
+        long now = System.currentTimeMillis() / 1000L;
+        pp.payload = Map.of(
+                "signature", "0xabc",
+                "authorization", Map.of(
+                        "to", "0xReceiver",
+                        "value", price.amount(),
+                        "validAfter", String.valueOf(now - 60),
+                        "validBefore", String.valueOf(now + 3600)
+                )
+        );
+        return pp;
+    }
+
     @Test
     void freeEndpointPassesThrough() throws Exception {
         when(req.getMethod()).thenReturn("GET");
@@ -82,11 +114,9 @@ class PaymentFilterV2Test {
         when(req.getRequestURL()).thenReturn(new StringBuffer("http://localhost/protected/xlayer-usdt"));
 
         // Build V2 payment payload
-        PaymentPayload p = new PaymentPayload();
-        p.x402Version = 2;
+        PaymentPayload p = validPayload();
         p.resource = new ResourceInfo();
         p.resource.url = "http://localhost/protected/xlayer-usdt";
-        p.payload = Map.of("signature", "0xabc");
         String header = p.toHeader();
         when(req.getHeader("PAYMENT-SIGNATURE")).thenReturn(header);
 
@@ -136,9 +166,7 @@ class PaymentFilterV2Test {
         when(req.getRequestURL()).thenReturn(new StringBuffer("http://localhost/protected/xlayer-usdt"));
         when(req.getHeader("PAYMENT-SIGNATURE")).thenReturn(null);
 
-        PaymentPayload p = new PaymentPayload();
-        p.x402Version = 2;
-        p.payload = Map.of("signature", "0xabc");
+        PaymentPayload p = validPayload();
         String header = p.toHeader();
         when(req.getHeader("X-PAYMENT")).thenReturn(header);
 
@@ -163,9 +191,7 @@ class PaymentFilterV2Test {
         when(req.getRequestURI()).thenReturn("/protected/xlayer-usdt");
         when(req.getRequestURL()).thenReturn(new StringBuffer("http://localhost/protected/xlayer-usdt"));
 
-        PaymentPayload p = new PaymentPayload();
-        p.x402Version = 2;
-        p.payload = Map.of("test", "data");
+        PaymentPayload p = validPayload();
         when(req.getHeader("PAYMENT-SIGNATURE")).thenReturn(p.toHeader());
 
         when(fac.verify(any(), any())).thenThrow(new IOException("Network error"));
@@ -182,9 +208,7 @@ class PaymentFilterV2Test {
         when(req.getRequestURI()).thenReturn("/protected/xlayer-usdt");
         when(req.getRequestURL()).thenReturn(new StringBuffer("http://localhost/protected/xlayer-usdt"));
 
-        PaymentPayload p = new PaymentPayload();
-        p.x402Version = 2;
-        p.payload = Map.of("test", "data");
+        PaymentPayload p = validPayload();
         when(req.getHeader("PAYMENT-SIGNATURE")).thenReturn(p.toHeader());
 
         VerifyResponse vr = new VerifyResponse();
@@ -233,9 +257,7 @@ class PaymentFilterV2Test {
         when(req.getRequestURI()).thenReturn("/protected/xlayer-usdt");
         when(req.getRequestURL()).thenReturn(new StringBuffer("http://localhost/protected/xlayer-usdt"));
 
-        PaymentPayload p = new PaymentPayload();
-        p.x402Version = 2;
-        p.payload = Map.of("test", "data");
+        PaymentPayload p = validPayload();
         when(req.getHeader("PAYMENT-SIGNATURE")).thenReturn(p.toHeader());
 
         VerifyResponse vr = new VerifyResponse();
@@ -289,12 +311,7 @@ class PaymentFilterV2Test {
         when(req.getRequestURI()).thenReturn("/protected/xlayer-usdt");
         when(req.getRequestURL()).thenReturn(new StringBuffer("http://localhost/protected/xlayer-usdt"));
 
-        PaymentPayload pp = new PaymentPayload();
-        pp.x402Version = 2;
-        pp.payload = Map.of("signature", "0xabc");
-        pp.accepted = new PaymentRequirements();
-        pp.accepted.scheme = "exact";
-        pp.accepted.network = "eip155:196";
+        PaymentPayload pp = validPayload();
         when(req.getHeader("PAYMENT-SIGNATURE")).thenReturn(pp.toHeader());
 
         VerifyResponse vr = new VerifyResponse();
@@ -338,12 +355,7 @@ class PaymentFilterV2Test {
         when(req.getRequestURI()).thenReturn("/protected/xlayer-usdt");
         when(req.getRequestURL()).thenReturn(new StringBuffer("http://localhost/protected/xlayer-usdt"));
 
-        PaymentPayload pp = new PaymentPayload();
-        pp.x402Version = 2;
-        pp.payload = Map.of("signature", "0xabc");
-        pp.accepted = new PaymentRequirements();
-        pp.accepted.scheme = "exact";
-        pp.accepted.network = "eip155:196";
+        PaymentPayload pp = validPayload();
         when(req.getHeader("PAYMENT-SIGNATURE")).thenReturn(pp.toHeader());
 
         VerifyResponse vr = new VerifyResponse();
@@ -386,9 +398,7 @@ class PaymentFilterV2Test {
         when(req.getRequestURI()).thenReturn("/protected/xlayer-usdt");
         when(req.getRequestURL()).thenReturn(new StringBuffer("http://localhost/protected/xlayer-usdt"));
 
-        PaymentPayload pp = new PaymentPayload();
-        pp.x402Version = 2;
-        pp.payload = Map.of("signature", "0xabc");
+        PaymentPayload pp = validPayload();
         when(req.getHeader("PAYMENT-SIGNATURE")).thenReturn(pp.toHeader());
 
         filter.processor().onBeforeVerify((payload, requirements) ->
@@ -406,9 +416,7 @@ class PaymentFilterV2Test {
         when(req.getRequestURI()).thenReturn("/protected/xlayer-usdt");
         when(req.getRequestURL()).thenReturn(new StringBuffer("http://localhost/protected/xlayer-usdt"));
 
-        PaymentPayload pp = new PaymentPayload();
-        pp.x402Version = 2;
-        pp.payload = Map.of("signature", "0xabc");
+        PaymentPayload pp = validPayload();
         when(req.getHeader("PAYMENT-SIGNATURE")).thenReturn(pp.toHeader());
 
         VerifyResponse vr = new VerifyResponse();
@@ -436,9 +444,7 @@ class PaymentFilterV2Test {
         when(req.getRequestURI()).thenReturn("/protected/xlayer-usdt");
         when(req.getRequestURL()).thenReturn(new StringBuffer("http://localhost/protected/xlayer-usdt"));
 
-        PaymentPayload pp = new PaymentPayload();
-        pp.x402Version = 2;
-        pp.payload = Map.of("signature", "0xabc");
+        PaymentPayload pp = validPayload();
         when(req.getHeader("PAYMENT-SIGNATURE")).thenReturn(pp.toHeader());
 
         VerifyResponse vr = new VerifyResponse();
@@ -494,12 +500,7 @@ class PaymentFilterV2Test {
         when(req.getRequestURI()).thenReturn("/protected/xlayer-usdt");
         when(req.getRequestURL()).thenReturn(new StringBuffer("http://localhost/protected/xlayer-usdt"));
 
-        PaymentPayload pp = new PaymentPayload();
-        pp.x402Version = 2;
-        pp.payload = Map.of("signature", "0xabc");
-        pp.accepted = new PaymentRequirements();
-        pp.accepted.scheme = "exact";
-        pp.accepted.network = "eip155:196";
+        PaymentPayload pp = validPayload();
         when(req.getHeader("PAYMENT-SIGNATURE")).thenReturn(pp.toHeader());
 
         VerifyResponse vr = new VerifyResponse();

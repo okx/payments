@@ -94,12 +94,12 @@ When an upstream billing interceptor determines a request is free, it sets a req
 ```java
 // Approach 1: Default attribute convention (zero coupling)
 // Your billing interceptor sets this before PaymentFilter/PaymentInterceptor runs:
-request.setAttribute(PaymentProcessor.PAYMENT_REQUIRED_ATTRIBUTE, false);  // "paymentRequired"
+request.setAttribute(PaymentProcessor.PAYMENT_EXEMPT_ATTRIBUTE, true);  // "paymentExempt"
 
 // Approach 2: Custom predicate
 PaymentFilter filter = PaymentFilter.create(facilitator, Map.of("GET /api/data", route));
-filter.processor().paymentRequiredWhen(req ->
-    !Boolean.TRUE.equals(req.getAttribute("billing.free")));
+filter.processor().paymentExemptWhen(req ->
+    Boolean.TRUE.equals(req.getAttribute("billing.free")));
 ```
 
 See [INTEGRATION.md](INTEGRATION.md) for the complete billing interceptor integration guide.
@@ -113,7 +113,7 @@ PaymentFilter.RouteConfig route = new PaymentFilter.RouteConfig();
 route.network = "eip155:196";
 route.payTo = "0xYourWalletAddress";
 route.price = "$0.01";
-route.asyncSettle = true;  // enable async settle
+route.settleInBackground = true;  // enable background settle
 
 PaymentFilter filter = PaymentFilter.create(facilitator, Map.of("GET /api/data", route))
     .settleExecutor(bizThreadPool)  // required — must inject your own thread pool

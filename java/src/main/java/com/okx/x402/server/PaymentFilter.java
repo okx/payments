@@ -22,9 +22,9 @@ import java.util.Map;
  */
 public class PaymentFilter implements Filter {
 
-    /** @see PaymentProcessor#PAYMENT_REQUIRED_ATTRIBUTE */
-    public static final String PAYMENT_REQUIRED_ATTRIBUTE =
-            PaymentProcessor.PAYMENT_REQUIRED_ATTRIBUTE;
+    /** @see PaymentProcessor#PAYMENT_EXEMPT_ATTRIBUTE */
+    public static final String PAYMENT_EXEMPT_ATTRIBUTE =
+            PaymentProcessor.PAYMENT_EXEMPT_ATTRIBUTE;
 
     private final PaymentProcessor processor;
 

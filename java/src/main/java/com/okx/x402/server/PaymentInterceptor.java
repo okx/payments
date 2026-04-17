@@ -28,9 +28,9 @@ import java.util.Map;
  */
 public class PaymentInterceptor implements HandlerInterceptor {
 
-    /** @see PaymentProcessor#PAYMENT_REQUIRED_ATTRIBUTE */
-    public static final String PAYMENT_REQUIRED_ATTRIBUTE =
-            PaymentProcessor.PAYMENT_REQUIRED_ATTRIBUTE;
+    /** @see PaymentProcessor#PAYMENT_EXEMPT_ATTRIBUTE */
+    public static final String PAYMENT_EXEMPT_ATTRIBUTE =
+            PaymentProcessor.PAYMENT_EXEMPT_ATTRIBUTE;
 
     private static final String ATTR_VERIFY_RESULT =
             "payment.internal.verifyResult";

@@ -40,11 +40,12 @@ public class PaymentProcessor {
     static final String HEADER_SETTLEMENT_STATUS = "X-SETTLEMENT-STATUS";
 
     /**
-     * Request attribute key. Set to {@code Boolean.FALSE} by an upstream
-     * filter/interceptor to indicate this request is free (no payment needed).
-     * When absent or {@code true}, payment is required as normal.
+     * Request attribute key. Set to {@code Boolean.TRUE} by an upstream
+     * filter/interceptor to indicate this request is exempt from payment
+     * (free access). When absent or {@code false}, payment is required
+     * as normal.
      */
-    public static final String PAYMENT_REQUIRED_ATTRIBUTE = "paymentRequired";
+    public static final String PAYMENT_EXEMPT_ATTRIBUTE = "paymentExempt";
 
     public static final Duration DEFAULT_POLL_INTERVAL = Duration.ofSeconds(1);
     public static final Duration DEFAULT_POLL_DEADLINE = Duration.ofSeconds(5);
@@ -62,7 +63,7 @@ public class PaymentProcessor {
     private final List<PaymentHooks.AfterSettleHook> afterSettleHooks = new ArrayList<>();
     private final List<PaymentHooks.OnSettleFailureHook> settleFailureHooks = new ArrayList<>();
 
-    private PaymentRequiredPredicate paymentRequiredPredicate;
+    private PaymentExemptPredicate paymentExemptPredicate;
     private Executor settleExecutor;
     private AsyncSettleCallback asyncSettleCallback;
 
@@ -87,12 +88,12 @@ public class PaymentProcessor {
     }
 
     /**
-     * Predicate that determines whether payment is required for a request.
-     * Return {@code false} to skip payment (free access).
+     * Predicate that determines whether a request is exempt from payment.
+     * Return {@code true} to skip payment (free access).
      */
     @FunctionalInterface
-    public interface PaymentRequiredPredicate {
-        boolean isRequired(HttpServletRequest request);
+    public interface PaymentExemptPredicate {
+        boolean isExempt(HttpServletRequest request);
     }
 
     public static class RouteConfig {
@@ -104,7 +105,7 @@ public class PaymentProcessor {
         public int maxTimeoutSeconds = 86400;
         public boolean syncSettle;
         public DynamicPrice priceFunction;
-        public boolean asyncSettle;
+        public boolean settleInBackground;
     }
 
     /** Result of the verify phase, passed from preHandle to postHandle. */
@@ -188,8 +189,8 @@ public class PaymentProcessor {
         return this;
     }
 
-    public PaymentProcessor paymentRequiredWhen(PaymentRequiredPredicate predicate) {
-        this.paymentRequiredPredicate = Objects.requireNonNull(predicate);
+    public PaymentProcessor paymentExemptWhen(PaymentExemptPredicate predicate) {
+        this.paymentExemptPredicate = Objects.requireNonNull(predicate);
         return this;
     }
 
@@ -226,7 +227,7 @@ public class PaymentProcessor {
             return VerifyResult.PASS_THROUGH;
         }
 
-        if (!isPaymentRequired(request)) {
+        if (isPaymentExempt(request)) {
             return VerifyResult.PASS_THROUGH;
         }
 
@@ -256,6 +257,12 @@ public class PaymentProcessor {
         }
 
         PaymentRequirements requirements = buildRequirements(request, config);
+
+        String mismatch = PaymentPayloadValidator.validate(payload, requirements);
+        if (mismatch != null) {
+            respond402(response, request, config, mismatch);
+            return null;
+        }
 
         for (PaymentHooks.BeforeVerifyHook hook : beforeVerifyHooks) {
             PaymentHooks.AbortResult ar = hook.beforeVerify(payload, requirements);
@@ -321,10 +328,10 @@ public class PaymentProcessor {
             return;
         }
 
-        if (result.config.asyncSettle) {
+        if (result.config.settleInBackground) {
             if (settleExecutor == null) {
                 throw new IllegalStateException(
-                        "RouteConfig.asyncSettle=true but no settleExecutor"
+                        "RouteConfig.settleInBackground=true but no settleExecutor"
                                 + " configured. Call settleExecutor(executor)"
                                 + " to provide one.");
             }
@@ -476,15 +483,15 @@ public class PaymentProcessor {
     // Helpers
     // -----------------------------------------------------------------------
 
-    boolean isPaymentRequired(HttpServletRequest request) {
-        if (Boolean.FALSE.equals(
-                request.getAttribute(PAYMENT_REQUIRED_ATTRIBUTE))) {
-            return false;
+    boolean isPaymentExempt(HttpServletRequest request) {
+        if (Boolean.TRUE.equals(
+                request.getAttribute(PAYMENT_EXEMPT_ATTRIBUTE))) {
+            return true;
         }
-        if (paymentRequiredPredicate != null) {
-            return paymentRequiredPredicate.isRequired(request);
+        if (paymentExemptPredicate != null) {
+            return paymentExemptPredicate.isExempt(request);
         }
-        return true;
+        return false;
     }
 
     RouteConfig matchRoute(HttpServletRequest request) {
