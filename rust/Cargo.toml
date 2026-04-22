@@ -1,10 +1,12 @@
 [workspace]
 resolver = "2"
 members = [
-    "x402-core",
-    "x402-axum",
-    "x402-evm",
-    "examples",
+    "x402/x402-core",
+    "x402/x402-axum",
+    "x402/x402-evm",
+    "x402/examples",
+    "mpp",
+    "mpp/examples",
 ]
 
 [workspace.package]
@@ -41,6 +43,7 @@ thiserror = "2"
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }
+time = { version = "0.3", features = ["formatting", "macros", "parsing"] }
 
 # Logging
 tracing = "0.1"

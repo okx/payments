@@ -1,0 +1,25 @@
+[package]
+name = "mpp-examples"
+description = "Example servers using the MPP Rust Seller SDK"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+mpp-evm = { path = "..", features = ["mock", "handlers"] }
+mpp = { git = "https://github.com/tempoxyz/mpp-rs", features = ["server", "evm", "tower", "axum"] }
+axum = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { workspace = true }
+tracing-subscriber = "0.3"
+
+[[example]]
+name = "mpp_photo_server"
+path = "src/mpp_photo_server.rs"
+
+[[example]]
+name = "mpp_session_server"
+path = "src/mpp_session_server.rs"

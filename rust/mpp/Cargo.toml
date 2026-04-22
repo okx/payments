@@ -1,0 +1,57 @@
+[package]
+name = "mpp-evm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "MPP EVM integration for OKX Payments SDK"
+
+[features]
+default = []
+# Enables `MockSaApiClient` for local development and examples. DO NOT enable in
+# production dependency chains — mock always returns success, no signature / SA
+# API validation.
+mock = []
+# Enables drop-in Axum handlers for /session/settle and /session/status. Enable
+# when you want to use the ready-made endpoints without writing your own.
+handlers = []
+
+[dev-dependencies]
+wiremock = { workspace = true }
+
+[dependencies]
+# MPP protocol (core traits + EVM types, no Tempo)
+mpp = { git = "https://github.com/tempoxyz/mpp-rs", features = ["server", "evm", "tower", "axum"] }
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Async
+tokio.workspace = true
+async-trait.workspace = true
+
+# HTTP (SA API calls)
+reqwest.workspace = true
+
+# Auth (OKX HMAC signing)
+hmac.workspace = true
+sha2.workspace = true
+base64.workspace = true
+
+# Time
+chrono.workspace = true
+time.workspace = true
+
+# Error handling
+thiserror.workspace = true
+
+# Logging
+tracing.workspace = true
+
+# Tower
+tower.workspace = true
+tower-service.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+axum.workspace = true

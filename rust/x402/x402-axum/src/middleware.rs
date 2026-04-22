@@ -27,7 +27,7 @@ use x402_core::http::{
     PAYMENT_RESPONSE_HEADER, SETTLEMENT_OVERRIDES_HEADER,
 };
 use x402_core::server::X402ResourceServer;
-use x402_core::types::{PaymentPayload, PaymentRequired, PaymentRequirements, ResourceInfo};
+use x402_core::types::{PaymentRequired, ResourceInfo};
 
 use crate::adapter;
 
