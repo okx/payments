@@ -7,6 +7,7 @@ members = [
     "x402/examples",
     "mpp",
     "mpp/examples",
+    "payment-router-axum",
 ]
 
 [workspace.package]

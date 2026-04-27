@@ -68,6 +68,7 @@
 //!     fee_payer: Some(true),
 //!     realm: "photo.test".into(),
 //!     secret_key: "hmac-secret".into(),
+//!     splits: None,
 //! });
 //! let _: Arc<dyn ChargeChallenger> = Arc::new(challenger);
 //! ```
@@ -97,7 +98,7 @@ use mpp::server::Mpp;
 
 use crate::challenge::{build_charge_challenge, charge_request_with};
 use crate::charge_method::EvmChargeMethod;
-use crate::types::ChargeMethodDetails;
+use crate::types::{ChargeMethodDetails, ChargeSplit};
 
 /// 构造 `EvmChargeChallenger` 所需的配置（struct-literal 风格）。
 ///
@@ -118,6 +119,13 @@ pub struct EvmChargeChallengerConfig {
     pub realm: String,
     /// 签 challenge id 的 HMAC 密钥，服务端需一致。
     pub secret_key: String,
+    /// 分账列表（规范 §8.1 `ChargeMethodDetails.splits`）。
+    ///
+    /// 每个 split 写成 `ChargeSplit { amount, recipient, memo }`，金额是 base units
+    /// 整数字符串。约束：`sum(splits[].amount) < request.amount`，且 primary
+    /// `recipient` 必须保留非零余额（规范硬性要求，SA API 会兜底校验）。`None` 表示
+    /// 不启用分账。
+    pub splits: Option<Vec<ChargeSplit>>,
 }
 
 /// EVM 后端 + SA API 的 `ChargeChallenger` 实现。
@@ -142,6 +150,8 @@ struct Inner {
     /// **重复**持一份 `realm` 用于签 challenge（可以通过 `mpp.realm()` 读, 但放一份省一次
     /// 函数调用且增加可读性）。
     realm: String,
+    /// 分账列表（服务级配置，跨路由共享）。`None` / 空 `Vec` 均视为不启用。
+    splits: Option<Vec<ChargeSplit>>,
 }
 
 impl EvmChargeChallenger {
@@ -157,6 +167,7 @@ impl EvmChargeChallenger {
                 fee_payer: cfg.fee_payer,
                 secret_key: cfg.secret_key,
                 realm: cfg.realm,
+                splits: cfg.splits,
             }),
         }
     }
@@ -175,6 +186,7 @@ impl EvmChargeChallenger {
             recipient: None,
             chain_id: None,
             fee_payer: None,
+            splits: None,
         }
     }
 }
@@ -191,6 +203,7 @@ pub struct EvmChargeChallengerBuilder {
     recipient: Option<String>,
     chain_id: Option<u64>,
     fee_payer: Option<bool>,
+    splits: Option<Vec<ChargeSplit>>,
 }
 
 impl EvmChargeChallengerBuilder {
@@ -210,6 +223,11 @@ impl EvmChargeChallengerBuilder {
         self.fee_payer = Some(v);
         self
     }
+    /// 分账列表（规范 §8.1）。空 `Vec` 会被规范化为 `None`，避免发空数组给 SA API。
+    pub fn splits(mut self, v: Vec<ChargeSplit>) -> Self {
+        self.splits = if v.is_empty() { None } else { Some(v) };
+        self
+    }
 
     /// 收尾。如果 `currency / recipient / chain_id` 没 set, panic（缺必填字段是编程错误）。
     pub fn build(self) -> EvmChargeChallenger {
@@ -223,6 +241,7 @@ impl EvmChargeChallengerBuilder {
                 .expect("EvmChargeChallengerBuilder: recipient() is required"),
             chain_id: self.chain_id.expect("EvmChargeChallengerBuilder: chain_id() is required"),
             fee_payer: self.fee_payer,
+            splits: self.splits,
         })
     }
 }
@@ -244,7 +263,7 @@ impl ChargeChallenger for EvmChargeChallenger {
             fee_payer: self.inner.fee_payer,
             permit2_address: None,
             memo: None,
-            splits: None,
+            splits: self.inner.splits.clone(),
         };
         let request = charge_request_with(
             amount,
@@ -305,6 +324,7 @@ mod tests {
             fee_payer: Some(true),
             realm: "test.local".into(),
             secret_key: "test-secret".into(),
+            splits: None,
         })
     }
 
@@ -354,6 +374,62 @@ mod tests {
             .challenge("100", ChallengeOptions { description: None })
             .unwrap();
         assert_eq!(ch.realm, "test.local");
+    }
+
+    #[test]
+    fn splits_flow_into_challenge_method_details() {
+        // 服务级配置的 splits 应通过 challenge() 进入 request.method_details.splits，
+        // 供客户端分别签 EIP-3009 分账授权。
+        let sa = Arc::new(MockSaApiClient::new());
+        let c = EvmChargeChallenger::builder(EvmChargeMethod::new(sa), "test.local", "test-secret")
+            .currency("0x74b7F16337b8972027F6196A17a631aC6dE26d22")
+            .recipient("0x4b22fdbc399bd422b6fefcbce95f76642ea29df1")
+            .chain_id(196)
+            .splits(vec![
+                ChargeSplit {
+                    amount: "30".into(),
+                    recipient: "0x1111111111111111111111111111111111111111".into(),
+                    memo: Some("partner-a".into()),
+                },
+                ChargeSplit {
+                    amount: "20".into(),
+                    recipient: "0x2222222222222222222222222222222222222222".into(),
+                    memo: None,
+                },
+            ])
+            .build();
+        let ch = c
+            .challenge("100", ChallengeOptions { description: None })
+            .expect("challenge ok");
+        let req: ChargeRequest = ch.request.decode().unwrap();
+        let details: ChargeMethodDetails =
+            serde_json::from_value(req.method_details.clone().unwrap()).unwrap();
+        let splits = details.splits.expect("splits populated");
+        assert_eq!(splits.len(), 2);
+        assert_eq!(splits[0].amount, "30");
+        assert_eq!(splits[0].recipient, "0x1111111111111111111111111111111111111111");
+        assert_eq!(splits[0].memo.as_deref(), Some("partner-a"));
+        assert_eq!(splits[1].amount, "20");
+        assert!(splits[1].memo.is_none());
+    }
+
+    #[test]
+    fn empty_splits_vec_is_normalized_to_none() {
+        // 空 Vec 不应发出空 splits 数组给客户端 / SA API。
+        let sa = Arc::new(MockSaApiClient::new());
+        let c = EvmChargeChallenger::builder(EvmChargeMethod::new(sa), "test.local", "test-secret")
+            .currency("0x74b7F16337b8972027F6196A17a631aC6dE26d22")
+            .recipient("0x4b22fdbc399bd422b6fefcbce95f76642ea29df1")
+            .chain_id(196)
+            .splits(vec![])
+            .build();
+        let ch = c
+            .challenge("100", ChallengeOptions { description: None })
+            .unwrap();
+        let req: ChargeRequest = ch.request.decode().unwrap();
+        let details: ChargeMethodDetails =
+            serde_json::from_value(req.method_details.clone().unwrap()).unwrap();
+        assert!(details.splits.is_none());
     }
 
     #[tokio::test]

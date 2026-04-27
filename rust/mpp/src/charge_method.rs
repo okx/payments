@@ -170,24 +170,21 @@ mod tests {
         async fn session_open(&self, _c: &serde_json::Value) -> Result<SessionReceipt, SaApiError> {
             unreachable!()
         }
-        async fn session_voucher(
-            &self,
-            _c: &serde_json::Value,
-        ) -> Result<SessionReceipt, SaApiError> {
-            unreachable!()
-        }
         async fn session_top_up(
             &self,
             _c: &serde_json::Value,
         ) -> Result<SessionReceipt, SaApiError> {
             unreachable!()
         }
-        async fn session_settle(&self, _cid: &str) -> Result<SessionReceipt, SaApiError> {
+        async fn session_settle(
+            &self,
+            _payload: &crate::types::SettleRequestPayload,
+        ) -> Result<SessionReceipt, SaApiError> {
             unreachable!()
         }
         async fn session_close(
             &self,
-            _c: &serde_json::Value,
+            _payload: &crate::types::CloseRequestPayload,
         ) -> Result<SessionReceipt, SaApiError> {
             unreachable!()
         }

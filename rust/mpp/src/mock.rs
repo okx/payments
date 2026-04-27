@@ -3,7 +3,7 @@
 //! **不要在生产环境使用。** 这个 client:
 //! - 对所有 `SaApiClient` 方法返回 `Ok(...)` 固定结构
 //! - 不发任何网络请求
-//! - `reference` / `challenge_id` / `timestamp` 是可识别的假值（含 `MOCK` 字样）
+//! - `reference` / `timestamp` 是可识别的假值（含 `MOCK` 字样）
 //!
 //! 典型用法：
 //!
@@ -13,14 +13,15 @@
 //!
 //! let client = Arc::new(MockSaApiClient::default());
 //! let charge_method = EvmChargeMethod::new(client);
-//! // ... 把 charge_method 挂到 axum handler 上
 //! ```
 
 use async_trait::async_trait;
 
 use crate::error::SaApiError;
 use crate::sa_client::SaApiClient;
-use crate::types::{ChannelStatus, ChargeReceipt, SessionReceipt};
+use crate::types::{
+    ChannelStatus, ChargeReceipt, CloseRequestPayload, SessionReceipt, SettleRequestPayload,
+};
 
 /// 固定返回成功响应的 SA API 桩。
 ///
@@ -45,7 +46,15 @@ fn extract_challenge_id(credential: &serde_json::Value) -> String {
         .to_string()
 }
 
-/// 生成可识别的 mock 时间戳（固定串，不依赖系统时钟，便于测试）。
+fn extract_channel_id(credential: &serde_json::Value) -> String {
+    credential
+        .get("payload")
+        .and_then(|p| p.get("channelId"))
+        .and_then(|id| id.as_str())
+        .unwrap_or("0xmockchannelid000000000000000000000000000000000000000000000000")
+        .to_string()
+}
+
 fn mock_timestamp() -> String {
     "2026-04-22T00:00:00Z".to_string()
 }
@@ -63,18 +72,20 @@ fn mock_charge_receipt(credential: &serde_json::Value) -> ChargeReceipt {
     }
 }
 
-fn mock_session_receipt(credential: &serde_json::Value, intent: &str) -> SessionReceipt {
+fn mock_session_receipt(channel_id: &str, intent: &str) -> SessionReceipt {
     SessionReceipt {
         method: "evm".into(),
         intent: intent.into(),
         status: "success".into(),
         timestamp: mock_timestamp(),
         chain_id: 196,
-        challenge_id: extract_challenge_id(credential),
-        channel_id: "mock-channel-id".into(),
-        accepted_cumulative: "0".into(),
-        spent: None,
+        channel_id: channel_id.to_string(),
         reference: None,
+        deposit: Some("1000000".into()),
+        // 旧字段保留 None（DRAFT 2 不返）
+        challenge_id: None,
+        accepted_cumulative: None,
+        spent: None,
         confirmations: None,
         units: None,
     }
@@ -102,16 +113,11 @@ impl SaApiClient for MockSaApiClient {
         &self,
         credential: &serde_json::Value,
     ) -> Result<SessionReceipt, SaApiError> {
-        Ok(mock_session_receipt(credential, "session.open"))
-    }
-
-    async fn session_voucher(
-        &self,
-        credential: &serde_json::Value,
-    ) -> Result<SessionReceipt, SaApiError> {
-        // voucher 通常累加 accepted_cumulative; 这里固定成一个示例值
-        let mut r = mock_session_receipt(credential, "session.voucher");
-        r.accepted_cumulative = "100000".into();
+        let cid = extract_channel_id(credential);
+        let mut r = mock_session_receipt(&cid, "session");
+        r.reference = Some(
+            "0xMOCK_OPEN_TX_HASH_000000000000000000000000000000000000000000000000000000".into(),
+        );
         Ok(r)
     }
 
@@ -119,32 +125,34 @@ impl SaApiClient for MockSaApiClient {
         &self,
         credential: &serde_json::Value,
     ) -> Result<SessionReceipt, SaApiError> {
-        let mut r = mock_session_receipt(credential, "session.topUp");
-        r.accepted_cumulative = "100000".into();
+        let cid = extract_channel_id(credential);
+        let mut r = mock_session_receipt(&cid, "session");
+        r.deposit = Some("2000000".into()); // mock：topUp 后 deposit 翻倍
+        r.reference = Some(
+            "0xMOCK_TOPUP_TX_HASH_00000000000000000000000000000000000000000000000000000".into(),
+        );
         Ok(r)
     }
 
-    async fn session_settle(&self, channel_id: &str) -> Result<SessionReceipt, SaApiError> {
-        let credential = serde_json::json!({
-            "challenge": { "id": format!("mock-settle-{channel_id}") }
-        });
-        let mut r = mock_session_receipt(&credential, "session.settle");
-        r.channel_id = channel_id.to_string();
-        r.reference =
-            Some("0xMOCK_SETTLE_TX_HASH_0000000000000000000000000000000000000000000000000000".into());
-        r.spent = Some("100000".into());
-        r.confirmations = Some(1);
+    async fn session_settle(
+        &self,
+        payload: &SettleRequestPayload,
+    ) -> Result<SessionReceipt, SaApiError> {
+        let mut r = mock_session_receipt(&payload.channel_id, "session");
+        r.reference = Some(
+            "0xMOCK_SETTLE_TX_HASH_0000000000000000000000000000000000000000000000000000".into(),
+        );
         Ok(r)
     }
 
     async fn session_close(
         &self,
-        credential: &serde_json::Value,
+        payload: &CloseRequestPayload,
     ) -> Result<SessionReceipt, SaApiError> {
-        let mut r = mock_session_receipt(credential, "session.close");
-        r.spent = Some("100000".into());
-        r.reference =
-            Some("0xMOCK_CLOSE_TX_HASH_00000000000000000000000000000000000000000000000000000".into());
+        let mut r = mock_session_receipt(&payload.channel_id, "session");
+        r.reference = Some(
+            "0xMOCK_CLOSE_TX_HASH_00000000000000000000000000000000000000000000000000000".into(),
+        );
         Ok(r)
     }
 
@@ -155,10 +163,10 @@ impl SaApiClient for MockSaApiClient {
             payee: "0xMOCK_PAYEE_ADDRESS_00000000000000000000".into(),
             token: "0xMOCK_TOKEN_ADDRESS_00000000000000000000".into(),
             deposit: "1000000000".into(),
-            cumulative_amount: "100000".into(),
             settled_on_chain: "0".into(),
-            session_status: "active".into(),
+            session_status: "OPEN".into(),
             remaining_balance: "999900000".into(),
+            cumulative_amount: None, // DRAFT 2 不返
         })
     }
 }
@@ -190,29 +198,53 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn session_voucher_has_accepted_cumulative() {
+    async fn session_open_includes_deposit() {
         let client = MockSaApiClient::new();
-        let cred = serde_json::json!({"challenge": {"id": "ch-v-1"}});
-        let r = client.session_voucher(&cred).await.unwrap();
-        assert_eq!(r.intent, "session.voucher");
-        assert_eq!(r.accepted_cumulative, "100000");
+        let cred = serde_json::json!({"payload": {"channelId": "0xabc"}});
+        let r = client.session_open(&cred).await.unwrap();
+        assert_eq!(r.channel_id, "0xabc");
+        assert!(r.deposit.is_some());
     }
 
     #[tokio::test]
-    async fn session_settle_echoes_channel_id() {
+    async fn session_settle_echoes_channel_id_from_payload() {
         let client = MockSaApiClient::new();
-        let r = client.session_settle("ch-abc").await.unwrap();
+        let payload = SettleRequestPayload {
+            action: Some("settle".into()),
+            channel_id: "ch-abc".into(),
+            cumulative_amount: "100".into(),
+            voucher_signature: "0xv".into(),
+            payee_signature: "0xp".into(),
+            nonce: "1".into(),
+            deadline: "999".into(),
+        };
+        let r = client.session_settle(&payload).await.unwrap();
         assert_eq!(r.channel_id, "ch-abc");
         assert!(r.reference.is_some());
-        assert_eq!(r.spent.as_deref(), Some("100000"));
     }
 
     #[tokio::test]
-    async fn session_status_returns_active() {
+    async fn session_close_uses_payload_channel_id() {
+        let client = MockSaApiClient::new();
+        let payload = CloseRequestPayload {
+            action: None,
+            channel_id: "ch-close".into(),
+            cumulative_amount: "500".into(),
+            voucher_signature: "0xv".into(),
+            payee_signature: "0xp".into(),
+            nonce: "1".into(),
+            deadline: "999".into(),
+        };
+        let r = client.session_close(&payload).await.unwrap();
+        assert_eq!(r.channel_id, "ch-close");
+    }
+
+    #[tokio::test]
+    async fn session_status_returns_open_without_cumulative() {
         let client = MockSaApiClient::new();
         let s = client.session_status("ch-xyz").await.unwrap();
         assert_eq!(s.channel_id, "ch-xyz");
-        assert_eq!(s.session_status, "active");
-        assert_eq!(s.deposit, "1000000000");
+        assert_eq!(s.session_status, "OPEN");
+        assert!(s.cumulative_amount.is_none());
     }
 }

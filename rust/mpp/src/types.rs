@@ -17,47 +17,16 @@ pub struct SaApiResponse<T> {
     pub msg: String,
 }
 
-// ==================== EIP-712 Voucher Domain (spec §8.4) ====================
-
-/// EIP-712 domain name used for Voucher signatures in OKX MPP.
-pub const VOUCHER_DOMAIN_NAME: &str = "EVM Payment Channel";
-
-/// EIP-712 domain version for Voucher signatures.
-pub const VOUCHER_DOMAIN_VERSION: &str = "1";
+// ==================== Constants ====================
 
 /// Default X Layer chain ID.
 pub const DEFAULT_CHAIN_ID: u64 = 196;
 
-/// EIP-712 Voucher typed data (client-side signing reference).
-///
-/// Struct: `Voucher { bytes32 channelId; uint128 cumulativeAmount; }`
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Voucher {
-    pub channel_id: String,
-    pub cumulative_amount: String,
-}
-
-/// EIP-712 domain separator for Voucher.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct VoucherDomain {
-    pub name: String,
-    pub version: String,
-    pub chain_id: u64,
-    pub verifying_contract: String,
-}
-
-impl VoucherDomain {
-    pub fn new(chain_id: u64, escrow_contract: impl Into<String>) -> Self {
-        Self {
-            name: VOUCHER_DOMAIN_NAME.to_string(),
-            version: VOUCHER_DOMAIN_VERSION.to_string(),
-            chain_id,
-            verifying_contract: escrow_contract.into(),
-        }
-    }
-}
+// EIP-712 typed structs (Voucher / SettleAuthorization / CloseAuthorization)
+// 与 domain 常量已迁移到 `crate::eip712` 模块。请使用：
+//   - `crate::eip712::voucher::Voucher`（验签结构体）
+//   - `crate::eip712::authorization::{SettleAuthorization, CloseAuthorization}`（签名结构体）
+//   - `crate::eip712::domain::{VOUCHER_DOMAIN_NAME, VOUCHER_DOMAIN_VERSION, build_domain}`
 
 // ==================== Challenge methodDetails (spec §8.1) ====================
 
@@ -175,10 +144,12 @@ pub struct ChargeReceipt {
     pub external_id: Option<String>,
 }
 
-/// Receipt returned by POST `/session/{open,voucher,topUp,settle,close}`.
+/// Receipt returned by POST `/session/{open,topUp,settle,close}`.
 ///
-/// Per the API 方案, `spent` is omitted on open/voucher responses and present on
-/// topUp/settle/close — modeled as `Option` to handle both shapes.
+/// 字段对齐 DRAFT 2 API doc：精简到 `method / intent / status / timestamp /
+/// channelId / chainId / reference / deposit`。旧字段 `challengeId /
+/// acceptedCumulative / spent / confirmations / units` 改成 `Option` 保留
+/// 向后兼容（新接口不返 → 反序列化为 None）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionReceipt {
@@ -187,13 +158,21 @@ pub struct SessionReceipt {
     pub status: String,
     pub timestamp: String,
     pub chain_id: u64,
-    pub challenge_id: String,
     pub channel_id: String,
-    pub accepted_cumulative: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub spent: Option<String>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reference: Option<String>,
+    /// 新增：当前 channel 在链上已知存款（DRAFT 2 加入）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deposit: Option<String>,
+
+    /// 旧字段（DRAFT 2 已不返，保留 Option 用于向后兼容/MockSaApiClient）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub challenge_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub accepted_cumulative: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub spent: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub confirmations: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -203,6 +182,9 @@ pub struct SessionReceipt {
 // ==================== Channel Status (spec §8.4) ====================
 
 /// Response from GET `/session/status`.
+///
+/// DRAFT 2 已删除 `cumulativeAmount` 字段（"只有调用 settle 才会更新"，见
+/// Q15）。`cumulative_amount` 保留 `Option` 用于向后兼容，新版接口必为 None。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChannelStatus {
@@ -211,10 +193,70 @@ pub struct ChannelStatus {
     pub payee: String,
     pub token: String,
     pub deposit: String,
-    pub cumulative_amount: String,
     pub settled_on_chain: String,
     pub session_status: String,
     pub remaining_balance: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cumulative_amount: Option<String>,
+}
+
+// ==================== Settle / Close 请求 payload（DRAFT 2 扁平结构）====================
+//
+// SDK 主动发起的 settle / close 请求 body 形状（不带 challenge wrapper —— Q4 已确认）：
+// settle:
+//   { "action": "settle", "channelId", "cumulativeAmount", "voucherSignature",
+//     "payeeSignature", "nonce", "deadline" }
+// close:
+//   同上，去掉 action 也允许（"约定传 close，服务端不强校验"）；waiver 分支下
+//   voucherSignature 可传空串（Q20 待 Michael 确认是否区分，首版统一传非空）。
+
+/// `POST /session/settle` 请求 body。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettleRequestPayload {
+    /// 约定传 `"settle"`，服务端不强校验。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
+
+    /// 通道 ID（bytes32 hex，0x-prefixed）。
+    pub channel_id: String,
+
+    /// 本次结算的累计金额（uint128 十进制字符串）。
+    pub cumulative_amount: String,
+
+    /// EIP-712 Voucher 签名（payer / authorizedSigner 签）。65 字节 r‖s‖v hex。
+    pub voucher_signature: String,
+
+    /// EIP-712 SettleAuthorization 签名（payee 签）。65 字节 r‖s‖v hex。
+    pub payee_signature: String,
+
+    /// uint256 十进制字符串。`(payee, channelId, nonce)` 三元组在合约层为已用集。
+    pub nonce: String,
+
+    /// 签名过期时间，uint256 十进制字符串（unix 秒；首版默认 `U256::MAX`）。
+    /// API doc DRAFT 2 标注为 String（Q22 已确认 close 同步对齐为 String）。
+    pub deadline: String,
+}
+
+/// `POST /session/close` 请求 body。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloseRequestPayload {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
+
+    pub channel_id: String,
+    pub cumulative_amount: String,
+
+    /// EIP-712 Voucher 签名。普通分支必填；waiver 分支（cumulativeAmount ≤
+    /// settledOnChain）可传空串 ""。首版统一传非空（Q20 待 Michael 确认）。
+    pub voucher_signature: String,
+
+    /// EIP-712 CloseAuthorization 签名（payee 签）。
+    pub payee_signature: String,
+
+    pub nonce: String,
+    pub deadline: String,
 }
 
 // ==================== Server Accounting State (spec §8.4) ====================
@@ -352,10 +394,73 @@ mod tests {
     }
 
     #[test]
-    fn voucher_domain_defaults() {
-        let d = VoucherDomain::new(196, "0xescrow");
-        assert_eq!(d.name, "EVM Payment Channel");
-        assert_eq!(d.version, "1");
-        assert_eq!(d.chain_id, 196);
+    fn settle_request_payload_serializes_camel_case() {
+        let p = SettleRequestPayload {
+            action: Some("settle".into()),
+            channel_id: "0xabc".into(),
+            cumulative_amount: "250000".into(),
+            voucher_signature: "0xvoucher".into(),
+            payee_signature: "0xpayee".into(),
+            nonce: "17890324512398".into(),
+            deadline: "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+                .into(),
+        };
+        let json = serde_json::to_value(&p).unwrap();
+        assert_eq!(json["action"], "settle");
+        assert_eq!(json["channelId"], "0xabc");
+        assert_eq!(json["voucherSignature"], "0xvoucher");
+        assert_eq!(json["payeeSignature"], "0xpayee");
+        assert_eq!(json["nonce"], "17890324512398");
+        // deadline 是 String 而非 number（与 API DRAFT 2 对齐 / Q22）
+        assert!(json["deadline"].is_string());
+    }
+
+    #[test]
+    fn close_request_payload_omits_action_when_none() {
+        let p = CloseRequestPayload {
+            action: None,
+            channel_id: "0xabc".into(),
+            cumulative_amount: "500000".into(),
+            voucher_signature: "0xvsig".into(),
+            payee_signature: "0xpsig".into(),
+            nonce: "1".into(),
+            deadline: "999".into(),
+        };
+        let json = serde_json::to_value(&p).unwrap();
+        assert!(json.get("action").is_none(), "action 为 None 时应省略");
+        assert_eq!(json["channelId"], "0xabc");
+    }
+
+    #[test]
+    fn session_receipt_minimal_shape_draft2() {
+        // DRAFT 2 最小返回（不含 challengeId / acceptedCumulative / spent）
+        let json = r#"{
+            "method":"evm",
+            "intent":"session",
+            "status":"success",
+            "timestamp":"2026-04-01T12:00:00Z",
+            "chainId":196,
+            "channelId":"0xdead",
+            "deposit":"1000"
+        }"#;
+        let r: SessionReceipt = serde_json::from_str(json).unwrap();
+        assert_eq!(r.channel_id, "0xdead");
+        assert_eq!(r.deposit.as_deref(), Some("1000"));
+        assert!(r.challenge_id.is_none());
+        assert!(r.accepted_cumulative.is_none());
+        assert!(r.spent.is_none());
+    }
+
+    #[test]
+    fn channel_status_without_cumulative_amount_draft2() {
+        let json = r#"{
+            "channelId":"0xabc",
+            "payer":"0xp", "payee":"0xq", "token":"0xt",
+            "deposit":"10000", "settledOnChain":"500",
+            "sessionStatus":"OPEN", "remainingBalance":"9500"
+        }"#;
+        let s: ChannelStatus = serde_json::from_str(json).unwrap();
+        assert_eq!(s.session_status, "OPEN");
+        assert!(s.cumulative_amount.is_none(), "DRAFT 2 不返 cumulativeAmount");
     }
 }

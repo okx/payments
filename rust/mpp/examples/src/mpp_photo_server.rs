@@ -95,6 +95,7 @@ async fn main() {
             fee_payer: Some(true),
             realm: env.realm.clone(),
             secret_key: env.secret_key,
+            splits: None,
         },
     ));
 

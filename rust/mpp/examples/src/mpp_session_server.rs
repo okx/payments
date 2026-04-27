@@ -11,15 +11,29 @@
 //! - `POST /session/settle` — seller-initiated mid-session settlement.
 //! - `GET  /session/status` — channel state lookup.
 //!
-//! Running:
+//! Running (MOCK mode, no real SA API needed — best for testing client/SDK
+//! EIP-712 alignment with onchainos):
+//!
+//! ```bash
+//! export MPP_MOCK=1
+//! cargo run -p mpp-examples --example mpp_session_server
+//! ```
+//!
+//! In MOCK mode, the merchant signer is a fixed demo private key whose address
+//! is auto-set as the channel recipient (so payee-consistency checks pass).
+//!
+//! Running against real SA API:
+//!
 //! ```bash
 //! export MPP_SA_URL=... MPP_SA_KEY=... MPP_SA_SECRET=... MPP_SA_PASSPHRASE=...
 //! export MPP_SECRET_KEY=session-demo-secret MPP_REALM=session.test
 //! export MPP_CURRENCY=0x74b7F16337b8972027F6196A17a631aC6dE26d22
 //! export MPP_RECIPIENT=0x4b22fdbc399bd422b6fefcbce95f76642ea29df1
 //! export MPP_ESCROW=0x1234567890abcdef1234567890abcdef12345678
+//! # MUST match MPP_RECIPIENT — payee signer for SettleAuthorization / CloseAuthorization
+//! export MPP_MERCHANT_PRIVATE_KEY=0x<32-byte hex>
 //!
-//! cargo run --example mpp_session_server
+//! cargo run -p mpp-examples --example mpp_session_server
 //! ```
 
 use axum::{
@@ -35,6 +49,7 @@ use mpp_evm::challenge::{build_session_challenge, session_request_with};
 use mpp_evm::sa_client::SaApiClient;
 use mpp_evm::types::{ChannelStatus, SessionMethodDetails};
 use mpp_evm::{EvmSessionMethod, MockSaApiClient, OkxSaApiClient};
+use alloy_signer_local::PrivateKeySigner;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -58,11 +73,23 @@ async fn main() {
 
     println!("=== MPP EVM Session Server (non-SSE) ===\n");
 
-    let (sa_client, cfg) = load_client_and_config();
-    let session_method = Arc::new(EvmSessionMethod::new(sa_client).with_escrow(&cfg.escrow));
+    let (sa_client, mut cfg, signer) = load_client_and_config();
+
+    // MOCK 模式下让 recipient = signer.address(),保证 SDK 的 payee consistency check
+    // (handle_open 时校验 signer.address() == challenge.request.recipient)
+    let signer_addr = format!("{:#x}", signer.address());
+    if std::env::var("MPP_MOCK").ok().as_deref() == Some("1") {
+        cfg.recipient = signer_addr.clone();
+    }
+
+    let session_method = Arc::new(
+        EvmSessionMethod::new(sa_client)
+            .with_escrow(&cfg.escrow)
+            .with_signer(signer),
+    );
 
     println!("Realm:       {}", cfg.realm);
-    println!("Recipient:   {}", cfg.recipient);
+    println!("Recipient:   {}  (← payee signer address)", cfg.recipient);
     println!("Currency:    {}", cfg.currency);
     println!("Escrow:      {}", cfg.escrow);
     println!("Unit price:  {UNIT_PRICE_BASE_UNITS} base units / {UNIT_TYPE}");
@@ -106,14 +133,24 @@ struct Config {
     escrow: String,
 }
 
-/// 装载 SA API client + Config。
+/// MOCK 模式专用的固定 demo 私钥(端到端测试稳定性,不要在生产复用)。
+/// 派生地址会自动覆盖 cfg.recipient,保证 payee consistency check 通过。
+const MOCK_MERCHANT_PK: &str =
+    "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+
+/// 装载 SA API client + Config + payee Signer。
 ///
-/// - `MPP_MOCK=1` 走 `MockSaApiClient` + 占位配置, 不需要任何真实凭证, 方便本地 dev / curl 验证流程。
-/// - 否则走真实 `OkxSaApiClient`, 9 个 env var 都必填。
-fn load_client_and_config() -> (Arc<dyn SaApiClient>, Config) {
+/// - `MPP_MOCK=1` 走 `MockSaApiClient` + 固定 demo 私钥,不需要任何真实凭证,
+///   方便本地 dev / 跟 onchainos cli 跑端到端 EIP-712 对齐验证。
+/// - 否则走真实 `OkxSaApiClient`,所有 env var 都必填(包括
+///   `MPP_MERCHANT_PRIVATE_KEY` —— 必须与 `MPP_RECIPIENT` 同地址)。
+fn load_client_and_config() -> (Arc<dyn SaApiClient>, Config, PrivateKeySigner) {
     if std::env::var("MPP_MOCK").ok().as_deref() == Some("1") {
-        println!("⚠ MPP_MOCK=1 — using MockSaApiClient, no real SA API calls");
-        // 合法 40-hex 地址, 便于真实客户端通过格式校验
+        println!("⚠ MPP_MOCK=1 — using MockSaApiClient + fixed demo merchant key");
+        // mock 模式下 escrow / currency 都允许从 env 覆盖,方便用真实部署的合约
+        // 地址做 EIP-712 域对齐验证(SDK + onchainos cli + 链上合约 三方对齐)。
+        let escrow_override = std::env::var("MPP_ESCROW").ok();
+        let currency_override = std::env::var("MPP_CURRENCY").ok();
         let cfg = Config {
             sa_url: "http://mock.local".into(),
             sa_key: "mock".into(),
@@ -121,12 +158,17 @@ fn load_client_and_config() -> (Arc<dyn SaApiClient>, Config) {
             sa_passphrase: "mock".into(),
             secret_key: "mock-hmac-secret".into(),
             realm: "mock.local".into(),
-            currency: "0x74b7F16337b8972027F6196A17a631aC6dE26d22".into(),
-            recipient: "0x4b22fdbc399bd422b6fefcbce95f76642ea29df1".into(),
-            escrow: "0x0000000000000000000000000000000000000000".into(),
+            currency: currency_override
+                .unwrap_or_else(|| "0x74b7F16337b8972027F6196A17a631aC6dE26d22".into()),
+            recipient: "0x0000000000000000000000000000000000000000".into(), // 启动时被 signer.address() 覆盖
+            escrow: escrow_override
+                .unwrap_or_else(|| "0x0000000000000000000000000000000000000000".into()),
         };
+        let signer: PrivateKeySigner = MOCK_MERCHANT_PK
+            .parse()
+            .expect("MOCK_MERCHANT_PK is hardcoded valid");
         let client: Arc<dyn SaApiClient> = Arc::new(MockSaApiClient::new());
-        (client, cfg)
+        (client, cfg, signer)
     } else {
         let cfg = match load_config() {
             Ok(c) => c,
@@ -135,18 +177,37 @@ fn load_client_and_config() -> (Arc<dyn SaApiClient>, Config) {
                 eprintln!("tip: set MPP_MOCK=1 to run with mocked SA API (no creds needed)");
                 eprintln!(
                     "required: MPP_SA_URL MPP_SA_KEY MPP_SA_SECRET MPP_SA_PASSPHRASE \
-                    MPP_SECRET_KEY MPP_REALM MPP_CURRENCY MPP_RECIPIENT MPP_ESCROW"
+                    MPP_SECRET_KEY MPP_REALM MPP_CURRENCY MPP_RECIPIENT MPP_ESCROW \
+                    MPP_MERCHANT_PRIVATE_KEY"
                 );
                 std::process::exit(1);
             }
         };
+        let pk_hex = std::env::var("MPP_MERCHANT_PRIVATE_KEY").unwrap_or_else(|_| {
+            eprintln!("missing env var: MPP_MERCHANT_PRIVATE_KEY");
+            eprintln!("(payee signer for SettleAuthorization/CloseAuthorization, must match MPP_RECIPIENT)");
+            std::process::exit(1);
+        });
+        let signer: PrivateKeySigner = pk_hex.parse().unwrap_or_else(|e| {
+            eprintln!("invalid MPP_MERCHANT_PRIVATE_KEY: {e}");
+            std::process::exit(1);
+        });
+        let signer_addr = format!("{:#x}", signer.address());
+        if signer_addr.to_lowercase() != cfg.recipient.to_lowercase() {
+            eprintln!(
+                "MPP_MERCHANT_PRIVATE_KEY address ({signer_addr}) does not match \
+                MPP_RECIPIENT ({})",
+                cfg.recipient
+            );
+            std::process::exit(1);
+        }
         let client: Arc<dyn SaApiClient> = Arc::new(OkxSaApiClient::with_base_url(
             cfg.sa_url.clone(),
             cfg.sa_key.clone(),
             cfg.sa_secret.clone(),
             cfg.sa_passphrase.clone(),
         ));
-        (client, cfg)
+        (client, cfg, signer)
     }
 }
 
@@ -311,7 +372,11 @@ async fn settle(
     State(state): State<Arc<AppState>>,
     Json(body): Json<SettleBody>,
 ) -> impl IntoResponse {
-    match state.session_method.settle(&body.channel_id).await {
+    match state
+        .session_method
+        .settle_with_authorization(&body.channel_id)
+        .await
+    {
         Ok(r) => (StatusCode::OK, Json(r)).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }

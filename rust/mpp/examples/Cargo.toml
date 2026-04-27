@@ -9,17 +9,32 @@ publish = false
 [dependencies]
 mpp-evm = { path = "..", features = ["mock", "handlers"] }
 mpp = { git = "https://github.com/tempoxyz/mpp-rs", features = ["server", "evm", "tower", "axum"] }
+payment-router-axum = { path = "../../payment-router-axum" }
+x402-axum = { path = "../../x402/x402-axum" }
+x402-core = { path = "../../x402/x402-core" }
+x402-evm = { path = "../../x402/x402-evm" }
 axum = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 reqwest = { workspace = true }
-tracing-subscriber = "0.3"
+base64 = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# mpp_session_server 端到端 demo 需要 PrivateKeySigner（payee 签 SettleAuth）
+alloy-signer-local = "=2.0.1"
 
 [[example]]
 name = "mpp_photo_server"
 path = "src/mpp_photo_server.rs"
 
 [[example]]
+name = "mpp_photo_split_server"
+path = "src/mpp_photo_split_server.rs"
+
+[[example]]
 name = "mpp_session_server"
 path = "src/mpp_session_server.rs"
+
+[[example]]
+name = "dual_protocol_server"
+path = "src/dual_protocol_server.rs"

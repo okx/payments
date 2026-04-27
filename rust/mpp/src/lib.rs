@@ -41,11 +41,13 @@
 pub mod challenge;
 pub mod challenger;
 pub mod charge_method;
+pub mod eip712;
 pub mod error;
 #[cfg(feature = "handlers")]
 pub mod handlers;
 #[cfg(feature = "mock")]
 pub mod mock;
+pub mod nonce;
 pub mod sa_client;
 pub mod session_method;
 pub mod store;
@@ -53,7 +55,16 @@ pub mod types;
 
 pub use challenger::{EvmChargeChallenger, EvmChargeChallengerConfig};
 pub use charge_method::EvmChargeMethod;
+pub use eip712::{
+    build_domain, sign_close_authorization, sign_settle_authorization, verify_voucher,
+    CloseAuthorization, SettleAuthorization, SignedAuthorization, VerifyError, Voucher,
+    VOUCHER_DOMAIN_NAME, VOUCHER_DOMAIN_VERSION,
+};
 pub use error::SaApiError;
+pub use nonce::{NonceProvider, UuidNonceProvider};
+pub use types::{
+    ChargeMethodDetails, ChargeSplit, CloseRequestPayload, SettleRequestPayload, DEFAULT_CHAIN_ID,
+};
 #[cfg(feature = "mock")]
 pub use mock::MockSaApiClient;
 pub use sa_client::{OkxSaApiClient, SaApiClient};
