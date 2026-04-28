@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>com.okx</groupId>
+    <artifactId>x402-java-parent</artifactId>
+    <version>1.0.0</version>
+  </parent>
+
+  <artifactId>x402-java-javax</artifactId>
+  <version>1.0.0</version>
+  <packaging>jar</packaging>
+
+  <description>
+    Java EE 8 / Spring Boot 2 bindings for the x402 payments SDK.
+    Provides PaymentFilter (javax.servlet.Filter) and PaymentInterceptor
+    (Spring 5 HandlerInterceptor) that adapt servlet types to the
+    servlet-agnostic core.
+  </description>
+
+  <dependencies>
+    <dependency>
+      <groupId>com.okx</groupId>
+      <artifactId>x402-java-core</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>javax.servlet</groupId>
+      <artifactId>javax.servlet-api</artifactId>
+      <version>${javax.servlet.version}</version>
+      <scope>provided</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework</groupId>
+      <artifactId>spring-webmvc</artifactId>
+      <version>${spring.javax.version}</version>
+      <scope>provided</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>${junit.version}</version>
+      <scope>test</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>org.mockito</groupId>
+      <artifactId>mockito-junit-jupiter</artifactId>
+      <version>${mockito.version}</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+</project>
