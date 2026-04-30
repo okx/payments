@@ -15,7 +15,9 @@
 //!
 //! - [`sa_client`] — SA API HTTP client ([`OkxSaApiClient`]) + pluggable
 //!   [`SaApiClient`] trait for injecting mocks or alternative backends.
-//! - [`charge_method`] — [`EvmChargeMethod`] (`impl mpp::protocol::traits::ChargeMethod`).
+//! - [`charge`] — Charge intent (one-shot pay → settle): [`EvmChargeMethod`]
+//!   (`impl mpp::protocol::traits::ChargeMethod`), [`EvmChargeChallenger`],
+//!   and the shared `method="evm"` challenge builders.
 //! - [`session_method`] — [`EvmSessionMethod`] with 5-minute idle-timeout
 //!   auto-settle (calls `/session/settle`, not `/close`, so no client
 //!   signature is needed on timeout).
@@ -24,9 +26,7 @@
 //!   upstream `tempo::session_method::ChannelStore` which has a different model.
 //! - [`types`] — Spec §8 data model: method details, EIP-3009 authorization,
 //!   receipts, EIP-712 voucher domain constants, server accounting state.
-//! - [`challenge`] — `method="evm"` challenge builders for charge + session
-//!   (upstream `Mpp::charge()` is gated on the `tempo` feature).
-//! - [`handlers`] *(feature = "handlers")* — Drop-in Axum handlers for
+//! - [`axum`] *(feature = "handlers")* — Drop-in Axum handlers for
 //!   `/session/settle` and `/session/status`. Enable cargo feature `handlers`
 //!   to include them; otherwise write your own.
 //! - [`error`] — [`SaApiError`] with canonical RFC 9457 mapping for all 16
@@ -35,22 +35,19 @@
 //! [`ChargeMethod`]: mpp::protocol::traits::ChargeMethod
 //! [`SessionMethod`]: mpp::protocol::traits::SessionMethod
 
-pub mod challenge;
-pub mod challenger;
-pub mod charge_method;
+pub mod charge;
 pub mod credential_ext;
 pub mod eip712;
 pub mod error;
 #[cfg(feature = "handlers")]
-pub mod handlers;
+pub mod axum;
 pub mod nonce;
 pub mod sa_client;
 pub mod session_method;
 pub mod store;
 pub mod types;
 
-pub use challenger::{EvmChargeChallenger, EvmChargeChallengerConfig};
-pub use charge_method::EvmChargeMethod;
+pub use charge::{EvmChargeChallenger, EvmChargeChallengerConfig, EvmChargeMethod};
 pub use credential_ext::CredentialExt;
 pub use eip712::{
     build_domain, sign_close_authorization, sign_settle_authorization, verify_voucher,

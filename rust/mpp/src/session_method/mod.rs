@@ -31,14 +31,10 @@
 //! `Arc<dyn Signer + Send + Sync>` for sharing.
 
 use std::collections::HashMap;
-use std::future::Future;
 use std::sync::{Arc, Mutex as StdMutex};
 
-use alloy_primitives::{hex, Address, B256, Bytes, U256};
+use alloy_primitives::{Address, Bytes, U256};
 use alloy_signer::Signer;
-use mpp::protocol::core::{PaymentCredential, Receipt};
-use mpp::protocol::intents::SessionRequest;
-use mpp::protocol::traits::{SessionMethod, VerificationError};
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::eip712::{
@@ -55,11 +51,10 @@ use crate::types::{
     DEFAULT_CHAIN_ID,
 };
 
-/// Session credential action names (spec §8.3).
-const ACTION_OPEN: &str = "open";
-const ACTION_VOUCHER: &str = "voucher";
-const ACTION_TOPUP: &str = "topUp";
-const ACTION_CLOSE: &str = "close";
+mod decode;
+mod handlers;
+mod trait_impl;
+use decode::*;
 
 // ===================== ChannelLocks =====================
 
@@ -94,17 +89,17 @@ fn default_deadline() -> U256 {
 /// EVM Session Method backed by OKX SA API.
 #[derive(Clone)]
 pub struct EvmSessionMethod {
-    sa_client: Arc<dyn SaApiClient>,
-    store: Arc<dyn SessionStore>,
+    pub(super) sa_client: Arc<dyn SaApiClient>,
+    pub(super) store: Arc<dyn SessionStore>,
     /// Method details for challenge generation (chainId, escrowContract, ...).
-    method_details: Option<serde_json::Value>,
+    pub(super) method_details: Option<serde_json::Value>,
 
     /// `dyn Signer` lets merchants plug in KMS, Ledger, WalletConnect, or any
     /// other remote signer — not just `PrivateKeySigner`. Any
     /// `alloy::signers::Signer` implementor works.
     signer: Option<Arc<dyn Signer + Send + Sync>>,
     /// Cached `signer.address()`. `None` means no signer has been injected.
-    payee_address: Option<Address>,
+    pub(super) payee_address: Option<Address>,
     nonce_provider: Arc<dyn NonceProvider>,
     /// Deadline for SettleAuthorization / CloseAuthorization signatures.
     /// Default `U256::MAX`; configurable.
@@ -115,11 +110,11 @@ pub struct EvmSessionMethod {
     /// `challenge_id` (matches `credential.challenge.id` from
     /// `verify_session` / `respond`). `respond()` reads and removes the
     /// entry immediately to prevent unbounded growth.
-    voucher_deduct_results: Arc<StdMutex<HashMap<String, (u128, u64)>>>,
+    pub(super) voucher_deduct_results: Arc<StdMutex<HashMap<String, (u128, u64)>>>,
     /// EIP-712 domain `name` / `version`. Defaults to the OKX
     /// EvmPaymentChannel canonical values; override via `with_domain_meta(...)`
     /// when forking the contract with a different domain.
-    domain_meta: DomainMeta,
+    pub(super) domain_meta: DomainMeta,
 }
 
 impl EvmSessionMethod {
@@ -555,575 +550,6 @@ impl EvmSessionMethod {
     }
 }
 
-// ===================== Helpers =====================
-
-fn extract_str<'a>(value: &'a serde_json::Value, key: &str) -> &'a str {
-    value.get(key).and_then(|v| v.as_str()).unwrap_or("")
-}
-
-fn parse_b256(s: &str) -> Result<B256, SaApiError> {
-    s.parse::<B256>()
-        .map_err(|e| SaApiError::new(70000, format!("invalid bytes32 channelId {s}: {e}")))
-}
-
-fn parse_address(s: &str) -> Result<Address, SaApiError> {
-    s.parse::<Address>()
-        .map_err(|e| SaApiError::new(70000, format!("invalid address {s}: {e}")))
-}
-
-fn parse_u128_str(s: &str) -> Result<u128, SaApiError> {
-    s.parse::<u128>()
-        .map_err(|e| SaApiError::new(70000, format!("invalid u128 {s}: {e}")))
-}
-
-/// Parse an optional u128 field; missing / empty string / null = 0.
-fn parse_u128_default_zero(v: Option<&serde_json::Value>) -> Result<u128, SaApiError> {
-    match v.and_then(|x| x.as_str()) {
-        None | Some("") => Ok(0),
-        Some(s) => parse_u128_str(s),
-    }
-}
-
-/// Parse an optional hex-bytes field ("0x..." | "" | null).
-fn parse_optional_hex_bytes(v: Option<&serde_json::Value>) -> Result<Option<Bytes>, SaApiError> {
-    match v.and_then(|x| x.as_str()) {
-        None | Some("") => Ok(None),
-        Some(s) => {
-            let stripped = s.strip_prefix("0x").unwrap_or(s);
-            let bytes = hex::decode(stripped)
-                .map_err(|e| SaApiError::new(70000, format!("invalid hex {s}: {e}")))?;
-            Ok(Some(Bytes::from(bytes)))
-        }
-    }
-}
-
-fn hex_with_prefix(b: &[u8]) -> String {
-    format!("0x{}", hex::encode(b))
-}
-
-/// Decode `challenge.request` (base64url JSON) and extract `recipient`.
-fn decode_challenge_request_recipient(
-    request: &mpp::protocol::core::Base64UrlJson,
-) -> Result<Address, SaApiError> {
-    // Base64UrlJson decoded as serde_json::Value
-    let value = request
-        .decode_value()
-        .map_err(|e| SaApiError::new(70000, format!("decode challenge request: {e}")))?;
-    let recipient = value
-        .get("recipient")
-        .and_then(|r| r.as_str())
-        .ok_or_else(|| SaApiError::new(70000, "challenge.request missing recipient"))?;
-    parse_address(recipient)
-}
-
-/// Decode `method_details` JSON into [`SessionMethodDetails`].
-fn decode_method_details(
-    method_details: Option<&serde_json::Value>,
-) -> Result<SessionMethodDetails, SaApiError> {
-    let v = method_details.ok_or_else(|| SaApiError::new(8000, "method_details not configured"))?;
-    serde_json::from_value(v.clone())
-        .map_err(|e| SaApiError::new(70000, format!("invalid method_details: {e}")))
-}
-
-/// Strictly parse a `did:pkh:eip155:<chainId>:<address>` DID per spec and
-/// return the address segment.
-///
-/// Checks (matching mpp-rs `parse_proof_source`):
-/// - Prefix must be `did:pkh:eip155:` (method = pkh, namespace = eip155).
-/// - The chainId segment must parse as `u64` with no leading zeros (`"0"`
-///   alone is valid; `"01"` is rejected).
-/// - The address segment must not contain further colons (prevents
-///   suffix forgery).
-/// - The address must be a valid 0x + 40-hex string.
-/// - Extra: the parsed chainId must equal `expected_chain_id` (prevents
-///   accidental cross-chain reuse — e.g. a mainnet DID hitting a testnet
-///   deployment).
-///
-/// Any failure → `70000 invalid source DID`.
-fn parse_did_pkh_eip155(did: &str, expected_chain_id: u64) -> Result<Address, SaApiError> {
-    let rest = did
-        .strip_prefix("did:pkh:eip155:")
-        .ok_or_else(|| SaApiError::new(70000, format!("source DID must start with did:pkh:eip155: ({did})")))?;
-    // Use `split_once` (not `rsplit`) so the address segment can't carry extra colons.
-    let (chain_id_str, address_str) = rest
-        .split_once(':')
-        .ok_or_else(|| SaApiError::new(70000, format!("source DID missing address segment ({did})")))?;
-    // Reject leading zeros (only "0" alone is valid).
-    if chain_id_str.len() > 1 && chain_id_str.starts_with('0') {
-        return Err(SaApiError::new(70000, format!("source DID chainId has leading zero: {chain_id_str}")));
-    }
-    let chain_id: u64 = chain_id_str
-        .parse()
-        .map_err(|e| SaApiError::new(70000, format!("invalid chainId in source DID: {e}")))?;
-    if chain_id != expected_chain_id {
-        return Err(SaApiError::new(
-            70000,
-            format!("source DID chainId {chain_id} != expected {expected_chain_id}"),
-        ));
-    }
-    // Address segment must not contain further colons.
-    if address_str.contains(':') {
-        return Err(SaApiError::new(
-            70000,
-            format!("source DID address segment has invalid chars: {address_str}"),
-        ));
-    }
-    parse_address(address_str)
-}
-
-/// Extract `(payer, authorized_signer)` by branching on `payload.type`.
-///
-/// - **transaction mode**: `payer = payload.authorization.from`. The SDK
-///   does not cross-check against the `source` DID — in transaction mode
-///   `source` is an optional auxiliary field, and `authorization.from` is
-///   the authoritative signature-bound value.
-/// - **hash mode**: `payer = parse_did_pkh_eip155(source, chain_id)` (spec
-///   requires `source` in hash mode).
-/// - **authorized_signer**: prefer `payload.authorizedSigner` (non-zero);
-///   otherwise fall back to `payer`. A client explicitly sending
-///   `authorizedSigner == payer` (redundant but valid) is silently
-///   accepted, matching mpp-rs behavior.
-///
-/// All errors map to 70000 invalid_payload.
-fn extract_payer_and_signer(
-    payload: &serde_json::Value,
-    source: Option<&str>,
-    chain_id: u64,
-) -> Result<(Address, Address), SaApiError> {
-    let payload_type = payload.get("type").and_then(|v| v.as_str()).unwrap_or("");
-    let payer = match payload_type {
-        "transaction" => parse_address(extract_str(
-            payload.get("authorization").unwrap_or(&serde_json::Value::Null),
-            "from",
-        ))?,
-        "hash" => {
-            let did = source
-                .filter(|s| !s.is_empty())
-                .ok_or_else(|| SaApiError::new(70000, "hash mode credential missing source"))?;
-            parse_did_pkh_eip155(did, chain_id)?
-        }
-        other => {
-            return Err(SaApiError::new(
-                70000,
-                format!("unsupported payload type {other:?} (expected transaction|hash)"),
-            ))
-        }
-    };
-
-    // authorizedSigner: explicit non-zero → use it; 0x0 / missing / empty → fall back to payer.
-    let raw_signer = payload
-        .get("authorizedSigner")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.parse::<Address>())
-        .transpose()
-        .map_err(|e| SaApiError::new(70000, format!("invalid authorizedSigner: {e}")))?;
-    let authorized_signer = match raw_signer {
-        Some(a) if a != Address::ZERO => a,
-        _ => payer,
-    };
-    Ok((payer, authorized_signer))
-}
-
-/// Strip SDK-only fields from `payload` before forwarding the credential
-/// to SA `/session/open`.
-///
-/// `cumulativeAmount` and the voucher-signature field are baseline voucher
-/// fields the client passes to the SDK only — SA's spec doesn't list them,
-/// so we strip before forwarding (avoids strict-schema rejection and
-/// reduces wire size). `challenge` / `source` at the top level stay (the
-/// open endpoint still needs `challenge`).
-///
-/// **The voucher-signature field name to strip depends on `payload.type`**:
-/// - `transaction`: voucher signature lives in `voucherSignature`
-///   (`signature` is the EIP-3009 deposit signature — SA must keep it).
-/// - `hash`: voucher signature occupies `signature` directly (no deposit
-///   signature exists, so the whole `signature` field is SDK-only and
-///   must be stripped).
-fn strip_sdk_only_open_fields(
-    credential: &PaymentCredential,
-) -> Result<serde_json::Value, SaApiError> {
-    let mut credential_json = serde_json::to_value(credential)
-        .map_err(|e| SaApiError::new(8000, format!("serialize credential: {e}")))?;
-    if let Some(payload_obj) = credential_json
-        .get_mut("payload")
-        .and_then(|v| v.as_object_mut())
-    {
-        let payload_type = payload_obj
-            .get("type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        payload_obj.remove("cumulativeAmount");
-        if payload_type == "hash" {
-            payload_obj.remove("signature");
-        } else {
-            payload_obj.remove("voucherSignature");
-        }
-    }
-    Ok(credential_json)
-}
-
-// ===================== SessionMethod trait impl =====================
-
-impl SessionMethod for EvmSessionMethod {
-    fn method(&self) -> &str {
-        "evm"
-    }
-
-    fn challenge_method_details(&self) -> Option<serde_json::Value> {
-        self.method_details.clone()
-    }
-
-    fn verify_session(
-        &self,
-        credential: &PaymentCredential,
-        request: &SessionRequest,
-    ) -> impl Future<Output = Result<Receipt, VerificationError>> + Send {
-        let credential = credential.clone();
-        let request = request.clone();
-        let challenge_id = credential.challenge.id.clone();
-        let this = self.clone();
-
-        async move {
-            let action = extract_str(&credential.payload, "action");
-
-            let result: Result<Receipt, SaApiError> = match action {
-                ACTION_OPEN => this.handle_open(&credential).await,
-                ACTION_TOPUP => this.handle_topup(&credential).await,
-                ACTION_VOUCHER => this.handle_voucher(&credential, &request).await,
-                ACTION_CLOSE => this.handle_close(&credential).await,
-                other => {
-                    return Err(VerificationError::new(format!(
-                        "unknown session action: {:?}",
-                        other
-                    )));
-                }
-            };
-
-            result.map_err(|e| {
-                let problem = e.to_problem_details(Some(&challenge_id));
-                VerificationError::new(problem.detail)
-            })
-        }
-    }
-
-    fn respond(
-        &self,
-        credential: &PaymentCredential,
-        receipt: &Receipt,
-    ) -> Option<serde_json::Value> {
-        // Management actions (open/topUp/close) return a minimal response.
-        // The voucher action returns the deduct snapshot (spent/units).
-        // The `reference` field is SA's on-chain tx hash, falling back to channelId.
-        let action = extract_str(&credential.payload, "action");
-        let channel_id = extract_str(&credential.payload, "channelId");
-        match action {
-            ACTION_OPEN | ACTION_TOPUP | ACTION_CLOSE => Some(serde_json::json!({
-                "action":     action,
-                "status":     "ok",
-                "channelId":  channel_id,
-                "reference":  receipt.reference,
-            })),
-            ACTION_VOUCHER => {
-                // Read the deduct result `handle_voucher` stashed; remove
-                // immediately so the map can't grow unbounded.
-                let challenge_id = &credential.challenge.id;
-                let deduct = self
-                    .voucher_deduct_results
-                    .lock()
-                    .unwrap()
-                    .remove(challenge_id);
-                deduct.map(|(spent, units)| {
-                    serde_json::json!({
-                        "action":    action,
-                        "status":    "ok",
-                        "channelId": channel_id,
-                        "spent":     spent.to_string(),
-                        "units":     units,
-                    })
-                })
-            }
-            _ => None,
-        }
-    }
-}
-
-// ===================== Action handlers =====================
-
-impl EvmSessionMethod {
-    async fn handle_open(&self, credential: &PaymentCredential) -> Result<Receipt, SaApiError> {
-        // 1. Payee consistency: challenge.recipient == signer.address().
-        let challenge_recipient = decode_challenge_request_recipient(&credential.challenge.request)?;
-        let signer_addr = self
-            .payee_address
-            .ok_or_else(|| SaApiError::new(8000, "no signer configured (call .with_signer)"))?;
-        if challenge_recipient != signer_addr {
-            return Err(SaApiError::new(
-                8000,
-                format!(
-                    "payee mismatch: challenge.recipient={} but signer.address={}; \
-                     SDK signer must be merchant's receiving address",
-                    challenge_recipient, signer_addr
-                ),
-            ));
-        }
-
-        // 2. Read method_details for chain_id / escrow_contract / min_voucher_delta.
-        let method_details = decode_method_details(self.method_details.as_ref())?;
-
-        // 3. Extract SDK-only fields from credential (SA does not consume
-        //    them; they get stripped before forwarding):
-        //    - cumulativeAmount (initial voucher amount; defaults to 0)
-        //    - initial voucher EIP-712 signature: in transaction mode it
-        //      lives in `voucherSignature` (so it doesn't collide with the
-        //      EIP-3009 deposit `signature`); in hash mode it occupies
-        //      `signature` directly (there is no deposit signature).
-        let payload = &credential.payload;
-        let payload_type = payload.get("type").and_then(|v| v.as_str()).unwrap_or("");
-        let voucher_sig_key = if payload_type == "hash" { "signature" } else { "voucherSignature" };
-        let initial_voucher_sig = parse_optional_hex_bytes(payload.get(voucher_sig_key))?;
-        let cumulative_amount = parse_u128_default_zero(payload.get("cumulativeAmount"))?;
-
-        // 4. Parse channel_id from the client's payload (don't wait for SA's
-        //    response; this enables fail-fast).
-        let channel_id_str = extract_str(payload, "channelId");
-        if channel_id_str.is_empty() {
-            return Err(SaApiError::new(70000, "open payload missing channelId"));
-        }
-        let channel_id_b256 = parse_b256(channel_id_str)?;
-        let escrow_contract = parse_address(&method_details.escrow_contract)?;
-
-        // 5. Resolve payer / authorized_signer:
-        // - transaction: payer = payload.authorization.from
-        // - hash:        payer = parse(source DID address segment; strict did:pkh:eip155 format)
-        let (payer, authorized_signer) = extract_payer_and_signer(
-            payload,
-            credential.source.as_deref(),
-            method_details.chain_id,
-        )?;
-
-        // 6. Local fail-fast verify of the initial voucher signature
-        //    (before forwarding to SA). In transaction mode this saves gas:
-        //    a bad signature means we never broadcast the open tx via SA.
-        //    In hash mode the client already paid gas, but doing it first
-        //    is still semantically cleaner.
-        if let Some(sig) = initial_voucher_sig.as_ref() {
-            // 6a. Transaction mode: locally enforce cum <= client-claimed
-            //     authorization.value (the deposit). In hash mode the
-            //     deposit only becomes known after SA returns the receipt,
-            //     so the check is deferred.
-            if payload_type != "hash" {
-                let claimed_deposit = parse_u128_str(extract_str(
-                    payload.get("authorization").unwrap_or(&serde_json::Value::Null),
-                    "value",
-                ))?;
-                if cumulative_amount > claimed_deposit {
-                    return Err(SaApiError::new(
-                        70012,
-                        format!(
-                            "initial voucher cumulativeAmount {cumulative_amount} exceeds claimed deposit {claimed_deposit}"
-                        ),
-                    ));
-                }
-            }
-            // 6b. Strict EIP-712 ecrecover.
-            verify_voucher(
-                &self.domain_meta,
-                escrow_contract,
-                method_details.chain_id,
-                channel_id_b256,
-                cumulative_amount,
-                sig,
-                authorized_signer,
-            )
-            .map_err(|e| SaApiError::new(70004, format!("initial voucher: {e}")))?;
-        }
-
-        // 7. Forward credential to SA — SDK-only fields must be stripped
-        //    first (SA spec doesn't list them).
-        //    Transaction mode strips cumulativeAmount + voucherSignature
-        //    (keeps EIP-3009 signature). Hash mode strips cumulativeAmount
-        //    + signature (the entire `signature` is the SDK-only voucher sig).
-        let credential_for_sa = strip_sdk_only_open_fields(credential)?;
-        let receipt = self.sa_client.session_open(&credential_for_sa).await?;
-
-        // 8. SA on-chain sanity: returned channelId must match the client-claimed one.
-        if !receipt.channel_id.eq_ignore_ascii_case(channel_id_str) {
-            return Err(SaApiError::new(
-                8000,
-                format!(
-                    "channelId mismatch: client claimed {} but SA returned {}",
-                    channel_id_str, receipt.channel_id
-                ),
-            ));
-        }
-
-        // 9. Resolve deposit (both modes have one by this point):
-        //    - transaction: client payload.authorization.value (already used in 6a).
-        //    - hash:        SA receipt.deposit (authoritative on-chain value).
-        let deposit = if payload_type == "hash" {
-            let dep_str = receipt
-                .deposit
-                .as_deref()
-                .filter(|s| !s.is_empty())
-                .ok_or_else(|| SaApiError::new(
-                    70000,
-                    "hash mode: SA session_open response missing deposit",
-                ))?;
-            parse_u128_str(dep_str)?
-        } else {
-            parse_u128_str(extract_str(
-                payload.get("authorization").unwrap_or(&serde_json::Value::Null),
-                "value",
-            ))?
-        };
-
-        // 9b. Hash mode: deferred cum-vs-deposit check (transaction already did this in 6a).
-        if payload_type == "hash" && cumulative_amount > deposit {
-            return Err(SaApiError::new(
-                70012,
-                format!(
-                    "initial voucher cumulativeAmount {cumulative_amount} exceeds on-chain deposit {deposit}"
-                ),
-            ));
-        }
-
-        let min_voucher_delta = method_details
-            .min_voucher_delta
-            .as_deref()
-            .map(parse_u128_str)
-            .transpose()?;
-
-        // 10. Write store.
-        let channel_id = receipt.channel_id.clone();
-        let record = ChannelRecord {
-            channel_id: channel_id.clone(),
-            chain_id: method_details.chain_id,
-            escrow_contract,
-            payer,
-            payee: signer_addr,
-            authorized_signer,
-            deposit,
-            highest_voucher_amount: cumulative_amount,
-            highest_voucher_signature: initial_voucher_sig,
-            min_voucher_delta,
-            spent: 0,
-            units: 0,
-        };
-        self.store.put(record).await;
-
-        Ok(Receipt::success(
-            "evm",
-            receipt.reference.clone().unwrap_or(channel_id),
-        ))
-    }
-
-    async fn handle_topup(&self, credential: &PaymentCredential) -> Result<Receipt, SaApiError> {
-        // Pre-flight: reject `additionalDeposit == 0` before hitting SA. Saves
-        // a wasted round-trip and prevents no-op records from polluting state.
-        let additional = parse_u128_str(extract_str(&credential.payload, "additionalDeposit"))?;
-        if additional == 0 {
-            return Err(SaApiError::new(
-                70000,
-                "topUp additionalDeposit must be greater than 0",
-            ));
-        }
-
-        // session/topUp doesn't need challenge — send { source, payload }.
-        let mut body = serde_json::json!({ "payload": credential.payload });
-        if let Some(s) = credential.source.as_deref() {
-            body["source"] = serde_json::Value::String(s.to_string());
-        }
-        let receipt = self.sa_client.session_top_up(&body).await?;
-
-        // Accumulate deposit.
-        let updater: ChannelUpdater = Box::new(move |r: &mut ChannelRecord| {
-            r.deposit = r
-                .deposit
-                .checked_add(additional)
-                .ok_or_else(|| SaApiError::new(8000, "deposit overflow"))?;
-            Ok(())
-        });
-        // If the local record is missing (e.g. topUp arriving after an SDK
-        // restart), `update` returns 70010 — but SA already succeeded on-chain,
-        // so we only log a warning instead of blocking. Local state will be
-        // inconsistent until the merchant either restarts a clean session or
-        // implements a `session/status`-based recovery path.
-        // TODO: auto-recover by calling `session_status` and rebuilding the
-        // ChannelRecord from on-chain truth (FR-recover, gap A in lifecycle audit).
-        if let Err(e) = self.store.update(&receipt.channel_id, updater).await {
-            tracing::warn!(channel_id = %receipt.channel_id, error = %e, "topup local update skipped");
-        }
-        Ok(Receipt::success(
-            "evm",
-            receipt.reference.clone().unwrap_or(receipt.channel_id),
-        ))
-    }
-
-    async fn handle_voucher(
-        &self,
-        credential: &PaymentCredential,
-        request: &SessionRequest,
-    ) -> Result<Receipt, SaApiError> {
-        let payload = &credential.payload;
-        let channel_id = extract_str(payload, "channelId");
-        let cum = parse_u128_str(extract_str(payload, "cumulativeAmount"))?;
-        let sig = parse_optional_hex_bytes(payload.get("signature"))?
-            .ok_or_else(|| SaApiError::new(70000, "voucher missing signature"))?;
-        // Byte-level replay only skips verify + highest update; deduct
-        // still runs. Matches mppx / OKX TS Session: a client can sign one
-        // large voucher and replay the same bytes to drain the balance.
-        // Double-deduct protection on network retries belongs at the
-        // challenge.id level (TS also doesn't do this; future work).
-        self.submit_voucher(channel_id, cum, sig).await?;
-        let amount = parse_u128_str(&request.amount)?;
-        let updated = self.deduct_from_channel(channel_id, amount).await?;
-        let (spent, units) = (updated.spent, updated.units);
-
-        self.voucher_deduct_results
-            .lock()
-            .unwrap()
-            .insert(credential.challenge.id.clone(), (spent, units));
-
-        Ok(Receipt::success("evm", channel_id.to_string()))
-    }
-
-    async fn handle_close(&self, credential: &PaymentCredential) -> Result<Receipt, SaApiError> {
-        let payload = &credential.payload;
-        let channel_id = extract_str(payload, "channelId");
-        let cum = parse_u128_str(extract_str(payload, "cumulativeAmount"))?;
-        let voucher_sig = parse_optional_hex_bytes(payload.get("signature"))?;
-
-        // The payer-provided final voucher must be locally verified first (B-1 path).
-        if let Some(sig) = voucher_sig.as_ref() {
-            let channel_id_b256 = parse_b256(channel_id)?;
-            let channel = self
-                .store
-                .get(channel_id)
-                .await
-                .ok_or_else(|| SaApiError::new(70010, "channel not found in local store"))?;
-            verify_voucher(
-                &self.domain_meta,
-                channel.escrow_contract,
-                channel.chain_id,
-                channel_id_b256,
-                cum,
-                sig,
-                channel.voucher_signer(),
-            )
-            .map_err(|e| SaApiError::new(70004, format!("close voucher: {e}")))?;
-        }
-
-        let receipt = self
-            .close_with_authorization(channel_id, Some(cum), voucher_sig)
-            .await?;
-        Ok(Receipt::success(
-            "evm",
-            receipt.reference.clone().unwrap_or(receipt.channel_id),
-        ))
-    }
-}
 
 // ===================== Tests =====================
 
@@ -1131,12 +557,14 @@ impl EvmSessionMethod {
 mod tests {
     use super::*;
     use crate::eip712::Voucher;
-    use alloy_primitives::{address, b256};
+    use alloy_primitives::{address, b256, hex, B256};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
     use alloy_sol_types::SolStruct;
     use async_trait::async_trait;
-    use mpp::protocol::core::{Base64UrlJson, ChallengeEcho};
+    use mpp::protocol::core::{Base64UrlJson, ChallengeEcho, PaymentCredential};
+    use mpp::protocol::intents::SessionRequest;
+    use mpp::protocol::traits::SessionMethod;
     use std::sync::Mutex as StdMutex;
 
     fn fixture_signer() -> PrivateKeySigner {

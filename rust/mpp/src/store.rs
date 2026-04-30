@@ -70,10 +70,8 @@ pub struct ChannelRecord {
     /// Total amount already deducted (base units). Each
     /// `deduct_from_channel` call adds to it. Invariant:
     /// `spent <= highest_voucher_amount`.
-    #[serde(default)]
     pub spent: u128,
     /// Total billed calls (`deduct_from_channel` invocation count).
-    #[serde(default)]
     pub units: u64,
 }
 

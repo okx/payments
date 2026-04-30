@@ -105,8 +105,8 @@ use mpp::protocol::core::{parse_authorization, PaymentChallenge, Receipt};
 use mpp::server::axum::{ChallengeOptions, ChargeChallenger};
 use mpp::server::Mpp;
 
-use crate::challenge::{build_charge_challenge, charge_request_with};
-use crate::charge_method::EvmChargeMethod;
+use super::challenge::{build_charge_challenge, charge_request_with};
+use super::method::EvmChargeMethod;
 use crate::types::{ChargeMethodDetails, ChargeSplit};
 
 /// Configuration for `EvmChargeChallenger` (struct-literal style).

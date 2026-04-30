@@ -113,7 +113,7 @@ for a runnable example (supports `MPP_MOCK=1` for zero-cred local dev).
 ## Quick start — Session (non-SSE)
 
 ```rust
-use mpp_evm::{EvmSessionMethod, OkxSaApiClient, handlers};
+use mpp_evm::{EvmSessionMethod, OkxSaApiClient, axum as mpp_axum};
 use axum::{routing::{get, post}, Router};
 use std::sync::Arc;
 
@@ -125,8 +125,8 @@ let session = Arc::new(
 
 // Mount seller-initiated endpoints for settle + status.
 let router: Router = Router::new()
-    .route("/session/settle", post(handlers::session_settle))
-    .route("/session/status", get(handlers::session_status))
+    .route("/session/settle", post(mpp_axum::session_settle))
+    .route("/session/status", get(mpp_axum::session_status))
     .with_state(session);
 ```
 

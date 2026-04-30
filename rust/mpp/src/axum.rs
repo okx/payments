@@ -259,7 +259,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn settle_unknown_channel_returns_500_with_70010() {
+    async fn settle_unknown_channel_returns_404_with_70010() {
         let sa = Arc::new(MockSa::default());
         // Note: no ChannelRecord preloaded — store get will miss.
         let signer = PrivateKeySigner::random();
@@ -273,7 +273,8 @@ mod tests {
             .body(Body::from(format!(r#"{{"channelId":"{CHANNEL_ID}"}}"#)))
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        // 70010 maps to RFC 9457 ChannelNotFoundError → HTTP 404 (see error::map).
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
         let body = to_bytes(resp.into_body(), 64 * 1024).await.unwrap();
         let s = String::from_utf8_lossy(&body);
         assert!(s.contains("70010") || s.to_lowercase().contains("not found"));

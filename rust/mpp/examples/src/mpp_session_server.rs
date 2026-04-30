@@ -34,7 +34,7 @@ use axum::{
 };
 use mpp::protocol::core::{format_www_authenticate, parse_authorization};
 use mpp::protocol::traits::SessionMethod;
-use mpp_evm::challenge::{build_session_challenge, session_request_with};
+use mpp_evm::charge::challenge::{build_session_challenge, session_request_with};
 use mpp_evm::sa_client::SaApiClient;
 use mpp_evm::types::{ChannelStatus, SessionMethodDetails};
 use mpp_evm::{CredentialExt, EvmSessionMethod, OkxSaApiClient};
