@@ -378,10 +378,14 @@ mod tests {
             .unwrap();
         let resp = svc.call(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+        // No payment handler involved on the fallback path: response must not
+        // carry the X-Handled-By marker that adapters set.
+        assert!(
+            !resp.headers().contains_key("x-handled-by"),
+            "fallback path must not be wrapped by any adapter"
+        );
         let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         assert_eq!(&body[..], b"inner-response");
-        // No payment handler involved, so no X-Handled-By.
-        assert!(svc.state.adapters.len() == 2);
     }
 
     #[tokio::test]

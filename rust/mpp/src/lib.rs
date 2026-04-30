@@ -29,9 +29,6 @@
 //! - [`handlers`] *(feature = "handlers")* — Drop-in Axum handlers for
 //!   `/session/settle` and `/session/status`. Enable cargo feature `handlers`
 //!   to include them; otherwise write your own.
-//! - [`mock`] *(feature = "mock")* — [`MockSaApiClient`] for local dev /
-//!   example flow verification. Returns fixed success data, no signature /
-//!   chain validation. **DO NOT enable in production dep chains.**
 //! - [`error`] — [`SaApiError`] with canonical RFC 9457 mapping for all 16
 //!   documented SA API error codes.
 //!
@@ -41,12 +38,11 @@
 pub mod challenge;
 pub mod challenger;
 pub mod charge_method;
+pub mod credential_ext;
 pub mod eip712;
 pub mod error;
 #[cfg(feature = "handlers")]
 pub mod handlers;
-#[cfg(feature = "mock")]
-pub mod mock;
 pub mod nonce;
 pub mod sa_client;
 pub mod session_method;
@@ -55,9 +51,10 @@ pub mod types;
 
 pub use challenger::{EvmChargeChallenger, EvmChargeChallengerConfig};
 pub use charge_method::EvmChargeMethod;
+pub use credential_ext::CredentialExt;
 pub use eip712::{
     build_domain, sign_close_authorization, sign_settle_authorization, verify_voucher,
-    CloseAuthorization, SettleAuthorization, SignedAuthorization, VerifyError, Voucher,
+    CloseAuthorization, DomainMeta, SettleAuthorization, SignedAuthorization, VerifyError, Voucher,
     VOUCHER_DOMAIN_NAME, VOUCHER_DOMAIN_VERSION,
 };
 pub use error::SaApiError;
@@ -65,8 +62,6 @@ pub use nonce::{NonceProvider, UuidNonceProvider};
 pub use types::{
     ChargeMethodDetails, ChargeSplit, CloseRequestPayload, SettleRequestPayload, DEFAULT_CHAIN_ID,
 };
-#[cfg(feature = "mock")]
-pub use mock::MockSaApiClient;
 pub use sa_client::{OkxSaApiClient, SaApiClient};
 pub use session_method::EvmSessionMethod;
 pub use store::{ChannelRecord, InMemorySessionStore, SessionStore};

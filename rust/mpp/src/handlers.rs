@@ -21,8 +21,8 @@
 //! ```
 //!
 //! 注：`POST /session/voucher` **不在** SDK handlers 提供 —— 业务层从自己的 402
-//! 路径接收 voucher 后调 [`EvmSessionMethod::submit_voucher`]（首版决策，见
-//! 集成方案 Q5）。`POST /session/close` 走 mpp-rs 的 [`SessionMethod::verify_session`]
+//! 路径接收 voucher 后调 [`EvmSessionMethod::submit_voucher`]。
+//! `POST /session/close` 走 mpp-rs 的 [`SessionMethod::verify_session`]
 //! 流程，由商户 server 把 PaymentCredential 喂进框架，无需独立 handler。
 
 use axum::extract::{Query, State};
@@ -51,11 +51,22 @@ pub struct StatusQuery {
     pub channel_id: String,
 }
 
+/// 把 `SaApiError` 转成对应的 HTTP 响应:状态码走 `to_problem_details`(70010 → 404,
+/// 70008 → 410,70004 → 401,etc.),body 用 `Display` 文本。商户需要 RFC 9457 JSON
+/// body 时,可直接调底层 `EvmSessionMethod` 自行组装响应。
+fn error_response(err: crate::error::SaApiError) -> Response {
+    let problem = err.to_problem_details(None);
+    let status = StatusCode::from_u16(problem.status)
+        .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    (status, err.to_string()).into_response()
+}
+
 /// Axum handler: `POST /session/settle`.
 ///
 /// Body: `{"channelId": "0x..."}`. 成功返回 SA API 的 [`SessionReceipt`] 200。
-/// 失败按 [`SaApiError`] 透传 message（HTTP 500 — 不做 RFC 9457 映射，调用方需要
-/// 自定义错误体可直接调 [`EvmSessionMethod::settle_with_authorization`]）。
+/// 失败按 [`SaApiError`] 映射到 RFC 9457 ProblemDetails 的 HTTP 状态码,body
+/// 是错误 message 文本。商户需要 problem+json 体可直接调
+/// [`EvmSessionMethod::settle_with_authorization`]。
 ///
 /// [`SessionReceipt`]: crate::types::SessionReceipt
 /// [`SaApiError`]: crate::error::SaApiError
@@ -65,7 +76,7 @@ pub async fn session_settle(
 ) -> Response {
     match method.settle_with_authorization(&body.channel_id).await {
         Ok(receipt) => (StatusCode::OK, Json(receipt)).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        Err(e) => error_response(e),
     }
 }
 
@@ -76,7 +87,7 @@ pub async fn session_status(
 ) -> Response {
     match method.status(&q.channel_id).await {
         Ok(status) => (StatusCode::OK, Json(status)).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:?}")).into_response(),
+        Err(e) => error_response(e),
     }
 }
 
@@ -190,6 +201,8 @@ mod tests {
                 highest_voucher_amount: 1_000,
                 highest_voucher_signature: Some(Bytes::from_str(FAKE_VOUCHER_SIG).unwrap()),
                 min_voucher_delta: None,
+                spent: 0,
+                units: 0,
             })
             .await;
 
@@ -273,7 +286,7 @@ mod tests {
         let parsed: ChannelStatus = serde_json::from_slice(&body).unwrap();
         assert_eq!(parsed.channel_id, CHANNEL_ID);
         assert_eq!(parsed.session_status, "OPEN");
-        // DRAFT 2: cumulative_amount 不再返回
+        // cumulative_amount 字段不再返回
         assert!(parsed.cumulative_amount.is_none());
     }
 

@@ -16,7 +16,7 @@ use alloy_primitives::{Address, U256};
 use alloy_signer::Signature;
 use alloy_sol_types::{sol, SolStruct};
 
-use super::domain::build_domain;
+use super::domain::{build_domain, DomainMeta};
 
 /// secp256k1 曲线阶的一半：N/2。s > 此值即视为 high-s（malleable signature）。
 /// 借自 Java `Eip712VerifyUtil.SECP256K1_ORDER_HALF`。
@@ -38,12 +38,16 @@ sol! {
 
 /// 本地验签 Voucher。返回 `Ok(())` 表示签名有效且 `recovered == expected_signer`。
 ///
+/// `meta` 指定 EIP-712 domain 的 `name` / `version`(默认走 OKX 标准值,见
+/// [`DomainMeta::default`])。商户 fork 合约改了 domain 的话需传自定义 meta。
+///
 /// # 守卫顺序
 /// 1. 长度严格 65 字节
 /// 2. Low-s 预检
 /// 3. EIP-712 digest 计算
 /// 4. ecrecover + 严格地址比对
 pub fn verify_voucher(
+    meta: &DomainMeta,
     escrow_contract: Address,
     chain_id: u64,
     channel_id: alloy_primitives::B256,
@@ -63,7 +67,7 @@ pub fn verify_voucher(
     }
 
     // ③ EIP-712 digest（sol! + eip712_signing_hash）
-    let domain = build_domain(chain_id, escrow_contract);
+    let domain = build_domain(meta, chain_id, escrow_contract);
     let voucher = Voucher {
         channelId: channel_id,
         cumulativeAmount: cumulative_amount,
@@ -133,7 +137,7 @@ mod tests {
         channel_id: alloy_primitives::B256,
         cum: u128,
     ) -> Vec<u8> {
-        let domain = build_domain(chain_id, escrow);
+        let domain = build_domain(&DomainMeta::default(), chain_id, escrow);
         let voucher = Voucher {
             channelId: channel_id,
             cumulativeAmount: cum,
@@ -151,8 +155,9 @@ mod tests {
         let channel_id = fixture_channel_id();
         let cum: u128 = 1_000_000;
 
+        let meta = DomainMeta::default();
         let sig = sign_voucher_for_test(&signer, escrow, 196, channel_id, cum);
-        let result = verify_voucher(escrow, 196, channel_id, cum, &sig, signer_addr);
+        let result = verify_voucher(&meta, escrow, 196, channel_id, cum, &sig, signer_addr);
         assert!(result.is_ok(), "round trip failed: {result:?}");
     }
 
@@ -160,6 +165,7 @@ mod tests {
     fn wrong_length_returns_bad_length() {
         let signer_addr = fixture_signer().address();
         let result = verify_voucher(
+            &DomainMeta::default(),
             fixture_escrow(),
             196,
             fixture_channel_id(),
@@ -184,6 +190,7 @@ mod tests {
 
         let signer_addr = fixture_signer().address();
         let result = verify_voucher(
+            &DomainMeta::default(),
             fixture_escrow(),
             196,
             fixture_channel_id(),
@@ -204,7 +211,15 @@ mod tests {
         let sig = sign_voucher_for_test(&signer, escrow, 196, channel_id, cum);
         let wrong_expected = Address::from([0xaau8; 20]);
 
-        let result = verify_voucher(escrow, 196, channel_id, cum, &sig, wrong_expected);
+        let result = verify_voucher(
+            &DomainMeta::default(),
+            escrow,
+            196,
+            channel_id,
+            cum,
+            &sig,
+            wrong_expected,
+        );
         match result {
             Err(VerifyError::AddressMismatch { recovered, expected }) => {
                 assert_eq!(recovered, signer.address());
@@ -219,6 +234,7 @@ mod tests {
         // r = 0 是无效 ECDSA 签名 → Signature::try_from 或 recover 失败
         let signer_addr = fixture_signer().address();
         let result = verify_voucher(
+            &DomainMeta::default(),
             fixture_escrow(),
             196,
             fixture_channel_id(),
@@ -241,7 +257,15 @@ mod tests {
 
         // 用 cum=100 签，但用 cum=200 验
         let sig = sign_voucher_for_test(&signer, escrow, 196, channel_id, 100);
-        let result = verify_voucher(escrow, 196, channel_id, 200, &sig, signer_addr);
+        let result = verify_voucher(
+            &DomainMeta::default(),
+            escrow,
+            196,
+            channel_id,
+            200,
+            &sig,
+            signer_addr,
+        );
         assert!(matches!(result, Err(VerifyError::AddressMismatch { .. })));
     }
 
@@ -254,7 +278,67 @@ mod tests {
         let cid_b = b256!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
 
         let sig = sign_voucher_for_test(&signer, escrow, 196, cid_a, 100);
-        let result = verify_voucher(escrow, 196, cid_b, 100, &sig, signer_addr);
+        let result = verify_voucher(
+            &DomainMeta::default(),
+            escrow,
+            196,
+            cid_b,
+            100,
+            &sig,
+            signer_addr,
+        );
+        assert!(matches!(result, Err(VerifyError::AddressMismatch { .. })));
+    }
+
+    #[test]
+    fn custom_meta_works_when_used_consistently() {
+        // sign 用 custom meta,verify 用同一个 custom meta → 通过
+        let signer = fixture_signer();
+        let signer_addr = signer.address();
+        let escrow = fixture_escrow();
+        let channel_id = fixture_channel_id();
+        let cum: u128 = 100;
+
+        let custom = DomainMeta::new("Forked Channel", "2");
+        let domain = build_domain(&custom, 196, escrow);
+        let voucher = Voucher {
+            channelId: channel_id,
+            cumulativeAmount: cum,
+        };
+        let digest = voucher.eip712_signing_hash(&domain);
+        let sig = signer.sign_hash_sync(&digest).unwrap().as_bytes().to_vec();
+
+        let result = verify_voucher(&custom, escrow, 196, channel_id, cum, &sig, signer_addr);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn custom_meta_mismatch_fails_verify() {
+        // sign 用 custom meta,verify 用 default meta → AddressMismatch
+        let signer = fixture_signer();
+        let signer_addr = signer.address();
+        let escrow = fixture_escrow();
+        let channel_id = fixture_channel_id();
+        let cum: u128 = 100;
+
+        let custom = DomainMeta::new("Forked Channel", "2");
+        let domain = build_domain(&custom, 196, escrow);
+        let voucher = Voucher {
+            channelId: channel_id,
+            cumulativeAmount: cum,
+        };
+        let digest = voucher.eip712_signing_hash(&domain);
+        let sig = signer.sign_hash_sync(&digest).unwrap().as_bytes().to_vec();
+
+        let result = verify_voucher(
+            &DomainMeta::default(),
+            escrow,
+            196,
+            channel_id,
+            cum,
+            &sig,
+            signer_addr,
+        );
         assert!(matches!(result, Err(VerifyError::AddressMismatch { .. })));
     }
 }

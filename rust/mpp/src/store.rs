@@ -9,10 +9,10 @@
 //! - 生产场景商户应自实现 `SqliteSessionStore` / `RedisSessionStore`（参考 §3.5
 //!   的 SQLite 模板）；接 [`EvmSessionMethod::with_store`] 注入即可
 //!
-//! ⚠ Q15 担忧点：SA API `/session/status` 不返 cumulativeAmount，
-//!   miss 时回源只能拿到 settledOnChain，**中间未 settle 的 voucher 无法恢复**。
-//!   `get` miss 时直接返 `None`，不自动回源；上层（[`EvmSessionMethod`]）按场景
-//!   决定是否重启 ACTION_OPEN 或拒绝 voucher。
+//! 持久化职责在商户:`get` miss 时返 `None`,SDK 不调 `/session/status` 自动
+//! 回源 —— SA API 回源能拿到的字段是子集(没有 `cumulativeAmount` 和
+//! `highest_voucher_signature`),无法重建 voucher 状态。跨进程稳定的商户需
+//! 自行实现持久化 store。
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -23,9 +23,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::SaApiError;
 
-/// SDK 本地维护的 channel 记录。10 个字段最小化 —— 不存
+/// SDK 本地维护的 channel 记录。12 个字段最小化 —— 不存
 /// `settled_on_chain` / `finalized` / `close_requested_at` / `last_receipt` /
 /// `challenge`（与 Tempo `ChannelState` 不同），见文档 §3.5 设计说明。
+///
+/// 计费会计字段 `spent` / `units` 与 TS Session.ts ChannelState 对齐：
+/// `available = highest_voucher_amount - spent` 是当前可扣额度。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChannelRecord {
     pub channel_id: String,
@@ -53,6 +56,14 @@ pub struct ChannelRecord {
     /// 节流：voucher 最小递增量，配置在 `SessionMethodDetails.minVoucherDelta`。
     /// `None` 视为无节流。
     pub min_voucher_delta: Option<u128>,
+
+    /// 已扣费总额（base units）。每次 `deduct_from_channel` 累加。
+    /// 不变量：`spent <= highest_voucher_amount`。
+    #[serde(default)]
+    pub spent: u128,
+    /// 已计费次数（`deduct_from_channel` 调用次数）。
+    #[serde(default)]
+    pub units: u64,
 }
 
 impl ChannelRecord {
@@ -70,10 +81,10 @@ pub type ChannelUpdater =
 
 /// 可插拔的 channel 存储 trait。
 ///
-/// **不**耦合 SA API：trait 内不调用任何 HTTP 接口，纯数据存取。回源逻辑
-/// （miss 时调 SA API `session_status` 重建）由 [`EvmSessionMethod`] 在业务
-/// 层处理 —— 因为回源能拿到的字段只是子集（见 Q15），重建策略和具体业务
-/// 场景相关。
+/// **不**耦合 SA API：trait 内不调用任何 HTTP 接口，纯数据存取。SDK 也不会
+/// 在 miss 时自动调 SA API 回源 —— 回源能拿到的字段是子集(没有
+/// cumulativeAmount / highest_voucher_signature)，重建语义不完整;商户跨进程
+/// 稳定运行需自行实现持久化 store。
 #[async_trait]
 pub trait SessionStore: Send + Sync {
     /// 读取 channel。`None` 表示本地无记录。
@@ -158,6 +169,8 @@ mod tests {
             highest_voucher_amount: highest,
             highest_voucher_signature: None,
             min_voucher_delta: None,
+            spent: 0,
+            units: 0,
         }
     }
 
@@ -239,7 +252,8 @@ mod tests {
             .update(
                 "0xa",
                 Box::new(|r| {
-                    r.highest_voucher_amount = 999; // 这个改动应该被回滚
+                    // 闭包先改字段再返错,验证 in-memory 实现下 record 已被改了一半。
+                    r.highest_voucher_amount = 999;
                     Err(SaApiError::new(70013, "delta too small"))
                 }),
             )

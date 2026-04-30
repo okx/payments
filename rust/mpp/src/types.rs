@@ -1,6 +1,5 @@
 //! Data types for MPP EVM SDK.
 //!
-//! Aligned with OKX Payments SDK 二期 MPP 集成方案 §8 and [Pay] MPP EVM API 方案.
 //! Covers: challenge method details, credential payloads, receipts, channel state,
 //! and EIP-712 voucher domain constants.
 
@@ -9,9 +8,13 @@ use serde::{Deserialize, Serialize};
 // ==================== SA API Response Wrapper ====================
 
 /// SA API unified response: `{ code, data, msg }`.
+///
+/// `code` 用 `i64` 而不是 `u32`,因为 SA backend 在某些异常路径下会返
+/// `code: -1`("unknown error"),u32 解析直接失败导致原始报错被吞掉。
+/// 业务错误码本身是非负整数(8000 / 70000-70014 等),向下兼容 `as u32`。
 #[derive(Debug, Clone, Deserialize)]
 pub struct SaApiResponse<T> {
-    pub code: u32,
+    pub code: i64,
     pub data: Option<T>,
     #[serde(default)]
     pub msg: String,
@@ -146,10 +149,9 @@ pub struct ChargeReceipt {
 
 /// Receipt returned by POST `/session/{open,topUp,settle,close}`.
 ///
-/// 字段对齐 DRAFT 2 API doc：精简到 `method / intent / status / timestamp /
-/// channelId / chainId / reference / deposit`。旧字段 `challengeId /
-/// acceptedCumulative / spent / confirmations / units` 改成 `Option` 保留
-/// 向后兼容（新接口不返 → 反序列化为 None）。
+/// 必填字段:`method / intent / status / timestamp / channelId / chainId /
+/// reference / deposit`。`challengeId / acceptedCumulative / spent /
+/// confirmations / units` 是可选字段(协议精简后新接口不返,反序列化得到 None)。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionReceipt {
@@ -162,11 +164,11 @@ pub struct SessionReceipt {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reference: Option<String>,
-    /// 新增：当前 channel 在链上已知存款（DRAFT 2 加入）。
+    /// 当前 channel 在链上已知存款。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deposit: Option<String>,
 
-    /// 旧字段（DRAFT 2 已不返，保留 Option 用于向后兼容/MockSaApiClient）
+    /// 可选字段(协议精简后新接口不返,保留 Option 用于反序列化兼容)。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub challenge_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -183,8 +185,8 @@ pub struct SessionReceipt {
 
 /// Response from GET `/session/status`.
 ///
-/// DRAFT 2 已删除 `cumulativeAmount` 字段（"只有调用 settle 才会更新"，见
-/// Q15）。`cumulative_amount` 保留 `Option` 用于向后兼容，新版接口必为 None。
+/// `cumulativeAmount` 在 spec 中已删除("只有调用 settle 才会更新")。
+/// 字段保留为 `Option` 仅供向后兼容旧响应,新版 SA API 必返 `None`。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChannelStatus {
@@ -200,15 +202,14 @@ pub struct ChannelStatus {
     pub cumulative_amount: Option<String>,
 }
 
-// ==================== Settle / Close 请求 payload（DRAFT 2 扁平结构）====================
+// ==================== Settle / Close 请求 payload ====================
 //
-// SDK 主动发起的 settle / close 请求 body 形状（不带 challenge wrapper —— Q4 已确认）：
+// SDK 主动发起的 settle / close 请求 body 形状（不带 challenge wrapper）:
 // settle:
 //   { "action": "settle", "channelId", "cumulativeAmount", "voucherSignature",
 //     "payeeSignature", "nonce", "deadline" }
-// close:
-//   同上，去掉 action 也允许（"约定传 close，服务端不强校验"）；waiver 分支下
-//   voucherSignature 可传空串（Q20 待 Michael 确认是否区分，首版统一传非空）。
+// close: 同上;waiver 分支 voucherSignature 传空串 ""(server 同时认
+//   `cumulativeAmount ≤ settledOnChain` 或 `voucherSignature == ""` 触发 waiver)。
 
 /// `POST /session/settle` 请求 body。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -233,8 +234,7 @@ pub struct SettleRequestPayload {
     /// uint256 十进制字符串。`(payee, channelId, nonce)` 三元组在合约层为已用集。
     pub nonce: String,
 
-    /// 签名过期时间，uint256 十进制字符串（unix 秒；首版默认 `U256::MAX`）。
-    /// API doc DRAFT 2 标注为 String（Q22 已确认 close 同步对齐为 String）。
+    /// 签名过期时间,uint256 十进制字符串(unix 秒;SDK 默认 `U256::MAX`)。
     pub deadline: String,
 }
 
@@ -248,8 +248,8 @@ pub struct CloseRequestPayload {
     pub channel_id: String,
     pub cumulative_amount: String,
 
-    /// EIP-712 Voucher 签名。普通分支必填；waiver 分支（cumulativeAmount ≤
-    /// settledOnChain）可传空串 ""。首版统一传非空（Q20 待 Michael 确认）。
+    /// EIP-712 Voucher 签名。普通分支:65 字节 r‖s‖v hex;waiver 分支
+    /// (`cumulativeAmount ≤ settledOnChain` 或 SDK 本地无 voucher)传空串 `""`。
     pub voucher_signature: String,
 
     /// EIP-712 CloseAuthorization 签名（payee 签）。
@@ -411,7 +411,7 @@ mod tests {
         assert_eq!(json["voucherSignature"], "0xvoucher");
         assert_eq!(json["payeeSignature"], "0xpayee");
         assert_eq!(json["nonce"], "17890324512398");
-        // deadline 是 String 而非 number（与 API DRAFT 2 对齐 / Q22）
+        // deadline 序列化为 String,与协议对齐(uint256 十进制字符串)。
         assert!(json["deadline"].is_string());
     }
 
@@ -432,8 +432,8 @@ mod tests {
     }
 
     #[test]
-    fn session_receipt_minimal_shape_draft2() {
-        // DRAFT 2 最小返回（不含 challengeId / acceptedCumulative / spent）
+    fn session_receipt_accepts_minimal_shape() {
+        // 最小返回(不含 challengeId / acceptedCumulative / spent)
         let json = r#"{
             "method":"evm",
             "intent":"session",
@@ -461,6 +461,6 @@ mod tests {
         }"#;
         let s: ChannelStatus = serde_json::from_str(json).unwrap();
         assert_eq!(s.session_status, "OPEN");
-        assert!(s.cumulative_amount.is_none(), "DRAFT 2 不返 cumulativeAmount");
+        assert!(s.cumulative_amount.is_none(), "cumulativeAmount 字段不返");
     }
 }

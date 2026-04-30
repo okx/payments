@@ -5,12 +5,21 @@
 //!
 //! Source: [Pay] MPP EVM API 方案 — 10 endpoints under /api/v6/pay/mpp/
 
+use std::time::Duration;
+
 use crate::error::SaApiError;
 use crate::types::{
     ChannelStatus, ChargeReceipt, CloseRequestPayload, SaApiResponse, SessionReceipt,
     SettleRequestPayload,
 };
 use async_trait::async_trait;
+
+/// HTTP request timeout for SA API calls.
+///
+/// 防止 SA backend 卡住时 SDK 无限挂着等响应。30s 留余量给链上交易回执
+/// (open / topup 后端代发广播 + 等 mining,正常 5-15s),网络故障时 30s 内
+/// 主动断,把故障包在可控时间窗内,避免 tokio worker 被永久占用 / 故障扩散。
+const SA_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 
 // ==================== Trait (Pluggable Interface) ====================
 
@@ -30,14 +39,13 @@ pub trait SaApiClient: Send + Sync {
         credential: &serde_json::Value,
     ) -> Result<ChargeReceipt, SaApiError>;
 
-    // Session
+    // Session 端点。
     //
-    // ⚠ DRAFT 2 改动（与上一版 trait 不同）：
-    //   - 删除 session_voucher（端点废弃，SDK 不再调用，本地 submit_voucher 处理）
-    //   - session_settle 改接强类型 SettleRequestPayload（带 voucherSig + payeeSig
-    //     + nonce + deadline）
-    //   - session_close 改接强类型 CloseRequestPayload（同上）
-    //   - 不再有 challenge wrapper（请求 body 直接是 payload 字段）
+    // - 没有 `/session/voucher` 端点(已废弃),voucher 在 SDK 本地处理
+    //   (`EvmSessionMethod::submit_voucher`)。
+    // - `session_settle` / `session_close` 接强类型 payload(voucherSig +
+    //   payeeSig + nonce + deadline),请求 body 直接是 payload 字段(无
+    //   challenge wrapper)。
     async fn session_open(
         &self,
         credential: &serde_json::Value,
@@ -105,12 +113,16 @@ impl OkxSaApiClient {
         secret_key: String,
         passphrase: String,
     ) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(SA_HTTP_TIMEOUT)
+            .build()
+            .expect("reqwest::Client::builder() with default config should not fail");
         Self {
             base_url,
             api_key,
             secret_key,
             passphrase,
-            client: reqwest::Client::new(),
+            client,
         }
     }
 
@@ -265,7 +277,19 @@ fn parse_sa_response<T: serde::de::DeserializeOwned>(
             msg = %envelope.msg,
             "SA API ← business error"
         );
-        return Err(SaApiError::new(envelope.code, envelope.msg));
+        // SA backend 偶尔返负数 code(如 -1 unknown error)。SaApiError.code 是 u32,
+        // 负数 / 超界统一映射到 8000(service error),原始 code 写进 msg 保留信息。
+        let (mapped_code, mapped_msg) = if envelope.code >= 0
+            && envelope.code <= u32::MAX as i64
+        {
+            (envelope.code as u32, envelope.msg)
+        } else {
+            (
+                8000,
+                format!("SA backend code={}: {}", envelope.code, envelope.msg),
+            )
+        };
+        return Err(SaApiError::new(mapped_code, mapped_msg));
     }
 
     // Phase 3: code == 0 时才 deserialize data 成 T。`data` 为 null / 不存在 → empty-data 错误。
@@ -383,12 +407,27 @@ fn build_auth_headers(
     let signature = base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes());
 
     let mut headers = reqwest::header::HeaderMap::new();
-    headers.insert(HEADER_API_KEY, api_key.parse().unwrap());
-    headers.insert(HEADER_SIGN, signature.parse().unwrap());
-    headers.insert(HEADER_TIMESTAMP, timestamp.parse().unwrap());
-    headers.insert(HEADER_PASSPHRASE, passphrase.parse().unwrap());
+    headers.insert(HEADER_API_KEY, parse_header_value("api_key", api_key)?);
+    headers.insert(HEADER_SIGN, parse_header_value("signature", &signature)?);
+    headers.insert(HEADER_TIMESTAMP, parse_header_value("timestamp", &timestamp)?);
+    headers.insert(HEADER_PASSPHRASE, parse_header_value("passphrase", passphrase)?);
 
     Ok(headers)
+}
+
+/// Convert a string to a `HeaderValue`. Non-ASCII / control characters are
+/// reported as `SaApiError(8000)` instead of panicking — guards against
+/// misconfigured api_key / passphrase taking the SDK down on every request.
+fn parse_header_value(
+    name: &str,
+    value: &str,
+) -> Result<reqwest::header::HeaderValue, SaApiError> {
+    value.parse().map_err(|_| {
+        SaApiError::new(
+            8000,
+            format!("non-ASCII or invalid header value for {name}"),
+        )
+    })
 }
 
 #[cfg(test)]
@@ -540,13 +579,15 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/api/v6/pay/mpp/session/settle"))
             .and(wiremock::matchers::body_json(serde_json::json!({
-                "action": "settle",
-                "channelId": "0xabc",
-                "cumulativeAmount": "250",
-                "voucherSignature": "0xvsig",
-                "payeeSignature": "0xpsig",
-                "nonce": "1234",
-                "deadline": "9999"
+                "payload": {
+                    "action": "settle",
+                    "channelId": "0xabc",
+                    "cumulativeAmount": "250",
+                    "voucherSignature": "0xvsig",
+                    "payeeSignature": "0xpsig",
+                    "nonce": "1234",
+                    "deadline": "9999"
+                }
             })))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "code": 0,

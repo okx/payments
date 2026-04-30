@@ -9,7 +9,7 @@ use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_signer::Signer;
 use alloy_sol_types::{sol, SolStruct};
 
-use super::domain::build_domain;
+use super::domain::{build_domain, DomainMeta};
 use crate::error::SaApiError;
 
 sol! {
@@ -47,32 +47,21 @@ pub struct SignedAuthorization {
     pub signature: Bytes,
 }
 
-/// 用注入的 Signer 签 SettleAuthorization。
-///
-/// Signer 来源由调用方决定:
-/// - dev: `PrivateKeySigner::random()` / `from_str(env_var)`
-/// - 生产: KMS（如 `alloy_signer_aws::AwsSigner`）/ 硬件钱包（`alloy_signer_ledger::LedgerSigner`）
-pub async fn sign_settle_authorization(
-    signer: &impl Signer,
-    escrow_contract: Address,
-    chain_id: u64,
+/// 共用签名路径:`Signer.sign_hash(digest)` + 包成 `SignedAuthorization`。
+/// `label` 仅用于错误信息,无业务意义。
+async fn sign_with_digest(
+    signer: &(impl Signer + ?Sized),
+    digest: alloy_primitives::B256,
+    label: &'static str,
     channel_id: B256,
     cumulative_amount: u128,
     nonce: U256,
     deadline: U256,
 ) -> Result<SignedAuthorization, SaApiError> {
-    let domain = build_domain(chain_id, escrow_contract);
-    let auth = SettleAuthorization {
-        channelId: channel_id,
-        cumulativeAmount: cumulative_amount,
-        nonce,
-        deadline,
-    };
-    let digest = auth.eip712_signing_hash(&domain);
     let sig = signer
         .sign_hash(&digest)
         .await
-        .map_err(|e| SaApiError::new(8000, format!("sign SettleAuthorization: {e}")))?;
+        .map_err(|e| SaApiError::new(8000, format!("sign {label}: {e}")))?;
     Ok(SignedAuthorization {
         channel_id,
         cumulative_amount,
@@ -82,10 +71,17 @@ pub async fn sign_settle_authorization(
     })
 }
 
-/// 用注入的 Signer 签 CloseAuthorization。结构对称 `sign_settle_authorization`，
-/// 只换 typed struct 类型；其余逻辑（domain / digest 路径）一致。
-pub async fn sign_close_authorization(
-    signer: &impl Signer,
+/// 用注入的 Signer 签 SettleAuthorization。
+///
+/// `meta` 指定 EIP-712 domain 的 `name` / `version`(默认走 OKX 标准值,见
+/// [`DomainMeta::default`])。商户 fork 合约改了 domain 的话需传自定义 meta。
+///
+/// Signer 来源由调用方决定:
+/// - dev: `PrivateKeySigner::random()` / `from_str(env_var)`
+/// - 生产: KMS（如 `alloy_signer_aws::AwsSigner`）/ 硬件钱包（`alloy_signer_ledger::LedgerSigner`）
+pub async fn sign_settle_authorization(
+    meta: &DomainMeta,
+    signer: &(impl Signer + ?Sized),
     escrow_contract: Address,
     chain_id: u64,
     channel_id: B256,
@@ -93,25 +89,56 @@ pub async fn sign_close_authorization(
     nonce: U256,
     deadline: U256,
 ) -> Result<SignedAuthorization, SaApiError> {
-    let domain = build_domain(chain_id, escrow_contract);
-    let auth = CloseAuthorization {
+    let domain = build_domain(meta, chain_id, escrow_contract);
+    let digest = SettleAuthorization {
         channelId: channel_id,
         cumulativeAmount: cumulative_amount,
         nonce,
         deadline,
-    };
-    let digest = auth.eip712_signing_hash(&domain);
-    let sig = signer
-        .sign_hash(&digest)
-        .await
-        .map_err(|e| SaApiError::new(8000, format!("sign CloseAuthorization: {e}")))?;
-    Ok(SignedAuthorization {
+    }
+    .eip712_signing_hash(&domain);
+    sign_with_digest(
+        signer,
+        digest,
+        "SettleAuthorization",
         channel_id,
         cumulative_amount,
         nonce,
         deadline,
-        signature: Bytes::from(sig.as_bytes().to_vec()),
-    })
+    )
+    .await
+}
+
+/// 用注入的 Signer 签 CloseAuthorization。结构对称 `sign_settle_authorization`，
+/// 只换 typed struct 类型；共享 `sign_with_digest` 完成实际签名。
+pub async fn sign_close_authorization(
+    meta: &DomainMeta,
+    signer: &(impl Signer + ?Sized),
+    escrow_contract: Address,
+    chain_id: u64,
+    channel_id: B256,
+    cumulative_amount: u128,
+    nonce: U256,
+    deadline: U256,
+) -> Result<SignedAuthorization, SaApiError> {
+    let domain = build_domain(meta, chain_id, escrow_contract);
+    let digest = CloseAuthorization {
+        channelId: channel_id,
+        cumulativeAmount: cumulative_amount,
+        nonce,
+        deadline,
+    }
+    .eip712_signing_hash(&domain);
+    sign_with_digest(
+        signer,
+        digest,
+        "CloseAuthorization",
+        channel_id,
+        cumulative_amount,
+        nonce,
+        deadline,
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -133,6 +160,7 @@ mod tests {
         let channel_id = b256!("6d0f4fdf1f2f6a1f6c1b0fbd6a7d5c2c0a8d3d7b1f6a9c1b3e2d4a5b6c7d8e9f");
 
         let signed = sign_settle_authorization(
+            &DomainMeta::default(),
             &signer,
             escrow,
             196,
@@ -157,6 +185,7 @@ mod tests {
         let channel_id = b256!("6d0f4fdf1f2f6a1f6c1b0fbd6a7d5c2c0a8d3d7b1f6a9c1b3e2d4a5b6c7d8e9f");
 
         let signed = sign_close_authorization(
+            &DomainMeta::default(),
             &signer,
             escrow,
             196,
@@ -181,13 +210,18 @@ mod tests {
         let channel_id = b256!("6d0f4fdf1f2f6a1f6c1b0fbd6a7d5c2c0a8d3d7b1f6a9c1b3e2d4a5b6c7d8e9f");
         let nonce = U256::from(7u64);
         let deadline = U256::from(1_800_000_000u64);
+        let meta = DomainMeta::default();
 
-        let s1 = sign_settle_authorization(&signer, escrow, 196, channel_id, 100, nonce, deadline)
-            .await
-            .unwrap();
-        let s2 = sign_close_authorization(&signer, escrow, 196, channel_id, 100, nonce, deadline)
-            .await
-            .unwrap();
+        let s1 = sign_settle_authorization(
+            &meta, &signer, escrow, 196, channel_id, 100, nonce, deadline,
+        )
+        .await
+        .unwrap();
+        let s2 = sign_close_authorization(
+            &meta, &signer, escrow, 196, channel_id, 100, nonce, deadline,
+        )
+        .await
+        .unwrap();
 
         assert_ne!(
             s1.signature, s2.signature,
@@ -201,8 +235,10 @@ mod tests {
         let signer = fixture_signer();
         let escrow = address!("eb18025208061781a287fFc2c1F31C03A24a24c0");
         let channel_id = b256!("6d0f4fdf1f2f6a1f6c1b0fbd6a7d5c2c0a8d3d7b1f6a9c1b3e2d4a5b6c7d8e9f");
+        let meta = DomainMeta::default();
 
         let s1 = sign_settle_authorization(
+            &meta,
             &signer,
             escrow,
             196,
@@ -214,6 +250,7 @@ mod tests {
         .await
         .unwrap();
         let s2 = sign_settle_authorization(
+            &meta,
             &signer,
             escrow,
             196,
@@ -226,5 +263,31 @@ mod tests {
         .unwrap();
 
         assert_eq!(s1.signature, s2.signature);
+    }
+
+    /// 不同 DomainMeta(自定义 name/version)产出的签名跟 default 不同。
+    #[tokio::test]
+    async fn custom_meta_yields_different_signature() {
+        let signer = fixture_signer();
+        let escrow = address!("eb18025208061781a287fFc2c1F31C03A24a24c0");
+        let channel_id = b256!("6d0f4fdf1f2f6a1f6c1b0fbd6a7d5c2c0a8d3d7b1f6a9c1b3e2d4a5b6c7d8e9f");
+
+        let default = DomainMeta::default();
+        let custom = DomainMeta::new("Forked Channel", "2");
+        let nonce = U256::from(1u64);
+        let deadline = U256::from(100u64);
+
+        let s_default = sign_settle_authorization(
+            &default, &signer, escrow, 196, channel_id, 42, nonce, deadline,
+        )
+        .await
+        .unwrap();
+        let s_custom = sign_settle_authorization(
+            &custom, &signer, escrow, 196, channel_id, 42, nonce, deadline,
+        )
+        .await
+        .unwrap();
+
+        assert_ne!(s_default.signature, s_custom.signature);
     }
 }

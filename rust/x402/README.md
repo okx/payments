@@ -99,7 +99,7 @@ Headers added automatically to every Facilitator request:
 
 | Chain | Network ID | Token | Contract | Decimals |
 |-------|-----------|-------|----------|----------|
-| X Layer | `eip155:196` | USDT | `0x779ded0c9e1022225f8e0630b35a9b54be713736` | 6 |
+| X Layer | `eip155:196` | USD₮0 | `0x779ded0c9e1022225f8e0630b35a9b54be713736` | 6 |
 
 X Layer assets are pre-registered — no manual configuration needed. For other tokens (e.g., USDG), use `register_money_parser()` or specify an `AssetAmount` directly in the price field.
 

@@ -11,17 +11,6 @@
 //! - `POST /session/settle` — seller-initiated mid-session settlement.
 //! - `GET  /session/status` — channel state lookup.
 //!
-//! Running (MOCK mode, no real SA API needed — best for testing client/SDK
-//! EIP-712 alignment with onchainos):
-//!
-//! ```bash
-//! export MPP_MOCK=1
-//! cargo run -p mpp-examples --example mpp_session_server
-//! ```
-//!
-//! In MOCK mode, the merchant signer is a fixed demo private key whose address
-//! is auto-set as the channel recipient (so payee-consistency checks pass).
-//!
 //! Running against real SA API:
 //!
 //! ```bash
@@ -48,7 +37,8 @@ use mpp::protocol::traits::SessionMethod;
 use mpp_evm::challenge::{build_session_challenge, session_request_with};
 use mpp_evm::sa_client::SaApiClient;
 use mpp_evm::types::{ChannelStatus, SessionMethodDetails};
-use mpp_evm::{EvmSessionMethod, MockSaApiClient, OkxSaApiClient};
+use mpp_evm::{CredentialExt, EvmSessionMethod, OkxSaApiClient};
+use alloy_primitives::Address;
 use alloy_signer_local::PrivateKeySigner;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -71,21 +61,21 @@ struct AppState {
 async fn main() {
     tracing_subscriber::fmt::init();
 
-    println!("=== MPP EVM Session Server (non-SSE) ===\n");
+    let (sa_client, cfg, signer) = load_client_and_config();
 
-    let (sa_client, mut cfg, signer) = load_client_and_config();
-
-    // MOCK 模式下让 recipient = signer.address(),保证 SDK 的 payee consistency check
-    // (handle_open 时校验 signer.address() == challenge.request.recipient)
-    let signer_addr = format!("{:#x}", signer.address());
-    if std::env::var("MPP_MOCK").ok().as_deref() == Some("1") {
-        cfg.recipient = signer_addr.clone();
-    }
-
+    let expected_payee: Address = cfg.recipient.parse().unwrap_or_else(|e| {
+        eprintln!("invalid MPP_RECIPIENT address {}: {e}", cfg.recipient);
+        std::process::exit(1);
+    });
     let session_method = Arc::new(
         EvmSessionMethod::new(sa_client)
             .with_escrow(&cfg.escrow)
-            .with_signer(signer),
+            .with_signer(signer)
+            .verify_payee(expected_payee)
+            .unwrap_or_else(|e| {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }),
     );
 
     println!("Realm:       {}", cfg.realm);
@@ -133,82 +123,39 @@ struct Config {
     escrow: String,
 }
 
-/// MOCK 模式专用的固定 demo 私钥(端到端测试稳定性,不要在生产复用)。
-/// 派生地址会自动覆盖 cfg.recipient,保证 payee consistency check 通过。
-const MOCK_MERCHANT_PK: &str =
-    "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
-
 /// 装载 SA API client + Config + payee Signer。
 ///
-/// - `MPP_MOCK=1` 走 `MockSaApiClient` + 固定 demo 私钥,不需要任何真实凭证,
-///   方便本地 dev / 跟 onchainos cli 跑端到端 EIP-712 对齐验证。
-/// - 否则走真实 `OkxSaApiClient`,所有 env var 都必填(包括
-///   `MPP_MERCHANT_PRIVATE_KEY` —— 必须与 `MPP_RECIPIENT` 同地址)。
+/// 所有 env var 都必填(包括 `MPP_MERCHANT_PRIVATE_KEY`,必须与 `MPP_RECIPIENT` 同地址)。
 fn load_client_and_config() -> (Arc<dyn SaApiClient>, Config, PrivateKeySigner) {
-    if std::env::var("MPP_MOCK").ok().as_deref() == Some("1") {
-        println!("⚠ MPP_MOCK=1 — using MockSaApiClient + fixed demo merchant key");
-        // mock 模式下 escrow / currency 都允许从 env 覆盖,方便用真实部署的合约
-        // 地址做 EIP-712 域对齐验证(SDK + onchainos cli + 链上合约 三方对齐)。
-        let escrow_override = std::env::var("MPP_ESCROW").ok();
-        let currency_override = std::env::var("MPP_CURRENCY").ok();
-        let cfg = Config {
-            sa_url: "http://mock.local".into(),
-            sa_key: "mock".into(),
-            sa_secret: "mock".into(),
-            sa_passphrase: "mock".into(),
-            secret_key: "mock-hmac-secret".into(),
-            realm: "mock.local".into(),
-            currency: currency_override
-                .unwrap_or_else(|| "0x74b7F16337b8972027F6196A17a631aC6dE26d22".into()),
-            recipient: "0x0000000000000000000000000000000000000000".into(), // 启动时被 signer.address() 覆盖
-            escrow: escrow_override
-                .unwrap_or_else(|| "0x0000000000000000000000000000000000000000".into()),
-        };
-        let signer: PrivateKeySigner = MOCK_MERCHANT_PK
-            .parse()
-            .expect("MOCK_MERCHANT_PK is hardcoded valid");
-        let client: Arc<dyn SaApiClient> = Arc::new(MockSaApiClient::new());
-        (client, cfg, signer)
-    } else {
-        let cfg = match load_config() {
-            Ok(c) => c,
-            Err(missing) => {
-                eprintln!("missing env var: {missing}");
-                eprintln!("tip: set MPP_MOCK=1 to run with mocked SA API (no creds needed)");
-                eprintln!(
-                    "required: MPP_SA_URL MPP_SA_KEY MPP_SA_SECRET MPP_SA_PASSPHRASE \
-                    MPP_SECRET_KEY MPP_REALM MPP_CURRENCY MPP_RECIPIENT MPP_ESCROW \
-                    MPP_MERCHANT_PRIVATE_KEY"
-                );
-                std::process::exit(1);
-            }
-        };
-        let pk_hex = std::env::var("MPP_MERCHANT_PRIVATE_KEY").unwrap_or_else(|_| {
-            eprintln!("missing env var: MPP_MERCHANT_PRIVATE_KEY");
-            eprintln!("(payee signer for SettleAuthorization/CloseAuthorization, must match MPP_RECIPIENT)");
-            std::process::exit(1);
-        });
-        let signer: PrivateKeySigner = pk_hex.parse().unwrap_or_else(|e| {
-            eprintln!("invalid MPP_MERCHANT_PRIVATE_KEY: {e}");
-            std::process::exit(1);
-        });
-        let signer_addr = format!("{:#x}", signer.address());
-        if signer_addr.to_lowercase() != cfg.recipient.to_lowercase() {
+    let cfg = match load_config() {
+        Ok(c) => c,
+        Err(missing) => {
+            eprintln!("missing env var: {missing}");
             eprintln!(
-                "MPP_MERCHANT_PRIVATE_KEY address ({signer_addr}) does not match \
-                MPP_RECIPIENT ({})",
-                cfg.recipient
+                "required: MPP_SA_URL MPP_SA_KEY MPP_SA_SECRET MPP_SA_PASSPHRASE \
+                MPP_SECRET_KEY MPP_REALM MPP_CURRENCY MPP_RECIPIENT MPP_ESCROW \
+                MPP_MERCHANT_PRIVATE_KEY"
             );
             std::process::exit(1);
         }
-        let client: Arc<dyn SaApiClient> = Arc::new(OkxSaApiClient::with_base_url(
-            cfg.sa_url.clone(),
-            cfg.sa_key.clone(),
-            cfg.sa_secret.clone(),
-            cfg.sa_passphrase.clone(),
-        ));
-        (client, cfg, signer)
-    }
+    };
+    let pk_hex = std::env::var("MPP_MERCHANT_PRIVATE_KEY").unwrap_or_else(|_| {
+        eprintln!("missing env var: MPP_MERCHANT_PRIVATE_KEY");
+        eprintln!("(payee signer for SettleAuthorization/CloseAuthorization, must match MPP_RECIPIENT)");
+        std::process::exit(1);
+    });
+    let signer: PrivateKeySigner = pk_hex.parse().unwrap_or_else(|e| {
+        eprintln!("invalid MPP_MERCHANT_PRIVATE_KEY: {e}");
+        std::process::exit(1);
+    });
+    // signer/recipient mismatch 在 main 用 EvmSessionMethod::verify_payee fast-fail。
+    let client: Arc<dyn SaApiClient> = Arc::new(OkxSaApiClient::with_base_url(
+        cfg.sa_url.clone(),
+        cfg.sa_key.clone(),
+        cfg.sa_secret.clone(),
+        cfg.sa_passphrase.clone(),
+    ));
+    (client, cfg, signer)
 }
 
 fn load_config() -> Result<Config, &'static str> {
@@ -237,42 +184,47 @@ async fn manage(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl 
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
-                    let request: mpp::protocol::intents::SessionRequest = match credential
-                        .challenge
-                        .request
-                        .decode()
-                    {
-                        Ok(r) => r,
-                        Err(e) => {
-                            return (
-                                StatusCode::BAD_REQUEST,
-                                Json(json!({"error": format!("decode request: {e}")})),
-                            )
-                                .into_response();
-                        }
-                    };
+                    let request: mpp::protocol::intents::SessionRequest =
+                        match credential.decode_request() {
+                            Ok(r) => r,
+                            Err(e) => {
+                                return (
+                                    StatusCode::BAD_REQUEST,
+                                    Json(json!({ "error": e.to_string() })),
+                                )
+                                    .into_response();
+                            }
+                        };
                     match state.session_method.verify_session(&credential, &request).await {
                         Ok(receipt) => {
-                            if let Some(body) = state.session_method.respond(&credential, &receipt)
-                            {
-                                // Management action (open/topUp/close) — return receipt JSON.
-                                return (StatusCode::OK, Json(body)).into_response();
+                            let respond_body =
+                                state.session_method.respond(&credential, &receipt);
+                            // Management action (open / topUp / close): only respond body.
+                            // Voucher: respond body 含 spent/units,需与商户业务负载合并。
+                            if action != "voucher" {
+                                if let Some(body) = respond_body {
+                                    return (StatusCode::OK, Json(body)).into_response();
+                                }
                             }
-                            // Voucher: 1 unit of business payload.
+                            // Voucher branch: merge spent/units(if any)with business payload.
                             let channel_id = credential
                                 .payload
                                 .get("channelId")
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("");
-                            return (
-                                StatusCode::OK,
-                                Json(json!({
-                                    "service": "one unit delivered",
-                                    "channelId": channel_id,
-                                    "action": action,
-                                })),
-                            )
-                                .into_response();
+                            let mut body = json!({
+                                "service": "one unit delivered",
+                                "channelId": channel_id,
+                                "action": action,
+                            });
+                            if let Some(serde_json::Value::Object(map)) = respond_body {
+                                let body_obj = body.as_object_mut().unwrap();
+                                for (k, v) in map {
+                                    // 不覆盖业务字段,只补缺失的 spent / units 等
+                                    body_obj.entry(k).or_insert(v);
+                                }
+                            }
+                            return (StatusCode::OK, Json(body)).into_response();
                         }
                         Err(e) => {
                             return (
@@ -295,12 +247,19 @@ async fn manage(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl 
     }
 
     // No credential — issue a 402 session challenge.
+    // MPP_FEE_PAYER 控制 challenge 走哪种 open 模式:
+    //   true (默认):seller 兜底 broadcast,客户端发 EIP-3009 → transaction mode
+    //   false:客户端自己上链 broadcast,只回报 tx hash → hash mode
+    let fee_payer = std::env::var("MPP_FEE_PAYER")
+        .ok()
+        .map(|v| !v.eq_ignore_ascii_case("false") && v != "0")
+        .unwrap_or(true);
     let details = SessionMethodDetails {
         chain_id: 196,
         escrow_contract: state.escrow.clone(),
         channel_id: None,
         min_voucher_delta: Some("0".into()),
-        fee_payer: Some(true),
+        fee_payer: Some(fee_payer),
         splits: None,
     };
     let request = match session_request_with(

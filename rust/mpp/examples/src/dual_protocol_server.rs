@@ -15,14 +15,12 @@
 //! # Running
 //!
 //! ```bash
-//! # MPP-only mock (fastest local demo; x402 adapter skipped unless env set)
-//! MPP_MOCK=1 cargo run --example dual_protocol_server
-//!
-//! # Full dual-protocol with real x402 facilitator
-//! MPP_MOCK=1 \
-//!   X402_API_KEY=... X402_SECRET_KEY=... X402_PASSPHRASE=... \
-//!   X402_PAY_TO=0x4b22fdbc399bd422b6fefcbce95f76642ea29df1 \
-//!   cargo run --example dual_protocol_server
+//! # 全部 MPP 凭证必填,x402 部分按需配置
+//! export MPP_SA_URL=... MPP_SA_KEY=... MPP_SA_SECRET=... MPP_SA_PASSPHRASE=...
+//! export MPP_SECRET_KEY=... MPP_REALM=... MPP_CURRENCY=0x... MPP_RECIPIENT=0x...
+//! export X402_API_KEY=... X402_SECRET_KEY=... X402_PASSPHRASE=...
+//! export X402_PAY_TO=0x...
+//! cargo run --example dual_protocol_server
 //! ```
 
 use std::collections::HashMap;
@@ -32,8 +30,7 @@ use axum::{routing::get, Json, Router};
 use mpp::server::axum::ChargeChallenger;
 use mpp_evm::sa_client::SaApiClient;
 use mpp_evm::{
-    EvmChargeChallenger, EvmChargeChallengerConfig, EvmChargeMethod, MockSaApiClient,
-    OkxSaApiClient,
+    EvmChargeChallenger, EvmChargeChallengerConfig, EvmChargeMethod, OkxSaApiClient,
 };
 use payment_router_axum::{
     adapters::{MppAdapter, X402Adapter},
@@ -48,7 +45,6 @@ use x402_evm::ExactEvmScheme;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
-    println!("=== Dual-Protocol Payment Server (MPP + x402) ===\n");
 
     let mpp_env = load_mpp_env();
     let x402_env = load_x402_env();
@@ -71,11 +67,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ------------- x402 side (optional) -------------
     //
-    // x402 requires a real facilitator to call `initialize()`. In local
-    // mock-only mode we register a dummy adapter slot with a fake facilitator
-    // URL, which will generate 402 challenges but fail at verify time —
-    // acceptable for demonstrating the 402 multi-row path without a real
-    // x402 client.
+    // x402 requires a real facilitator to call `initialize()`. 没设置 x402 env
+    // 时 example 不挂 x402 adapter,只跑 MPP 单协议路径。
     let mut protocols: Vec<Arc<dyn ProtocolAdapter>> = vec![mpp_adapter];
     let mut x402_registered = false;
 
@@ -141,11 +134,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         })),
     })?;
 
-    // ------------- axum Router -------------
+    // axum Router. State is unused on the paid route (the adapter handles
+    // verification before the inner service runs) but must satisfy the
+    // type checker — give it a never-called dummy challenger.
+    let dummy_sa: Arc<dyn SaApiClient> = Arc::new(OkxSaApiClient::with_base_url(
+        "http://state-fallback.invalid".into(),
+        "unused".into(),
+        "unused".into(),
+        "unused".into(),
+    ));
+    let dummy_state: Arc<dyn ChargeChallenger> = Arc::new(EvmChargeChallenger::new(
+        EvmChargeChallengerConfig {
+            charge_method: EvmChargeMethod::new(dummy_sa),
+            currency: "0x0000000000000000000000000000000000000000".into(),
+            recipient: "0x0000000000000000000000000000000000000000".into(),
+            chain_id: 196,
+            fee_payer: Some(true),
+            realm: "state-fallback".into(),
+            secret_key: "unused".into(),
+            splits: None,
+        },
+    ));
     let app = Router::new()
         .route("/health", get(health))
         .route("/photo", get(photo_handler))
-        .with_state(challenger_state()?)  // harmless fallback state
+        .with_state(dummy_state)
         .layer(layer);
 
     println!("Listening on http://localhost:4023");
@@ -173,23 +186,6 @@ async fn photo_handler() -> Json<Value> {
 
 async fn health() -> Json<Value> {
     Json(json!({ "status": "ok" }))
-}
-
-// Dummy state satisfier; MPP extractor path isn't used here (we go through the
-// adapter, not `MppCharge<C>`). Kept only so `with_state` type-checks.
-fn challenger_state() -> Result<Arc<dyn ChargeChallenger>, Box<dyn std::error::Error>> {
-    Ok(Arc::new(EvmChargeChallenger::new(
-        EvmChargeChallengerConfig {
-            charge_method: EvmChargeMethod::new(Arc::new(MockSaApiClient::new()) as Arc<dyn SaApiClient>),
-            currency: "0x0000000000000000000000000000000000000000".into(),
-            recipient: "0x0000000000000000000000000000000000000000".into(),
-            chain_id: 196,
-            fee_payer: Some(true),
-            realm: "state-fallback".into(),
-            secret_key: "unused".into(),
-            splits: None,
-        },
-    )))
 }
 
 fn x402_routes_config(pay_to: &str) -> RoutesConfig {
@@ -220,7 +216,6 @@ struct MppEnv {
     recipient: String,
     realm: String,
     secret_key: String,
-    mock: bool,
     sa_url: String,
     sa_key: String,
     sa_secret: String,
@@ -229,34 +224,16 @@ struct MppEnv {
 
 impl MppEnv {
     fn build_sa_client(&self) -> Arc<dyn SaApiClient> {
-        if self.mock {
-            Arc::new(MockSaApiClient::new())
-        } else {
-            Arc::new(OkxSaApiClient::with_base_url(
-                self.sa_url.clone(),
-                self.sa_key.clone(),
-                self.sa_secret.clone(),
-                self.sa_passphrase.clone(),
-            ))
-        }
+        Arc::new(OkxSaApiClient::with_base_url(
+            self.sa_url.clone(),
+            self.sa_key.clone(),
+            self.sa_secret.clone(),
+            self.sa_passphrase.clone(),
+        ))
     }
 }
 
 fn load_mpp_env() -> MppEnv {
-    if std::env::var("MPP_MOCK").ok().as_deref() == Some("1") {
-        println!("[MPP] MPP_MOCK=1 → MockSaApiClient (no real SA calls)");
-        return MppEnv {
-            sa_url: "http://mock.local".into(),
-            sa_key: "mock".into(),
-            sa_secret: "mock".into(),
-            sa_passphrase: "mock".into(),
-            secret_key: "mock-hmac-secret".into(),
-            realm: "mock.local".into(),
-            currency: "0x74b7F16337b8972027F6196A17a631aC6dE26d22".into(),
-            recipient: "0x4b22fdbc399bd422b6fefcbce95f76642ea29df1".into(),
-            mock: true,
-        };
-    }
     let req = |k: &str| std::env::var(k).unwrap_or_else(|_| panic!("missing env var: {k}"));
     MppEnv {
         sa_url: req("MPP_SA_URL"),
@@ -267,7 +244,6 @@ fn load_mpp_env() -> MppEnv {
         realm: req("MPP_REALM"),
         currency: req("MPP_CURRENCY"),
         recipient: req("MPP_RECIPIENT"),
-        mock: false,
     }
 }
 

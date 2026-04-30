@@ -132,6 +132,206 @@ let router: Router = Router::new()
 
 See [`examples/src/mpp_session_server.rs`](../examples/src/mpp_session_server.rs).
 
+## Custom signer integration
+
+`EvmSessionMethod::with_signer` accepts any `alloy::signers::Signer + Send + Sync + 'static` — internally stored as `Arc<dyn Signer + Send + Sync>` so a single method instance can serve concurrent signing calls.
+
+### Local private key
+
+Dev / unit tests; **never use raw env vars in production**.
+
+```rust,ignore
+use alloy_signer_local::PrivateKeySigner;
+use mpp_evm::{EvmSessionMethod, OkxSaApiClient};
+
+let signer: PrivateKeySigner = std::env::var("MERCHANT_PK")?.parse()?;
+let method = EvmSessionMethod::new(sa_client).with_signer(signer);
+```
+
+### AWS KMS
+
+Private key never leaves KMS; recommended for production.
+
+```rust,ignore
+use alloy_signer_aws::AwsSigner;
+use aws_config::BehaviorVersion;
+
+let aws_cfg = aws_config::load_defaults(BehaviorVersion::latest()).await;
+let kms = aws_sdk_kms::Client::new(&aws_cfg);
+let aws_signer = AwsSigner::new(kms, "alias/merchant-payee".into(), Some(196)).await?;
+let method = EvmSessionMethod::new(sa_client).with_signer(aws_signer);
+```
+
+### Ledger hardware wallet
+
+```rust,ignore
+use alloy_signer_ledger::{LedgerSigner, HDPath};
+
+let ledger = LedgerSigner::new(HDPath::LedgerLive(0), Some(196)).await?;
+let method = EvmSessionMethod::new(sa_client).with_signer(ledger);
+```
+
+### Custom remote signer (WalletConnect / 自建签名服务 / 任意 RPC)
+
+Implement `Signer` over your transport. The four methods below are the full surface SDK touches:
+
+```rust,ignore
+use alloy_signer::{Signer, Result, Signature};
+use alloy_primitives::{Address, B256, ChainId};
+use async_trait::async_trait;
+
+struct RemoteSignerClient {
+    // HTTP client / gRPC channel / message queue ...
+}
+
+#[async_trait]
+impl Signer for RemoteSignerClient {
+    async fn sign_hash(&self, hash: &B256) -> Result<Signature> {
+        // POST hash to your backend; backend returns 65-byte r‖s‖v.
+        todo!()
+    }
+    fn address(&self) -> Address { todo!() }
+    fn chain_id(&self) -> Option<ChainId> { Some(196) }
+    fn set_chain_id(&mut self, _: Option<ChainId>) {}
+}
+
+let method = EvmSessionMethod::new(sa_client)
+    .with_signer(RemoteSignerClient { /* ... */ });
+```
+
+Don't forget to call `.verify_payee(expected_payee_addr)?` after `.with_signer(...)` — fast-fails at startup when the signer's address mismatches the merchant's configured payee, instead of waiting for the first `open` to be rejected.
+
+---
+
+## Custom store integration
+
+`EvmSessionMethod::with_store` swaps the default `InMemorySessionStore` for any `SessionStore` implementation. Same channel concurrency is serialised by SDK-internal `ChannelLocks`; **cross-process** concurrency is the store's responsibility (SQL transactions / Redis WATCH/MULTI / etc.).
+
+The `update` method is the only one with a hard contract: it MUST atomically read → mutate via the closure → write. If the closure returns `Err`, the store MUST NOT persist any partial change.
+
+### SQLite (sqlx)
+
+```rust,ignore
+use async_trait::async_trait;
+use mpp_evm::{ChannelRecord, EvmSessionMethod, SaApiError, SessionStore};
+use mpp_evm::store::ChannelUpdater;
+use sqlx::SqlitePool;
+use std::sync::Arc;
+
+struct SqliteSessionStore { pool: SqlitePool }
+
+#[async_trait]
+impl SessionStore for SqliteSessionStore {
+    async fn get(&self, channel_id: &str) -> Option<ChannelRecord> {
+        let row: Option<(String,)> = sqlx::query_as("SELECT json FROM channels WHERE id = ?")
+            .bind(channel_id)
+            .fetch_optional(&self.pool).await.ok().flatten();
+        row.and_then(|(j,)| serde_json::from_str(&j).ok())
+    }
+    async fn put(&self, record: ChannelRecord) {
+        let json = serde_json::to_string(&record).unwrap();
+        let _ = sqlx::query("INSERT OR REPLACE INTO channels (id, json) VALUES (?, ?)")
+            .bind(&record.channel_id).bind(json)
+            .execute(&self.pool).await;
+    }
+    async fn remove(&self, channel_id: &str) {
+        let _ = sqlx::query("DELETE FROM channels WHERE id = ?")
+            .bind(channel_id).execute(&self.pool).await;
+    }
+    async fn update(&self, channel_id: &str, updater: ChannelUpdater)
+        -> Result<ChannelRecord, SaApiError>
+    {
+        // BEGIN IMMEDIATE; SELECT; closure; UPDATE; COMMIT;
+        // sqlx transaction auto-rolls back on Err.
+        todo!()
+    }
+}
+
+let method = EvmSessionMethod::with_store(
+    sa_client,
+    Arc::new(SqliteSessionStore { pool }),
+);
+```
+
+### Redis (with WATCH/MULTI for atomic update)
+
+```rust,ignore
+use async_trait::async_trait;
+use redis::aio::ConnectionManager;
+use mpp_evm::{ChannelRecord, SaApiError, SessionStore};
+use mpp_evm::store::ChannelUpdater;
+
+struct RedisSessionStore {
+    conn: ConnectionManager,
+    prefix: String, // e.g. "tenant_a:" — multi-tenancy
+}
+
+#[async_trait]
+impl SessionStore for RedisSessionStore {
+    async fn get(&self, channel_id: &str) -> Option<ChannelRecord> {
+        let mut c = self.conn.clone();
+        let json: Option<String> = redis::cmd("GET")
+            .arg(format!("{}{channel_id}", self.prefix))
+            .query_async(&mut c).await.ok();
+        json.and_then(|j| serde_json::from_str(&j).ok())
+    }
+    // put / remove: straightforward SET / DEL.
+    // update: WATCH key; read; run closure; MULTI; SET; EXEC. Retry on nil EXEC.
+    # async fn put(&self, _: ChannelRecord) { todo!() }
+    # async fn remove(&self, _: &str) { todo!() }
+    # async fn update(&self, _: &str, _: ChannelUpdater) -> Result<ChannelRecord, SaApiError> { todo!() }
+}
+```
+
+### Postgres (`SELECT ... FOR UPDATE` for cross-process exclusion)
+
+```rust,ignore
+# use async_trait::async_trait;
+# use mpp_evm::{ChannelRecord, SaApiError, SessionStore};
+# use mpp_evm::store::ChannelUpdater;
+struct PgSessionStore { pool: sqlx::PgPool }
+
+#[async_trait]
+impl SessionStore for PgSessionStore {
+    // update body:
+    //   BEGIN;
+    //   SELECT json FROM channels WHERE id = $1 FOR UPDATE;
+    //   <parse, run closure, serialise>
+    //   UPDATE channels SET json = $2 WHERE id = $1;
+    //   COMMIT;
+    # async fn get(&self, _: &str) -> Option<ChannelRecord> { todo!() }
+    # async fn put(&self, _: ChannelRecord) { todo!() }
+    # async fn remove(&self, _: &str) { todo!() }
+    # async fn update(&self, _: &str, _: ChannelUpdater) -> Result<ChannelRecord, SaApiError> { todo!() }
+}
+```
+
+### Decorator (metrics / cache / sharding on top of any inner store)
+
+```rust,ignore
+# use async_trait::async_trait;
+# use mpp_evm::{ChannelRecord, SaApiError, SessionStore};
+# use mpp_evm::store::ChannelUpdater;
+struct ObservedStore<S> {
+    inner: S,
+    metrics: prometheus::HistogramVec,
+}
+
+#[async_trait]
+impl<S: SessionStore> SessionStore for ObservedStore<S> {
+    async fn get(&self, channel_id: &str) -> Option<ChannelRecord> {
+        let _t = self.metrics.with_label_values(&["get"]).start_timer();
+        self.inner.get(channel_id).await
+    }
+    // put / remove / update: same delegation pattern.
+    # async fn put(&self, _: ChannelRecord) { todo!() }
+    # async fn remove(&self, _: &str) { todo!() }
+    # async fn update(&self, _: &str, _: ChannelUpdater) -> Result<ChannelRecord, SaApiError> { todo!() }
+}
+```
+
+---
+
 ## Error code mapping
 
 SA API error codes → RFC 9457 Problem Details (`error::SaApiError::to_problem_details`):

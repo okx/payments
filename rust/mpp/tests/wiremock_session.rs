@@ -1,11 +1,10 @@
-//! Wiremock-driven integration tests for new DRAFT 2 session endpoints.
+//! Wiremock-driven integration tests for session endpoints.
 //!
 //! Verifies wire-format alignment between [`OkxSaApiClient`] and the SA API
 //! `/api/v6/pay/mpp/session/*` paths:
-//! - `/session/settle` — POST 扁平 payload（含 voucherSig/payeeSig/nonce/deadline）
-//! - `/session/close`  — POST 扁平 payload（同上字段）
-//! - `/session/status` — GET ?channelId=... → ChannelStatus（DRAFT 2 不返
-//!   cumulativeAmount）
+//! - `/session/settle` — POST 扁平 payload(含 voucherSig/payeeSig/nonce/deadline)
+//! - `/session/close`  — POST 扁平 payload(同上字段)
+//! - `/session/status` — GET ?channelId=... → ChannelStatus(无 cumulativeAmount 字段)
 //!
 //! 这些测试验证 SDK → SA API 的 HTTP 契约：路径、方法、body 字段名（camelCase）、
 //! 响应反序列化形状、SaApiError 映射。
@@ -194,7 +193,7 @@ async fn close_waiver_branch_accepts_empty_voucher_signature() {
 }
 
 #[tokio::test]
-async fn status_get_returns_channel_state_without_cumulative_draft2() {
+async fn status_get_returns_channel_state_without_cumulative_amount() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/api/v6/pay/mpp/session/status"))
@@ -208,7 +207,7 @@ async fn status_get_returns_channel_state_without_cumulative_draft2() {
             "settledOnChain": "0",
             "sessionStatus": "OPEN",
             "remainingBalance": "999900000",
-            // cumulativeAmount 字段在 DRAFT 2 已删除 — 服务端不会返
+            // cumulativeAmount 不在 status 响应中
         })))
         .expect(1)
         .mount(&server)

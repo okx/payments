@@ -8,10 +8,6 @@ description = "MPP EVM integration for OKX Payments SDK"
 
 [features]
 default = []
-# Enables `MockSaApiClient` for local development and examples. DO NOT enable in
-# production dependency chains — mock always returns success, no signature / SA
-# API validation.
-mock = []
 # Enables drop-in Axum handlers for /session/settle and /session/status. Enable
 # when you want to use the ready-made endpoints without writing your own.
 handlers = []

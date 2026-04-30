@@ -9,15 +9,7 @@
 //! 2. 客户端签 EIP-3009 → 带 `Authorization: Payment <base64url>` 重试
 //! 3. 服务端通过 SA API 验签 + 扣费 → 200 + `Payment-Receipt` header + 照片 URL
 //!
-//! # Running
-//!
-//! **本地 dev / onchainos 联调** (无需真凭证)：
-//!
-//! ```bash
-//! MPP_MOCK=1 cargo run --example mpp_photo_server
-//! ```
-//!
-//! **真实 SA API**：
+//! # Running (real SA API)
 //!
 //! ```bash
 //! export MPP_SA_URL=...
@@ -34,8 +26,7 @@ use axum::{routing::get, Json, Router};
 use mpp::server::axum::{ChargeChallenger, ChargeConfig, MppCharge, WithReceipt};
 use mpp_evm::sa_client::SaApiClient;
 use mpp_evm::{
-    EvmChargeChallenger, EvmChargeChallengerConfig, EvmChargeMethod, MockSaApiClient,
-    OkxSaApiClient,
+    EvmChargeChallenger, EvmChargeChallengerConfig, EvmChargeMethod, OkxSaApiClient,
 };
 use serde_json::{json, Value};
 
@@ -82,7 +73,6 @@ async fn health() -> Json<Value> {
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt::init();
-    println!("=== MPP EVM Photo Server ===\n");
 
     let env = load_env();
     let sa_client = env.build_sa_client();
@@ -121,7 +111,7 @@ async fn main() {
 }
 
 // ---------------------------------------------------------------------------
-// 环境装载 —— MPP_MOCK=1 模式给 MockSaApiClient + 合法 40-hex 占位地址
+// 环境装载 —— 全部 SA API 凭证 + 商户配置必填
 // ---------------------------------------------------------------------------
 
 struct Env {
@@ -133,62 +123,39 @@ struct Env {
     realm: String,
     currency: String,
     recipient: String,
-    mock: bool,
 }
 
 impl Env {
     fn build_sa_client(&self) -> Arc<dyn SaApiClient> {
-        if self.mock {
-            Arc::new(MockSaApiClient::new())
-        } else {
-            Arc::new(OkxSaApiClient::with_base_url(
-                self.sa_url.clone(),
-                self.sa_key.clone(),
-                self.sa_secret.clone(),
-                self.sa_passphrase.clone(),
-            ))
-        }
+        Arc::new(OkxSaApiClient::with_base_url(
+            self.sa_url.clone(),
+            self.sa_key.clone(),
+            self.sa_secret.clone(),
+            self.sa_passphrase.clone(),
+        ))
     }
 }
 
 fn load_env() -> Env {
-    if std::env::var("MPP_MOCK").ok().as_deref() == Some("1") {
-        println!("⚠ MPP_MOCK=1 — using MockSaApiClient, no real SA API calls");
-        Env {
-            sa_url: "http://mock.local".into(),
-            sa_key: "mock".into(),
-            sa_secret: "mock".into(),
-            sa_passphrase: "mock".into(),
-            secret_key: "mock-hmac-secret".into(),
-            realm: "mock.local".into(),
-            // 合法 40-hex 占位地址 (真实 X Layer pathUSD + 测试 recipient), 客户端地址校验能过
-            currency: "0x74b7F16337b8972027F6196A17a631aC6dE26d22".into(),
-            recipient: "0x4b22fdbc399bd422b6fefcbce95f76642ea29df1".into(),
-            mock: true,
-        }
-    } else {
-        let required = |k: &str| {
-            std::env::var(k).unwrap_or_else(|_| {
-                eprintln!("missing env var: {k}");
-                eprintln!("tip: set MPP_MOCK=1 to run with mocked SA API (no creds needed)");
-                eprintln!(
-                    "required: MPP_SA_URL MPP_SA_KEY MPP_SA_SECRET MPP_SA_PASSPHRASE \
-                    MPP_SECRET_KEY MPP_REALM MPP_CURRENCY MPP_RECIPIENT"
-                );
-                std::process::exit(1);
-            })
-        };
-        Env {
-            sa_url: required("MPP_SA_URL"),
-            sa_key: required("MPP_SA_KEY"),
-            sa_secret: required("MPP_SA_SECRET"),
-            sa_passphrase: required("MPP_SA_PASSPHRASE"),
-            secret_key: required("MPP_SECRET_KEY"),
-            realm: required("MPP_REALM"),
-            currency: required("MPP_CURRENCY"),
-            recipient: required("MPP_RECIPIENT"),
-            mock: false,
-        }
+    let required = |k: &str| {
+        std::env::var(k).unwrap_or_else(|_| {
+            eprintln!("missing env var: {k}");
+            eprintln!(
+                "required: MPP_SA_URL MPP_SA_KEY MPP_SA_SECRET MPP_SA_PASSPHRASE \
+                MPP_SECRET_KEY MPP_REALM MPP_CURRENCY MPP_RECIPIENT"
+            );
+            std::process::exit(1);
+        })
+    };
+    Env {
+        sa_url: required("MPP_SA_URL"),
+        sa_key: required("MPP_SA_KEY"),
+        sa_secret: required("MPP_SA_SECRET"),
+        sa_passphrase: required("MPP_SA_PASSPHRASE"),
+        secret_key: required("MPP_SECRET_KEY"),
+        realm: required("MPP_REALM"),
+        currency: required("MPP_CURRENCY"),
+        recipient: required("MPP_RECIPIENT"),
     }
 }
 

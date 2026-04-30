@@ -105,7 +105,7 @@ use crate::types::{ChargeMethodDetails, ChargeSplit};
 /// 全部字段都是**跨路由共享的服务级参数**。per-route 的 `amount` / `description`
 /// 不在这里 —— 那两个由用户定义的 `impl ChargeConfig for C` 提供。
 pub struct EvmChargeChallengerConfig {
-    /// EVM 方法实例, 内部持 SA API client (真实 `OkxSaApiClient` 或 `MockSaApiClient`)。
+    /// EVM 方法实例, 内部持 SA API client (典型为 `OkxSaApiClient`)。
     pub charge_method: EvmChargeMethod,
     /// ERC-20 合约地址（收款代币），40-hex。
     pub currency: String,
@@ -312,12 +312,79 @@ impl ChargeChallenger for EvmChargeChallenger {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mock::MockSaApiClient;
+    use crate::error::SaApiError;
+    use crate::sa_client::SaApiClient;
+    use crate::types::{
+        ChannelStatus, ChargeReceipt, CloseRequestPayload, SessionReceipt, SettleRequestPayload,
+    };
     use mpp::protocol::intents::ChargeRequest;
+
+    /// 测试专用 SA stub。`charge_settle` 返合成 receipt(reference 含 "MOCK"
+    /// 便于断言);其他方法 unreachable(本文件测试不会调到)。
+    #[derive(Debug, Default)]
+    struct StubSa;
+
+    #[async_trait::async_trait]
+    impl SaApiClient for StubSa {
+        async fn charge_settle(
+            &self,
+            credential: &serde_json::Value,
+        ) -> Result<ChargeReceipt, SaApiError> {
+            let challenge_id = credential
+                .get("challenge")
+                .and_then(|c| c.get("id"))
+                .and_then(|id| id.as_str())
+                .unwrap_or("stub-challenge-id")
+                .to_string();
+            Ok(ChargeReceipt {
+                method: "evm".into(),
+                reference: "0xMOCK_TX_HASH_0000000000000000000000000000000000000000000000000000000000".into(),
+                status: "success".into(),
+                timestamp: "2026-04-29T00:00:00Z".into(),
+                chain_id: 196,
+                confirmations: Some(1),
+                challenge_id: Some(challenge_id),
+                external_id: None,
+            })
+        }
+        async fn charge_verify_hash(
+            &self,
+            _: &serde_json::Value,
+        ) -> Result<ChargeReceipt, SaApiError> {
+            unreachable!()
+        }
+        async fn session_open(
+            &self,
+            _: &serde_json::Value,
+        ) -> Result<SessionReceipt, SaApiError> {
+            unreachable!()
+        }
+        async fn session_top_up(
+            &self,
+            _: &serde_json::Value,
+        ) -> Result<SessionReceipt, SaApiError> {
+            unreachable!()
+        }
+        async fn session_settle(
+            &self,
+            _: &SettleRequestPayload,
+        ) -> Result<SessionReceipt, SaApiError> {
+            unreachable!()
+        }
+        async fn session_close(
+            &self,
+            _: &CloseRequestPayload,
+        ) -> Result<SessionReceipt, SaApiError> {
+            unreachable!()
+        }
+        async fn session_status(&self, _: &str) -> Result<ChannelStatus, SaApiError> {
+            unreachable!()
+        }
+    }
 
     fn test_challenger() -> EvmChargeChallenger {
         EvmChargeChallenger::new(EvmChargeChallengerConfig {
-            charge_method: EvmChargeMethod::new(Arc::new(MockSaApiClient::new())),
+            charge_method: EvmChargeMethod::new(Arc::new(StubSa)),
             currency: "0x74b7F16337b8972027F6196A17a631aC6dE26d22".into(),
             recipient: "0x4b22fdbc399bd422b6fefcbce95f76642ea29df1".into(),
             chain_id: 196,
@@ -363,7 +430,7 @@ mod tests {
 
     #[test]
     fn builder_yields_equivalent_challenger() {
-        let sa = Arc::new(MockSaApiClient::new());
+        let sa = Arc::new(StubSa);
         let c = EvmChargeChallenger::builder(EvmChargeMethod::new(sa), "test.local", "test-secret")
             .currency("0x74b7F16337b8972027F6196A17a631aC6dE26d22")
             .recipient("0x4b22fdbc399bd422b6fefcbce95f76642ea29df1")
@@ -380,7 +447,7 @@ mod tests {
     fn splits_flow_into_challenge_method_details() {
         // 服务级配置的 splits 应通过 challenge() 进入 request.method_details.splits，
         // 供客户端分别签 EIP-3009 分账授权。
-        let sa = Arc::new(MockSaApiClient::new());
+        let sa = Arc::new(StubSa);
         let c = EvmChargeChallenger::builder(EvmChargeMethod::new(sa), "test.local", "test-secret")
             .currency("0x74b7F16337b8972027F6196A17a631aC6dE26d22")
             .recipient("0x4b22fdbc399bd422b6fefcbce95f76642ea29df1")
@@ -416,7 +483,7 @@ mod tests {
     #[test]
     fn empty_splits_vec_is_normalized_to_none() {
         // 空 Vec 不应发出空 splits 数组给客户端 / SA API。
-        let sa = Arc::new(MockSaApiClient::new());
+        let sa = Arc::new(StubSa);
         let c = EvmChargeChallenger::builder(EvmChargeMethod::new(sa), "test.local", "test-secret")
             .currency("0x74b7F16337b8972027F6196A17a631aC6dE26d22")
             .recipient("0x4b22fdbc399bd422b6fefcbce95f76642ea29df1")
@@ -483,7 +550,7 @@ mod tests {
         assert!(receipt.reference.contains("MOCK"));
     }
 
-    /// R1 关键安全测试: 攻击者伪造 challenge.id, 不走 HMAC 签发, 应被拒绝。
+    /// 安全测试:伪造 challenge.id 绕开 HMAC 签发,应被 verify 拒绝。
     #[tokio::test]
     async fn verify_forged_challenge_id_is_rejected() {
         let c = test_challenger();
@@ -491,8 +558,8 @@ mod tests {
             .challenge("100", ChallengeOptions { description: None })
             .unwrap();
 
-        // 构造一个 credential, 保留 challenge 的 realm/method/intent/request/expires, 但
-        // 把 id 换成攻击者自造的值。如果 verify 不做 HMAC 校验, 这会通过 (R1 bug)。
+        // 构造一个 credential,保留 challenge 的 realm/method/intent/request/expires,
+        // 但把 id 换成攻击者自造的值。verify 必须通过 HMAC 检测出 id 不匹配。
         let forged = serde_json::json!({
             "challenge": {
                 "id": "attacker-forged-challenge-id",

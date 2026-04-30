@@ -7,7 +7,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
-mpp-evm = { path = "..", features = ["mock", "handlers"] }
+mpp-evm = { path = "..", features = ["handlers"] }
 mpp = { git = "https://github.com/tempoxyz/mpp-rs", features = ["server", "evm", "tower", "axum"] }
 payment-router-axum = { path = "../../payment-router-axum" }
 x402-axum = { path = "../../x402/x402-axum" }
@@ -22,6 +22,7 @@ base64 = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # mpp_session_server 端到端 demo 需要 PrivateKeySigner（payee 签 SettleAuth）
 alloy-signer-local = "=2.0.1"
+alloy-primitives = "=1.5.7"
 
 [[example]]
 name = "mpp_photo_server"

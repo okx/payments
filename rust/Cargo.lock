@@ -2809,6 +2809,7 @@ dependencies = [
 name = "mpp-examples"
 version = "0.1.0"
 dependencies = [
+ "alloy-primitives",
  "alloy-signer-local",
  "axum",
  "base64",

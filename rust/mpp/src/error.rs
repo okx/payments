@@ -95,6 +95,13 @@ fn map(code: u32) -> (Namespace, &'static str, u16, &'static str) {
         ),
         70013 => (Session, "delta-too-small", 402, "DeltaTooSmallError"),
         70014 => (Session, "channel-closing", 409, "ChannelClosingError"),
+        // SDK 本地扣费检查：deduct_from_channel 时 available < amount。
+        70015 => (
+            Session,
+            "insufficient-balance",
+            402,
+            "InsufficientBalanceError",
+        ),
 
         // Unknown — fall back to a generic verification failure.
         _ => (Core, "verification-failed", 402, "VerificationFailedError"),

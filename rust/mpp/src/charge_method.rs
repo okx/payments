@@ -60,6 +60,8 @@ impl ChargeMethod for EvmChargeMethod {
         let challenge_id = credential.challenge.id.clone();
 
         async move {
+            // charge/settle 和 charge/verifyHash 都需要 challenge 对象,
+            // 直接整 credential(challenge + payload + source)透传给 SA API。
             let credential_json = serde_json::to_value(&credential)
                 .map_err(|e| VerificationError::new(format!("serialize credential: {}", e)))?;
 
