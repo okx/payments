@@ -3,7 +3,7 @@
 //! The trait is pluggable: developers can provide their own implementation.
 //! Default implementation calls OKX SA API with HMAC authentication.
 //!
-//! Source: [Pay] MPP EVM API 方案 — 10 endpoints under /api/v6/pay/mpp/
+//! Source: [Pay] MPP EVM API plan — 10 endpoints under /api/v6/pay/mpp/
 
 use std::time::Duration;
 
@@ -16,9 +16,11 @@ use async_trait::async_trait;
 
 /// HTTP request timeout for SA API calls.
 ///
-/// 防止 SA backend 卡住时 SDK 无限挂着等响应。30s 留余量给链上交易回执
-/// (open / topup 后端代发广播 + 等 mining,正常 5-15s),网络故障时 30s 内
-/// 主动断,把故障包在可控时间窗内,避免 tokio worker 被永久占用 / 故障扩散。
+/// Caps the wait time when the SA backend hangs. 30s leaves room for
+/// on-chain receipts (open / topup are broadcast and mined server-side,
+/// typically 5-15s). On network failures we cut at 30s to keep the
+/// failure window bounded, so tokio workers don't pin forever and faults
+/// don't cascade.
 const SA_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 
 // ==================== Trait (Pluggable Interface) ====================
@@ -39,13 +41,13 @@ pub trait SaApiClient: Send + Sync {
         credential: &serde_json::Value,
     ) -> Result<ChargeReceipt, SaApiError>;
 
-    // Session 端点。
+    // Session endpoints.
     //
-    // - 没有 `/session/voucher` 端点(已废弃),voucher 在 SDK 本地处理
-    //   (`EvmSessionMethod::submit_voucher`)。
-    // - `session_settle` / `session_close` 接强类型 payload(voucherSig +
-    //   payeeSig + nonce + deadline),请求 body 直接是 payload 字段(无
-    //   challenge wrapper)。
+    // - No `/session/voucher` endpoint (deprecated); vouchers are
+    //   processed locally in the SDK (`EvmSessionMethod::submit_voucher`).
+    // - `session_settle` / `session_close` take a strongly-typed payload
+    //   (voucherSig + payeeSig + nonce + deadline); the request body is
+    //   the payload fields directly (no challenge wrapper).
     async fn session_open(
         &self,
         credential: &serde_json::Value,
@@ -235,19 +237,23 @@ impl OkxSaApiClient {
     }
 }
 
-/// Parse SA API envelope, with raw body captured into the error message so
-/// HTTP 5xx / non-JSON / malformed envelope问题能在错误里直接看到原文。
+/// Parse SA API envelope, capturing the raw body in the error message so
+/// HTTP 5xx / non-JSON / malformed envelope failures show the original
+/// text on the wire.
 ///
-/// 两阶段反序列化：先只抽 `code / msg`（`data` 用 `serde_json::Value` 兜住），
-/// `code != 0` 直接走业务错误分支，不去 parse `data`。这是必要的 —— SA 在
-/// 业务失败时 `data` 常为 `{}`（空对象而不是 `null`），如果一次性 parse 成
-/// `SaApiResponse<T>` 会因 `T` 的必填字段缺失而失败，把真实 `code/msg` 吞掉。
+/// Two-phase deserialization: first read only `code / msg` (with `data`
+/// caught as `serde_json::Value`); if `code != 0`, go straight to the
+/// business-error branch without parsing `data`. This is necessary —
+/// on business failure SA often sends `data: {}` (empty object, not
+/// `null`); a single-shot `SaApiResponse<T>` parse would fail on
+/// missing required `T` fields and swallow the real `code/msg`.
 fn parse_sa_response<T: serde::de::DeserializeOwned>(
     url: &str,
     status: reqwest::StatusCode,
     text: &str,
 ) -> Result<T, SaApiError> {
-    // Phase 1: parse envelope with `data: Value` 兜底，任何 T 的 shape 都不会让 envelope 挂掉。
+    // Phase 1: parse the envelope with `data: Value` as a catch-all so
+    // any `T` shape is decoupled from envelope parsing.
     let envelope: SaApiResponse<serde_json::Value> = match serde_json::from_str(text) {
         Ok(v) => v,
         Err(e) => {
@@ -267,7 +273,7 @@ fn parse_sa_response<T: serde::de::DeserializeOwned>(
         }
     };
 
-    // Phase 2: 按 code 分流。业务错误在这里返回，不再触碰 data。
+    // Phase 2: branch on `code`. Business errors return here without touching `data`.
     if envelope.code != 0 {
         tracing::info!(
             target: "mpp_evm::sa",
@@ -277,8 +283,9 @@ fn parse_sa_response<T: serde::de::DeserializeOwned>(
             msg = %envelope.msg,
             "SA API ← business error"
         );
-        // SA backend 偶尔返负数 code(如 -1 unknown error)。SaApiError.code 是 u32,
-        // 负数 / 超界统一映射到 8000(service error),原始 code 写进 msg 保留信息。
+        // SA backend occasionally returns a negative code (e.g. -1
+        // "unknown error"). `SaApiError.code` is u32, so negative / out-of-range
+        // values map to 8000 (service error), preserving the original code in `msg`.
         let (mapped_code, mapped_msg) = if envelope.code >= 0
             && envelope.code <= u32::MAX as i64
         {
@@ -292,7 +299,8 @@ fn parse_sa_response<T: serde::de::DeserializeOwned>(
         return Err(SaApiError::new(mapped_code, mapped_msg));
     }
 
-    // Phase 3: code == 0 时才 deserialize data 成 T。`data` 为 null / 不存在 → empty-data 错误。
+    // Phase 3: only deserialize `data` into `T` when `code == 0`.
+    //          `data` null / missing → empty-data error.
     let data_value = envelope.data.ok_or_else(|| {
         tracing::warn!(target: "mpp_evm::sa", %url, %status, "SA API ← empty data in ok response");
         SaApiError::new(8000, "empty data in response")
@@ -349,8 +357,9 @@ impl SaApiClient for OkxSaApiClient {
         &self,
         payload: &SettleRequestPayload,
     ) -> Result<SessionReceipt, SaApiError> {
-        // SA API spec body 形状: { "payload": <SettleRequestPayload> }
-        // (跟 close 一样,外层 wrap 一个 payload 字段。HTML reference 工具同此结构)
+        // SA API spec body shape: { "payload": <SettleRequestPayload> }
+        // (same as close — the outer object wraps a `payload` field; the
+        // HTML reference tool uses the same structure).
         let body = serde_json::json!({
             "payload": serde_json::to_value(payload)
                 .map_err(|e| SaApiError::new(8000, format!("serialize SettleRequestPayload: {e}")))?
@@ -362,7 +371,7 @@ impl SaApiClient for OkxSaApiClient {
         &self,
         payload: &CloseRequestPayload,
     ) -> Result<SessionReceipt, SaApiError> {
-        // SA API spec body 形状: { "payload": <CloseRequestPayload> }
+        // SA API spec body shape: { "payload": <CloseRequestPayload> }
         let body = serde_json::json!({
             "payload": serde_json::to_value(payload)
                 .map_err(|e| SaApiError::new(8000, format!("serialize CloseRequestPayload: {e}")))?
@@ -524,9 +533,11 @@ mod tests {
         assert_eq!(status.session_status, "OPEN");
     }
 
-    /// SA 实际在业务错误时 `data: {}`（空对象，不是 null）。两阶段 parse 必须
-    /// 先 route 到业务错误分支，而不是尝试把 `{}` 反序列化成 `ChargeReceipt`
-    /// （必填 `method` 字段缺失）导致真实 code/msg 被吞。
+    /// On business errors SA actually returns `data: {}` (empty object,
+    /// not null). The two-phase parse must route to the business-error
+    /// branch first; otherwise it would try to deserialize `{}` into
+    /// `ChargeReceipt` (whose required `method` field is missing) and
+    /// swallow the real `code/msg`.
     #[tokio::test]
     async fn business_error_with_empty_object_data_still_returns_code_and_msg() {
         let server = MockServer::start().await;

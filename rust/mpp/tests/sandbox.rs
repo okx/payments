@@ -14,7 +14,7 @@
 //! network. Each test exits early (as success) if credentials are missing,
 //! which keeps `--ignored` runs green in environments that have no access.
 //!
-//! Mirrors curl samples from the [Pay] MPP EVM API 方案 doc.
+//! Mirrors curl samples from the [Pay] MPP EVM API plan doc.
 
 use mpp_evm::{OkxSaApiClient, SaApiClient};
 use serde_json::json;

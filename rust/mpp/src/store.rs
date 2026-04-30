@@ -1,18 +1,24 @@
 //! Local channel state store for the Seller SDK.
 //!
-//! 存储 SDK 本地维护的 [`ChannelRecord`]：voucher 验签必需的链上参数（payer /
-//! payee / authorized_signer / escrow / chain_id）、最高 voucher（防字节级重放）、
-//! 节流参数（min_voucher_delta）。
+//! Stores the SDK-local [`ChannelRecord`]: on-chain parameters required
+//! for voucher verification (payer / payee / authorized_signer / escrow /
+//! chain_id), highest voucher (byte-level replay protection), and
+//! throttling params (min_voucher_delta).
 //!
-//! `SessionStore` 是可插拔 trait：
-//! - 默认 [`InMemorySessionStore`]：进程内 HashMap，重启会丢；适合 demo / 单进程
-//! - 生产场景商户应自实现 `SqliteSessionStore` / `RedisSessionStore`（参考 §3.5
-//!   的 SQLite 模板）；接 [`EvmSessionMethod::with_store`] 注入即可
+//! `SessionStore` is a pluggable trait:
+//! - Default [`InMemorySessionStore`]: in-process HashMap, lost on
+//!   restart; suitable for demos / single-process setups.
+//! - Production merchants should implement
+//!   `SqliteSessionStore` / `RedisSessionStore` (the SQLite template in
+//!   §3.5 is a starting point) and inject via
+//!   [`EvmSessionMethod::with_store`].
 //!
-//! 持久化职责在商户:`get` miss 时返 `None`,SDK 不调 `/session/status` 自动
-//! 回源 —— SA API 回源能拿到的字段是子集(没有 `cumulativeAmount` 和
-//! `highest_voucher_signature`),无法重建 voucher 状态。跨进程稳定的商户需
-//! 自行实现持久化 store。
+//! Persistence is the merchant's responsibility. On `get` miss, the SDK
+//! returns `None` — it does not auto-recover from `/session/status`
+//! because the recoverable subset doesn't include `cumulativeAmount` or
+//! `highest_voucher_signature` (insufficient to reconstruct voucher state).
+//! Merchants needing cross-process durability must implement their own
+//! persistent store.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -23,82 +29,91 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::SaApiError;
 
-/// SDK 本地维护的 channel 记录。12 个字段最小化 —— 不存
-/// `settled_on_chain` / `finalized` / `close_requested_at` / `last_receipt` /
-/// `challenge`（与 Tempo `ChannelState` 不同），见文档 §3.5 设计说明。
+/// The SDK's local channel record. Minimal 12-field shape — does **not**
+/// store `settled_on_chain` / `finalized` / `close_requested_at` /
+/// `last_receipt` / `challenge` (differs from Tempo's `ChannelState`); see
+/// the §3.5 design notes.
 ///
-/// 计费会计字段 `spent` / `units` 与 TS Session.ts ChannelState 对齐：
-/// `available = highest_voucher_amount - spent` 是当前可扣额度。
+/// `spent` / `units` (billing fields) match TS Session.ts ChannelState:
+/// `available = highest_voucher_amount - spent` is the deductible balance.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChannelRecord {
     pub channel_id: String,
     pub chain_id: u64,
     pub escrow_contract: Address,
 
-    /// 付款方地址。
+    /// Payer address.
     pub payer: Address,
-    /// 收款方（商户）地址。在 ACTION_OPEN 时 SDK 会校验 == `signer.address()`。
+    /// Payee (merchant) address. The SDK verifies this equals
+    /// `signer.address()` on `ACTION_OPEN`.
     pub payee: Address,
-    /// Voucher 签名人地址。`channel.authorizedSigner == address(0)` 时
-    /// 在 open 时已解析为 `payer`，存储层永远拿到有效非零地址。
+    /// Voucher signer address. When `channel.authorizedSigner ==
+    /// address(0)`, it's resolved to `payer` at open time, so the storage
+    /// layer always sees a valid non-zero address.
     pub authorized_signer: Address,
 
-    /// 当前累计入金（open 时初始化、topUp 时累加）。
+    /// Cumulative deposit (initialized at open, incremented at topUp).
     pub deposit: u128,
-    /// SDK 已接受过的最高 voucher 累计金额。
+    /// Highest cumulative voucher amount the SDK has accepted.
     pub highest_voucher_amount: u128,
-    /// 对应 `highest_voucher_amount` 的 65 字节签名。用于：
-    /// 1. settle / close 时上送 SA API 作为 voucherSignature
-    /// 2. submit_voucher 字节级幂等比对（`highest_voucher_amount` 相等且签名字节
-    ///    完全一致 → 视为幂等重发，不再走验签）
+    /// 65-byte signature for `highest_voucher_amount`. Used for:
+    /// 1. Forwarding to SA API as `voucherSignature` during settle / close.
+    /// 2. Byte-level idempotency in `submit_voucher` (matching
+    ///    `highest_voucher_amount` and identical signature bytes →
+    ///    treated as a replay; verification skipped).
     pub highest_voucher_signature: Option<Bytes>,
 
-    /// 节流：voucher 最小递增量，配置在 `SessionMethodDetails.minVoucherDelta`。
-    /// `None` 视为无节流。
+    /// Throttling: minimum voucher increment, configured via
+    /// `SessionMethodDetails.minVoucherDelta`. `None` disables throttling.
     pub min_voucher_delta: Option<u128>,
 
-    /// 已扣费总额（base units）。每次 `deduct_from_channel` 累加。
-    /// 不变量：`spent <= highest_voucher_amount`。
+    /// Total amount already deducted (base units). Each
+    /// `deduct_from_channel` call adds to it. Invariant:
+    /// `spent <= highest_voucher_amount`.
     #[serde(default)]
     pub spent: u128,
-    /// 已计费次数（`deduct_from_channel` 调用次数）。
+    /// Total billed calls (`deduct_from_channel` invocation count).
     #[serde(default)]
     pub units: u64,
 }
 
 impl ChannelRecord {
-    /// `authorized_signer` 已经在 open 时解析为有效地址（`address(0) → payer`），
-    /// 此方法直接返回该地址，便于本地验签调用。
+    /// `authorized_signer` is already resolved to a valid address at open
+    /// time (`address(0) → payer`); this accessor returns it directly for
+    /// local verification.
     pub fn voucher_signer(&self) -> Address {
         self.authorized_signer
     }
 }
 
-/// 闭包类型：原子更新 [`ChannelRecord`]。返回 `Err` 时整个 `update` 失败，
-/// 旧值保持不变（与数据库事务语义一致）。
+/// Closure type for atomic [`ChannelRecord`] updates. Returning `Err`
+/// fails the whole `update` and the prior value stays in place (database
+/// transaction semantics).
 pub type ChannelUpdater =
     Box<dyn FnOnce(&mut ChannelRecord) -> Result<(), SaApiError> + Send>;
 
-/// 可插拔的 channel 存储 trait。
+/// Pluggable channel-storage trait.
 ///
-/// **不**耦合 SA API：trait 内不调用任何 HTTP 接口，纯数据存取。SDK 也不会
-/// 在 miss 时自动调 SA API 回源 —— 回源能拿到的字段是子集(没有
-/// cumulativeAmount / highest_voucher_signature)，重建语义不完整;商户跨进程
-/// 稳定运行需自行实现持久化 store。
+/// **Not** coupled to SA API: the trait makes no HTTP calls — pure data
+/// access. The SDK does not auto-recover from SA API on a miss either;
+/// SA's recoverable subset doesn't include `cumulativeAmount` or
+/// `highest_voucher_signature`, leaving voucher state incomplete.
+/// Merchants needing cross-process durability must implement persistence.
 #[async_trait]
 pub trait SessionStore: Send + Sync {
-    /// 读取 channel。`None` 表示本地无记录。
+    /// Read a channel. `None` means there is no local record.
     async fn get(&self, channel_id: &str) -> Option<ChannelRecord>;
 
-    /// 写入 channel。如果已存在则覆盖。
+    /// Write a channel; overwrites existing entries.
     async fn put(&self, record: ChannelRecord);
 
-    /// 删除 channel。close 成功后由 `EvmSessionMethod` 调用。
+    /// Delete a channel. Called by `EvmSessionMethod` after a successful close.
     async fn remove(&self, channel_id: &str);
 
-    /// 原子闭包更新：取出当前记录，应用 `updater`，写回。
-    /// `None`（channel 不存在）→ 返回 `70010 channel_not_found`。
-    /// `updater` 返回 `Err` → 写回不发生，错误透传。
+    /// Atomic closure update: load the current record, run `updater`,
+    /// write back.
+    /// `None` (channel absent) → returns `70010 channel_not_found`.
+    /// `updater` returns `Err` → no write happens; the error propagates.
     async fn update(
         &self,
         channel_id: &str,
@@ -106,10 +121,12 @@ pub trait SessionStore: Send + Sync {
     ) -> Result<ChannelRecord, SaApiError>;
 }
 
-/// 默认实现：进程内 HashMap，使用 std `Mutex` 同步（操作短，无 await）。
+/// Default implementation: in-process `HashMap` synchronized with a std
+/// `Mutex` (operations are short and don't `await`).
 ///
-/// **重启丢失**：进程重启 / 崩溃后所有 channel 状态消失。生产场景请自实现
-/// 持久化版本。详见 §3.5 警告段。
+/// **Lost on restart**: a process restart or crash drops all channel
+/// state. Production deployments should provide a persistent
+/// implementation — see the §3.5 warning.
 #[derive(Debug, Default, Clone)]
 pub struct InMemorySessionStore {
     inner: Arc<Mutex<HashMap<String, ChannelRecord>>>,
@@ -161,7 +178,7 @@ mod tests {
         ChannelRecord {
             channel_id: channel_id.to_string(),
             chain_id: 196,
-            escrow_contract: address!("eb18025208061781a287fFc2c1F31C03A24a24c0"),
+            escrow_contract: address!("5E550002e64FaF79B41D89fE8439eEb1be66CE3b"),
             payer: address!("aabbccddee11223344556677889900aabbccddee"),
             payee: address!("742d35Cc6634c0532925a3b844bC9e7595F8fE00"),
             authorized_signer: address!("aabbccddee11223344556677889900aabbccddee"),
@@ -225,7 +242,7 @@ mod tests {
             .unwrap();
         assert_eq!(updated.highest_voucher_amount, 250);
 
-        // 验证 store 里的值确实被改了
+        // Verify the stored value was actually modified.
         let got = store.get("0xa").await.unwrap();
         assert_eq!(got.highest_voucher_amount, 250);
         assert_eq!(got.highest_voucher_signature.unwrap().len(), 65);
@@ -252,7 +269,8 @@ mod tests {
             .update(
                 "0xa",
                 Box::new(|r| {
-                    // 闭包先改字段再返错,验证 in-memory 实现下 record 已被改了一半。
+                    // The closure modifies a field then returns an error,
+                    // confirming the in-memory impl leaves a half-modified record.
                     r.highest_voucher_amount = 999;
                     Err(SaApiError::new(70013, "delta too small"))
                 }),
@@ -261,13 +279,16 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().code, 70013);
 
-        // 验证 store 里的值是否回滚 —— 当前实现是「闭包失败时 record 已被改了一半」。
-        // 这是 in-memory 实现的取舍：std Mutex 不支持事务回滚。
-        // 真正需要事务的场景（SqliteSessionStore）应该在自己的实现里把 update
-        // 包在 BEGIN/COMMIT 中。
+        // Check whether the store rolled back. The current behavior is
+        // "closure failure leaves a half-modified record" — a deliberate
+        // trade-off in the in-memory impl since std Mutex can't roll back
+        // transactions. Implementations that genuinely need transactional
+        // updates (SqliteSessionStore, etc.) should wrap their `update` in
+        // BEGIN/COMMIT internally.
         //
-        // 这里我们 SoA: 验证闭包执行了（即使返回 Err），然后调用方应该清楚
-        // in-memory 实现不保证事务回滚。
+        // SoA here: confirm the closure ran (even when it returned Err);
+        // callers should know the in-memory impl doesn't guarantee
+        // transactional rollback.
         let got = store.get("0xa").await.unwrap();
         assert_eq!(got.highest_voucher_amount, 999);
     }

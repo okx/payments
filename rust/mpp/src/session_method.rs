@@ -1,28 +1,34 @@
-//! EvmSessionMethod —— SessionMethod 的 OKX SA API 实现。
+//! `EvmSessionMethod` — OKX SA API implementation of `SessionMethod`.
 //!
-//! ## 设计要点
+//! ## Design notes
 //!
-//! 1. **Voucher 本地化**：ACTION_VOUCHER 在 SDK 本地验签 + 写入本地 Store,
-//!    不转发 SA API。每次 voucher action 都会走 `deduct_from_channel` 一次;
-//!    字节级幂等仅跳过验签 + `highest_voucher_*` 更新,**deduct 不跳**。
-//!    Client 可以一次签大额 voucher,多次重发同一份字节复用余额,spent
-//!    持续累加直到顶到 highest 才返 70015 让 client 升级。
-//! 2. **Settle / Close 商户主动**：商户调 `settle_with_authorization()` /
-//!    `close_with_authorization()`,SDK 本地签 SettleAuth/CloseAuth 后组装
-//!    扁平 payload(无 challenge wrapper)→ POST SA API。
-//! 3. **无 idle timer**：商户自管关闭时机。
-//! 4. **Payee 一致性校验**：ACTION_OPEN 时校验
-//!    `signer.address() == challenge.recipient`,不一致拒绝写 store。
-//! 5. **持久化职责在商户**：`store.get` miss 时直接返 70010,SDK 不调
-//!    `session_status` 自动回源 —— 回源能拿到的字段只是子集(没有
-//!    `cumulativeAmount` 和 `highest_voucher_signature`),无法重建 voucher 状态。
-//!    商户跨进程稳定运行需自行实现持久化 [`SessionStore`](crate::SessionStore)
-//!    (SQLite / Redis 等),SDK 仅提供进程内 [`InMemorySessionStore`] 默认实现。
+//! 1. **Vouchers are local.** `ACTION_VOUCHER` is verified and stored locally;
+//!    nothing is forwarded to SA. Every voucher submission runs
+//!    `deduct_from_channel`. Byte-level idempotency only skips verification and
+//!    `highest_voucher_*` updates — **deduct still runs**. A client can sign
+//!    one large voucher once and replay the exact bytes many times to drain
+//!    the balance; `spent` accumulates until it hits `highest`, then we return
+//!    70015 to force the client to sign a higher one.
+//! 2. **Merchant drives settle / close.** The merchant calls
+//!    `settle_with_authorization()` / `close_with_authorization()`; the SDK
+//!    locally signs SettleAuth / CloseAuth and POSTs a flat payload (no
+//!    `challenge` wrapper) to SA.
+//! 3. **No idle timer.** The merchant owns lifecycle decisions.
+//! 4. **Payee consistency check.** On `ACTION_OPEN` we verify
+//!    `signer.address() == challenge.recipient`; mismatches refuse to write
+//!    the store.
+//! 5. **Persistence is the merchant's responsibility.** A `store.get` miss
+//!    returns 70010 directly; the SDK does not auto-recover via
+//!    `session_status` because the recoverable subset lacks
+//!    `cumulativeAmount` and `highest_voucher_signature` (insufficient to
+//!    rebuild voucher state). Merchants needing cross-process durability
+//!    should implement [`SessionStore`](crate::SessionStore) (SQLite / Redis
+//!    / etc.); this crate ships an in-process [`InMemorySessionStore`] only.
 //!
-//! Signer 注入:`with_signer` 接受任何实现 [`alloy::signers::Signer`](Signer)
-//! 的类型 —— 本地私钥(`PrivateKeySigner`)、AWS KMS、Ledger / Trezor 硬件钱包、
-//! WalletConnect 桥接、或商户自定义 wrapper 都可以,内部存为
-//! `Arc<dyn Signer + Send + Sync>` 共享。
+//! Signer injection: `with_signer` accepts any [`alloy::signers::Signer`]
+//! implementor — local key (`PrivateKeySigner`), AWS KMS, Ledger / Trezor,
+//! WalletConnect bridges, or merchant-defined wrappers. Internally stored as
+//! `Arc<dyn Signer + Send + Sync>` for sharing.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -57,15 +63,16 @@ const ACTION_CLOSE: &str = "close";
 
 // ===================== ChannelLocks =====================
 
-/// Per-channel 互斥锁池。`submit_voucher` / `settle` / `close` 同 channelId 串行，
-/// 防止并发 voucher 的 lost update。不同 channelId 完全独立。
+/// Per-channel mutex pool. `submit_voucher` / `settle` / `close` for the
+/// same channelId run serially to prevent lost updates on concurrent
+/// vouchers. Different channelIds are fully independent.
 #[derive(Default)]
 struct ChannelLocks {
     inner: StdMutex<HashMap<String, Arc<AsyncMutex<()>>>>,
 }
 
 impl ChannelLocks {
-    /// 拿 per-channelId 锁；持锁期间内的所有读写都串行。
+    /// Acquire the per-channelId lock; reads and writes hold it for the duration.
     async fn lock(&self, channel_id: &str) -> tokio::sync::OwnedMutexGuard<()> {
         let mutex = {
             let mut map = self.inner.lock().unwrap();
@@ -79,7 +86,7 @@ impl ChannelLocks {
 
 // ===================== EvmSessionMethod =====================
 
-/// Default deadline = `U256::MAX` —— 等同永不过期。
+/// Default deadline = `U256::MAX` (effectively never expires).
 fn default_deadline() -> U256 {
     U256::MAX
 }
@@ -92,42 +99,50 @@ pub struct EvmSessionMethod {
     /// Method details for challenge generation (chainId, escrowContract, ...).
     method_details: Option<serde_json::Value>,
 
-    // ---- 新增 ----
-    /// `dyn Signer` 让商户接 KMS / Ledger / WalletConnect 等远程签名,而不止
-    /// 本地 PrivateKeySigner。任何实现 `alloy::signers::Signer` 的类型都可注入。
+    /// `dyn Signer` lets merchants plug in KMS, Ledger, WalletConnect, or any
+    /// other remote signer — not just `PrivateKeySigner`. Any
+    /// `alloy::signers::Signer` implementor works.
     signer: Option<Arc<dyn Signer + Send + Sync>>,
-    /// `signer.address()`，缓存避免反复算。`None` 表示未注入 signer。
+    /// Cached `signer.address()`. `None` means no signer has been injected.
     payee_address: Option<Address>,
     nonce_provider: Arc<dyn NonceProvider>,
-    /// Settle / Close Authorization 签名的 deadline。默认 `U256::MAX`，可配。
+    /// Deadline for SettleAuthorization / CloseAuthorization signatures.
+    /// Default `U256::MAX`; configurable.
     default_deadline: U256,
-    /// Per-channelId 互斥锁。
+    /// Per-channelId mutex pool.
     channel_locks: Arc<ChannelLocks>,
-    /// 临时存储 voucher action 的扣费结果（spent / units），由 respond() 读取写入响应。
-    /// 键为 challenge_id（与 verify_session / respond 入参的 credential.challenge.id 一致）。
-    /// `respond()` 读取后立刻移除，避免无限增长。
+    /// Stash for voucher-action deduct results (`spent`, `units`), keyed by
+    /// `challenge_id` (matches `credential.challenge.id` from
+    /// `verify_session` / `respond`). `respond()` reads and removes the
+    /// entry immediately to prevent unbounded growth.
     voucher_deduct_results: Arc<StdMutex<HashMap<String, (u128, u64)>>>,
-    /// EIP-712 domain `name` / `version` 元数据。默认 OKX EvmPaymentChannel
-    /// 标准值,商户 fork 合约改了 domain 时通过 `with_domain_meta(...)` 覆盖。
+    /// EIP-712 domain `name` / `version`. Defaults to the OKX
+    /// EvmPaymentChannel canonical values; override via `with_domain_meta(...)`
+    /// when forking the contract with a different domain.
     domain_meta: DomainMeta,
 }
 
 impl EvmSessionMethod {
-    /// 用默认内存 store 创建。
+    /// Construct with the default in-memory store.
     pub fn new(sa_client: Arc<dyn SaApiClient>) -> Self {
         Self::with_store(sa_client, Arc::new(InMemorySessionStore::new()))
     }
 
-    /// 注入自定义 [`SessionStore`]。SDK 默认 [`InMemorySessionStore`] 是
-    /// 进程内 HashMap,重启即丢,只适合开发 / 测试。生产部署必须接持久化
-    /// store —— 商户实现 [`SessionStore`] 4 个 async 方法即可挂任意后端
-    /// (SQLite / Redis / Postgres / DynamoDB ...)。
+    /// Inject a custom [`SessionStore`]. The default
+    /// [`InMemorySessionStore`] is an in-process `HashMap` — wiped on restart
+    /// — and is only suitable for dev / tests. Production deployments must
+    /// plug in a persistent store; merchants implement the four async
+    /// [`SessionStore`] methods on top of any backend (SQLite / Redis /
+    /// Postgres / DynamoDB / ...).
     ///
-    /// `update` 是**原子闭包契约**(事务 / `WATCH` / `SELECT FOR UPDATE` 等),
-    /// 同 channel 并发由 SDK 内部锁串行化,跨进程并发由商户 store 自带。
+    /// `update` is an **atomic closure contract** (transaction / `WATCH` /
+    /// `SELECT FOR UPDATE` / etc.). Same-channel concurrency is serialized
+    /// by the SDK's internal lock; cross-process concurrency must be
+    /// handled by the merchant's store.
     ///
-    /// SQLite / Redis / Postgres / decorator 等完整接入示例见
-    /// [README → Custom store integration](https://github.com/okx/payments/blob/main/rust/mpp/README.md#custom-store-integration)。
+    /// See
+    /// [README → Custom store integration](https://github.com/okx/payments/blob/main/rust/mpp/README.md#custom-store-integration)
+    /// for full SQLite / Redis / Postgres / decorator examples.
     pub fn with_store(sa_client: Arc<dyn SaApiClient>, store: Arc<dyn SessionStore>) -> Self {
         Self {
             sa_client,
@@ -143,9 +158,10 @@ impl EvmSessionMethod {
         }
     }
 
-    /// 注入 signer。接受任何实现 [`alloy::signers::Signer`](Signer) 的类型 ——
-    /// 本地私钥、AWS KMS、Ledger / Trezor 硬件钱包、WalletConnect 桥接、
-    /// 商户自封装远程签名服务等。内部存为 `Arc<dyn Signer + Send + Sync>`。
+    /// Inject a signer. Accepts any [`alloy::signers::Signer`](Signer)
+    /// implementor — local private key, AWS KMS, Ledger / Trezor hardware
+    /// wallets, WalletConnect bridges, or merchant-defined remote signing
+    /// wrappers. Stored internally as `Arc<dyn Signer + Send + Sync>`.
     ///
     /// ```ignore
     /// use alloy_signer_local::PrivateKeySigner;
@@ -154,19 +170,22 @@ impl EvmSessionMethod {
     /// let method = EvmSessionMethod::new(sa_client).with_signer(signer);
     /// ```
     ///
-    /// KMS / Ledger / 自定义 wrapper 等远程签名场景见
-    /// [README → Custom signer integration](https://github.com/okx/payments/blob/main/rust/mpp/README.md#custom-signer-integration)。
+    /// See
+    /// [README → Custom signer integration](https://github.com/okx/payments/blob/main/rust/mpp/README.md#custom-signer-integration)
+    /// for KMS / Ledger / custom wrapper examples.
     pub fn with_signer<S: Signer + Send + Sync + 'static>(mut self, signer: S) -> Self {
         self.payee_address = Some(signer.address());
         self.signer = Some(Arc::new(signer));
         self
     }
 
-    /// 启动期 fast-fail 校验:确保已注入的 signer 地址等于商户配置的 payee 地址。
-    /// 不一致直接报 8000,避免商户配置错了之后等到第一个 open 请求才发现
-    /// `challenge.recipient != signer.address()` 拒绝。
+    /// Startup fast-fail check: assert the injected signer's address equals
+    /// the merchant's configured payee address. Mismatches return 8000
+    /// immediately — better than discovering the same mismatch only when
+    /// the first `open` request rejects on
+    /// `challenge.recipient != signer.address()`.
     ///
-    /// 链式用法:
+    /// Chained usage:
     /// ```ignore
     /// let method = EvmSessionMethod::new(sa)
     ///     .with_signer(signer)
@@ -189,18 +208,19 @@ impl EvmSessionMethod {
         }
     }
 
-    /// 注入自定义 nonce 分配器（默认 [`UuidNonceProvider`]）。
+    /// Inject a custom nonce provider (defaults to [`UuidNonceProvider`]).
     pub fn with_nonce_provider(mut self, p: Arc<dyn NonceProvider>) -> Self {
         self.nonce_provider = p;
         self
     }
 
-    /// 自定义 EIP-712 domain 的 `name` / `version`。默认 OKX 标准值
-    /// (`"EVM Payment Channel"` / `"1"`)。
+    /// Override the EIP-712 domain `name` / `version`. Defaults to the OKX
+    /// canonical values (`"EVM Payment Channel"` / `"1"`).
     ///
-    /// 商户 fork 合约时若 domain 改了 `name` 或 `version`,**必须**用本方法
-    /// 设置成跟合约部署时完全一致的值,否则所有 voucher 验签 / SettleAuth /
-    /// CloseAuth 签名都会跟链上对不上。
+    /// When forking the contract with a different domain `name` or
+    /// `version`, **you must** call this with byte-exact values matching
+    /// the deployed contract — otherwise voucher verification, SettleAuth,
+    /// and CloseAuth signatures will all fail to match on-chain.
     pub fn with_domain_meta(
         mut self,
         name: impl Into<std::borrow::Cow<'static, str>>,
@@ -210,19 +230,19 @@ impl EvmSessionMethod {
         self
     }
 
-    /// 自定义签名 deadline（默认 `U256::MAX`，永不过期）。
+    /// Override the signature deadline (defaults to `U256::MAX`, never expires).
     pub fn with_deadline(mut self, d: U256) -> Self {
         self.default_deadline = d;
         self
     }
 
-    /// 设置 challenge `methodDetails`（chainId / escrowContract / ...）。
+    /// Set the challenge `methodDetails` (chainId / escrowContract / ...).
     pub fn with_method_details(mut self, details: serde_json::Value) -> Self {
         self.method_details = Some(details);
         self
     }
 
-    /// 类型化 builder：用 [`SessionMethodDetails`] 直接设置。
+    /// Typed builder: set via [`SessionMethodDetails`].
     pub fn with_typed_method_details(
         mut self,
         details: SessionMethodDetails,
@@ -231,7 +251,7 @@ impl EvmSessionMethod {
         Ok(self)
     }
 
-    /// 极简 builder：只填 escrow，chain_id 用 X Layer 默认值。
+    /// Minimal builder: only escrow; `chain_id` defaults to X Layer.
     pub fn with_escrow(self, escrow_contract: impl Into<String>) -> Self {
         let details = SessionMethodDetails {
             chain_id: DEFAULT_CHAIN_ID,
@@ -244,48 +264,51 @@ impl EvmSessionMethod {
         self.with_typed_method_details(details).unwrap()
     }
 
-    /// Store 引用，handler 集成用。
+    /// Store handle, for handler integrations.
     pub fn store(&self) -> Arc<dyn SessionStore> {
         self.store.clone()
     }
 
-    /// 只读：channel 状态查询（透传 SA API）。
+    /// Read-only channel status query (proxies SA API).
     pub async fn status(&self, channel_id: &str) -> Result<ChannelStatus, SaApiError> {
         self.sa_client.session_status(channel_id).await
     }
 
-    // ===================== submit_voucher（本地处理，9 步守卫）=====================
+    // ===================== submit_voucher (local processing, 9-step guards) =====================
 
-    /// 本地处理 voucher：验签 + 原子更新 highest_voucher。**业务层不直接调**，
-    /// 由 [`SessionMethod::verify_session`] 的 `ACTION_VOUCHER` 分支触发。
+    /// Process a voucher locally: verify signature + atomically update
+    /// `highest_voucher_*`. **Business code should not call this directly**;
+    /// [`SessionMethod::verify_session`]'s `ACTION_VOUCHER` branch does.
     ///
-    /// 字节级幂等(channelId / cum / signature 三元组完全相等)只跳过验签和
-    /// `highest_voucher_*` 的更新 —— 调用方仍会调 `deduct_from_channel`
-    /// 扣本次费用，与 mppx / OKX TS Session 行为一致。这样 client 一次签
-    /// 大额 voucher 后多次复用同一份字节，server spent 持续上升，直到顶到
-    /// highest 才返 70015 让 client 升级 cum 重签。
+    /// Byte-level idempotency (channelId + cum + signature all equal) only
+    /// skips verification and `highest_voucher_*` updates — the caller
+    /// still runs `deduct_from_channel` to bill this request, matching mppx
+    /// / OKX TS Session behavior. This lets a client sign one large voucher
+    /// and replay the bytes many times: server `spent` keeps climbing until
+    /// it hits `highest`, then 70015 forces the client to bump `cum` and
+    /// re-sign.
     pub async fn submit_voucher(
         &self,
         channel_id: &str,
         cumulative_amount: u128,
         signature: Bytes,
     ) -> Result<(), SaApiError> {
-        // A. per-channel lock
+        // A. Per-channel lock.
         let _guard = self.channel_locks.lock(channel_id).await;
 
-        // B. 取本地 record（miss 直接 70010，不自动回源 — 见模块注释 #5）
+        // B. Load the local record (miss → 70010; no auto-recovery — see module note #5).
         let channel = self
             .store
             .get(channel_id)
             .await
             .ok_or_else(|| SaApiError::new(70010, "channel not found in local store"))?;
 
-        // C. 金额上限守卫（≤ deposit）
+        // C. Upper-bound guard (cumulative <= deposit).
         if cumulative_amount > channel.deposit {
             return Err(SaApiError::new(70012, "amount exceeds deposit"));
         }
 
-        // D. 字节级幂等（cum + signature 都精确相等 → 跳过验签 + 跳过升 highest）
+        // D. Byte-level replay (exact cum + signature) → skip verify + highest update.
         if cumulative_amount <= channel.highest_voucher_amount {
             let exact_replay = channel.highest_voucher_signature.as_ref().is_some_and(|s| {
                 s == &signature && cumulative_amount == channel.highest_voucher_amount
@@ -298,22 +321,23 @@ impl EvmSessionMethod {
                 );
                 return Ok(());
             }
-            // 协议表(70000-70014)无独立"not increasing"码;
-            // delta ≤ 0 是 70013 voucher_delta_too_small 的极端形式,统一归到 70013。
+            // The protocol code table (70000-70014) has no dedicated
+            // "not increasing" code; delta <= 0 is the extreme case of
+            // 70013 voucher_delta_too_small, so we reuse it.
             return Err(SaApiError::new(
                 70013,
                 "voucher cumulative not strictly increasing (delta <= 0)",
             ));
         }
 
-        // E. min_delta 节流
+        // E. min_delta throttle.
         if let Some(min_delta) = channel.min_voucher_delta {
             if cumulative_amount - channel.highest_voucher_amount < min_delta {
                 return Err(SaApiError::new(70013, "delta too small"));
             }
         }
 
-        // F. EIP-712 验签（本地）
+        // F. Local EIP-712 verification.
         let channel_id_b256 = parse_b256(channel_id)?;
         verify_voucher(
             &self.domain_meta,
@@ -326,7 +350,7 @@ impl EvmSessionMethod {
         )
         .map_err(|e| SaApiError::new(70004, format!("verify voucher: {e}")))?;
 
-        // G. 原子更新本地存储
+        // G. Atomic local store update.
         let updater: ChannelUpdater = Box::new(move |c: &mut ChannelRecord| {
             c.highest_voucher_amount = cumulative_amount;
             c.highest_voucher_signature = Some(signature);
@@ -337,15 +361,17 @@ impl EvmSessionMethod {
         Ok(())
     }
 
-    // ===================== deduct_from_channel（计费扣费）=====================
+    // ===================== deduct_from_channel (billing) =====================
 
-    /// 原子扣费：`available = highest_voucher_amount - spent`，若 `available <
-    /// amount` 返回 `70015 insufficient-balance`，否则 `spent += amount;
-    /// units += 1`。返回更新后的 [`ChannelRecord`] 快照。
+    /// Atomic deduct. `available = highest_voucher_amount - spent`; if
+    /// `available < amount`, returns `70015 insufficient-balance`,
+    /// otherwise `spent += amount; units += 1`. Returns the updated
+    /// [`ChannelRecord`] snapshot.
     ///
-    /// 与 TS Session.ts `deduct(challengeId, amount)` 行为对齐。商户业务可在
-    /// `verify_session` 之外手动调用（例如基于实际服务消耗的非线性计费）。
-    /// `voucher` action 内部已自动调用一次（金额取自 `SessionRequest.amount`）。
+    /// Matches TS `Session.ts::deduct(challengeId, amount)`. Merchant
+    /// code can call this outside of `verify_session` (e.g. non-linear
+    /// billing tied to actual service consumption); the `voucher` action
+    /// already calls it internally with `SessionRequest.amount`.
     pub async fn deduct_from_channel(
         &self,
         channel_id: &str,
@@ -378,9 +404,10 @@ impl EvmSessionMethod {
         self.store.update(channel_id, updater).await
     }
 
-    // ===================== settle / close 商户主动调用 =====================
+    // ===================== settle / close (merchant-driven) =====================
 
-    /// 主动结算：取本地最新 voucher → 本地签 SettleAuth → 调 SA `/session/settle`。
+    /// Settle proactively: load latest local voucher → locally sign
+    /// SettleAuth → call SA `/session/settle`.
     pub async fn settle_with_authorization(
         &self,
         channel_id: &str,
@@ -434,11 +461,13 @@ impl EvmSessionMethod {
         self.sa_client.session_settle(&payload).await
     }
 
-    /// 主动关闭：取本地最新 voucher → 本地签 CloseAuth → 调 SA `/session/close`，
-    /// 成功后从 store 删除 ChannelRecord。
+    /// Close proactively: load latest local voucher → locally sign
+    /// CloseAuth → call SA `/session/close`; on success remove the
+    /// `ChannelRecord` from the store.
     ///
-    /// `cumulative_amount = None` 表示用本地 highest（典型场景）；
-    /// `Some(amt)` 表示由调用方指定（B-1 路径，payer 提供最终 voucher 时使用）。
+    /// `cumulative_amount = None` uses the local `highest` (typical case);
+    /// `Some(amt)` lets the caller specify it (B-1 path: payer supplies
+    /// the final voucher).
     pub async fn close_with_authorization(
         &self,
         channel_id: &str,
@@ -461,16 +490,34 @@ impl EvmSessionMethod {
             .ok_or_else(|| SaApiError::new(70010, "channel not found in local store"))?;
 
         let cumulative = cumulative_amount.unwrap_or(channel.highest_voucher_amount);
-        // waiver 分支:无 voucher 时上送空串。Server 同时认 cum ≤ settledOnChain
-        // 或 voucherSignature == "" 触发 waiver,SDK 只透传调用方意图,不做本地判断。
+
+        // Guard: refuse to close at a cum below the local highest. Mirrors
+        // `submit_voucher`'s 70012 invariant — close is more sensitive than
+        // voucher (settles on-chain), so it must be at least as strict.
+        // When `cumulative_amount = None` this passes naturally because
+        // `cumulative` defaults to `highest_voucher_amount`.
+        if cumulative < channel.highest_voucher_amount {
+            return Err(SaApiError::new(
+                70012,
+                format!(
+                    "close cum {} is below local highest voucher amount {}",
+                    cumulative, channel.highest_voucher_amount
+                ),
+            ));
+        }
+
+        // Waiver branch: send empty string when there is no voucher. The
+        // server accepts waiver on either `cum <= settledOnChain` or
+        // `voucherSignature == ""`; the SDK passes through caller intent
+        // and does no local judgement.
         let voucher_sig_bytes = provided_voucher_sig
             .or_else(|| channel.highest_voucher_signature.clone());
 
         let channel_id_b256 = parse_b256(channel_id)?;
 
-        // 当 voucher 是 payer 通过 ACTION_CLOSE 提供的 / 或者本地 highest 但
-        // 已经被 submit_voucher 验过 — 这里不再重复验。验签责任在 ACTION_CLOSE
-        // 入口完成。
+        // No re-verification here: the voucher was either provided by the
+        // payer through ACTION_CLOSE (verified at that entry) or it's the
+        // local `highest` (already verified by `submit_voucher`).
 
         let nonce = self.nonce_provider.allocate(payee, channel_id_b256).await?;
         let deadline = self.default_deadline;
@@ -489,7 +536,7 @@ impl EvmSessionMethod {
 
         let voucher_signature = match voucher_sig_bytes {
             Some(b) => hex_with_prefix(&b),
-            None => String::new(), // waiver 路径:server 见空串走 waiver
+            None => String::new(), // Waiver path: empty string triggers server-side waiver.
         };
         let payload = CloseRequestPayload {
             action: Some("close".into()),
@@ -502,7 +549,7 @@ impl EvmSessionMethod {
         };
 
         let receipt = self.sa_client.session_close(&payload).await?;
-        // close 成功后直接从 store 删除（不是置 finalized）
+        // Remove from store on close success (not a "finalized" flag).
         self.store.remove(channel_id).await;
         Ok(receipt)
     }
@@ -529,7 +576,7 @@ fn parse_u128_str(s: &str) -> Result<u128, SaApiError> {
         .map_err(|e| SaApiError::new(70000, format!("invalid u128 {s}: {e}")))
 }
 
-/// 解析可选 u128 字段：缺失 / 空串 / null 视为 0。
+/// Parse an optional u128 field; missing / empty string / null = 0.
 fn parse_u128_default_zero(v: Option<&serde_json::Value>) -> Result<u128, SaApiError> {
     match v.and_then(|x| x.as_str()) {
         None | Some("") => Ok(0),
@@ -537,7 +584,7 @@ fn parse_u128_default_zero(v: Option<&serde_json::Value>) -> Result<u128, SaApiE
     }
 }
 
-/// 解析可选 hex bytes 字段（"0x..." 或 ""/null）。
+/// Parse an optional hex-bytes field ("0x..." | "" | null).
 fn parse_optional_hex_bytes(v: Option<&serde_json::Value>) -> Result<Option<Bytes>, SaApiError> {
     match v.and_then(|x| x.as_str()) {
         None | Some("") => Ok(None),
@@ -554,7 +601,7 @@ fn hex_with_prefix(b: &[u8]) -> String {
     format!("0x{}", hex::encode(b))
 }
 
-/// 解析 challenge.request（base64url JSON）→ SessionRequest。
+/// Decode `challenge.request` (base64url JSON) and extract `recipient`.
 fn decode_challenge_request_recipient(
     request: &mpp::protocol::core::Base64UrlJson,
 ) -> Result<Address, SaApiError> {
@@ -569,7 +616,7 @@ fn decode_challenge_request_recipient(
     parse_address(recipient)
 }
 
-/// 从 method_details JSON 解出 SessionMethodDetails。
+/// Decode `method_details` JSON into [`SessionMethodDetails`].
 fn decode_method_details(
     method_details: Option<&serde_json::Value>,
 ) -> Result<SessionMethodDetails, SaApiError> {
@@ -578,26 +625,30 @@ fn decode_method_details(
         .map_err(|e| SaApiError::new(70000, format!("invalid method_details: {e}")))
 }
 
-/// 严格按 spec 解析 `did:pkh:eip155:<chainId>:<address>` 格式 DID,返回末段地址。
+/// Strictly parse a `did:pkh:eip155:<chainId>:<address>` DID per spec and
+/// return the address segment.
 ///
-/// 校验项(对齐 mpp-rs `parse_proof_source`):
-/// - 前缀必须 `did:pkh:eip155:`(method 必须 pkh,namespace 必须 eip155)
-/// - chainId 段必须能 parse 成 u64,且无前导零(`"0"` 本身合法,`"01"` 拒)
-/// - 地址段不能再含冒号(防伪造扩展)
-/// - 地址必须是合法 0x40hex
-/// - 额外:解析出来的 chainId 必须等于 `expected_chain_id`(防客户端把 mainnet
-///   DID 拿到 testnet 来用之类的混链事故)
+/// Checks (matching mpp-rs `parse_proof_source`):
+/// - Prefix must be `did:pkh:eip155:` (method = pkh, namespace = eip155).
+/// - The chainId segment must parse as `u64` with no leading zeros (`"0"`
+///   alone is valid; `"01"` is rejected).
+/// - The address segment must not contain further colons (prevents
+///   suffix forgery).
+/// - The address must be a valid 0x + 40-hex string.
+/// - Extra: the parsed chainId must equal `expected_chain_id` (prevents
+///   accidental cross-chain reuse — e.g. a mainnet DID hitting a testnet
+///   deployment).
 ///
-/// 任何不通过都返 `70000 invalid source DID`。
+/// Any failure → `70000 invalid source DID`.
 fn parse_did_pkh_eip155(did: &str, expected_chain_id: u64) -> Result<Address, SaApiError> {
     let rest = did
         .strip_prefix("did:pkh:eip155:")
         .ok_or_else(|| SaApiError::new(70000, format!("source DID must start with did:pkh:eip155: ({did})")))?;
-    // 用 split_once 而不是 rsplit,确保地址段没有冗余冒号
+    // Use `split_once` (not `rsplit`) so the address segment can't carry extra colons.
     let (chain_id_str, address_str) = rest
         .split_once(':')
         .ok_or_else(|| SaApiError::new(70000, format!("source DID missing address segment ({did})")))?;
-    // 拒前导零(只有 "0" 本身合法)
+    // Reject leading zeros (only "0" alone is valid).
     if chain_id_str.len() > 1 && chain_id_str.starts_with('0') {
         return Err(SaApiError::new(70000, format!("source DID chainId has leading zero: {chain_id_str}")));
     }
@@ -610,7 +661,7 @@ fn parse_did_pkh_eip155(did: &str, expected_chain_id: u64) -> Result<Address, Sa
             format!("source DID chainId {chain_id} != expected {expected_chain_id}"),
         ));
     }
-    // 地址段不能再含冒号
+    // Address segment must not contain further colons.
     if address_str.contains(':') {
         return Err(SaApiError::new(
             70000,
@@ -620,16 +671,20 @@ fn parse_did_pkh_eip155(did: &str, expected_chain_id: u64) -> Result<Address, Sa
     parse_address(address_str)
 }
 
-/// 按 credential `payload.type` 分支提取 (payer, authorized_signer)。
+/// Extract `(payer, authorized_signer)` by branching on `payload.type`.
 ///
-/// - **transaction 模式**:`payer = payload.authorization.from`。SDK 不与 `source` DID
-///   做交叉校验 — `source` 在 transaction 模式下是可选的辅助字段,authorization.from
-///   是签名捆绑的权威值。
-/// - **hash 模式**:`payer = parse_did_pkh_eip155(source, chain_id)`(spec 强制 hash 模式必须有 source)
-/// - **authorized_signer**:优先取 `payload.authorizedSigner`(非 0x0),否则 fallback 到 payer。
-///   client 显式发了 `authorizedSigner == payer`(冗余但合规)→ 静默接受,跟 mpp-rs 行为一致。
+/// - **transaction mode**: `payer = payload.authorization.from`. The SDK
+///   does not cross-check against the `source` DID — in transaction mode
+///   `source` is an optional auxiliary field, and `authorization.from` is
+///   the authoritative signature-bound value.
+/// - **hash mode**: `payer = parse_did_pkh_eip155(source, chain_id)` (spec
+///   requires `source` in hash mode).
+/// - **authorized_signer**: prefer `payload.authorizedSigner` (non-zero);
+///   otherwise fall back to `payer`. A client explicitly sending
+///   `authorizedSigner == payer` (redundant but valid) is silently
+///   accepted, matching mpp-rs behavior.
 ///
-/// 出错全部映射 70000 invalid_payload。
+/// All errors map to 70000 invalid_payload.
 fn extract_payer_and_signer(
     payload: &serde_json::Value,
     source: Option<&str>,
@@ -655,7 +710,7 @@ fn extract_payer_and_signer(
         }
     };
 
-    // authorizedSigner: 显式非 0x0 → 用它;0x0 / 缺失 / 空串 → fallback payer
+    // authorizedSigner: explicit non-zero → use it; 0x0 / missing / empty → fall back to payer.
     let raw_signer = payload
         .get("authorizedSigner")
         .and_then(|v| v.as_str())
@@ -670,12 +725,21 @@ fn extract_payer_and_signer(
     Ok((payer, authorized_signer))
 }
 
-/// 转发 credential 给 SA `/session/open` 时,把 SDK-only 字段从 payload 里剥掉。
+/// Strip SDK-only fields from `payload` before forwarding the credential
+/// to SA `/session/open`.
 ///
-/// `cumulativeAmount` 和 `voucherSignature` 是 client 给 SDK 用作初始 voucher
-/// baseline 的,SA spec 不列这两字段,所以转发前必须清掉(避免 SA strict-schema
-/// reject + 减少冗余传输)。`challenge` / `source` 顶层字段保留(open 接口
-/// 仍需 challenge)。
+/// `cumulativeAmount` and the voucher-signature field are baseline voucher
+/// fields the client passes to the SDK only — SA's spec doesn't list them,
+/// so we strip before forwarding (avoids strict-schema rejection and
+/// reduces wire size). `challenge` / `source` at the top level stay (the
+/// open endpoint still needs `challenge`).
+///
+/// **The voucher-signature field name to strip depends on `payload.type`**:
+/// - `transaction`: voucher signature lives in `voucherSignature`
+///   (`signature` is the EIP-3009 deposit signature — SA must keep it).
+/// - `hash`: voucher signature occupies `signature` directly (no deposit
+///   signature exists, so the whole `signature` field is SDK-only and
+///   must be stripped).
 fn strip_sdk_only_open_fields(
     credential: &PaymentCredential,
 ) -> Result<serde_json::Value, SaApiError> {
@@ -685,8 +749,17 @@ fn strip_sdk_only_open_fields(
         .get_mut("payload")
         .and_then(|v| v.as_object_mut())
     {
+        let payload_type = payload_obj
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         payload_obj.remove("cumulativeAmount");
-        payload_obj.remove("voucherSignature");
+        if payload_type == "hash" {
+            payload_obj.remove("signature");
+        } else {
+            payload_obj.remove("voucherSignature");
+        }
     }
     Ok(credential_json)
 }
@@ -740,8 +813,9 @@ impl SessionMethod for EvmSessionMethod {
         credential: &PaymentCredential,
         receipt: &Receipt,
     ) -> Option<serde_json::Value> {
-        // 管理动作(open/topUp/close)回个简单响应;voucher action 返扣费快照(spent/units)
-        // reference 字段是 SA API 返的链上 tx hash 或 channel_id(fallback)。
+        // Management actions (open/topUp/close) return a minimal response.
+        // The voucher action returns the deduct snapshot (spent/units).
+        // The `reference` field is SA's on-chain tx hash, falling back to channelId.
         let action = extract_str(&credential.payload, "action");
         let channel_id = extract_str(&credential.payload, "channelId");
         match action {
@@ -752,7 +826,8 @@ impl SessionMethod for EvmSessionMethod {
                 "reference":  receipt.reference,
             })),
             ACTION_VOUCHER => {
-                // 取出 handle_voucher 写入的扣费结果，读完即移除避免无限增长
+                // Read the deduct result `handle_voucher` stashed; remove
+                // immediately so the map can't grow unbounded.
                 let challenge_id = &credential.challenge.id;
                 let deduct = self
                     .voucher_deduct_results
@@ -778,7 +853,7 @@ impl SessionMethod for EvmSessionMethod {
 
 impl EvmSessionMethod {
     async fn handle_open(&self, credential: &PaymentCredential) -> Result<Receipt, SaApiError> {
-        // 1. payee 一致性校验:challenge.recipient == signer.address()
+        // 1. Payee consistency: challenge.recipient == signer.address().
         let challenge_recipient = decode_challenge_request_recipient(&credential.challenge.request)?;
         let signer_addr = self
             .payee_address
@@ -794,19 +869,24 @@ impl EvmSessionMethod {
             ));
         }
 
-        // 2. 解析 method_details 拿 chain_id / escrow_contract / min_voucher_delta
+        // 2. Read method_details for chain_id / escrow_contract / min_voucher_delta.
         let method_details = decode_method_details(self.method_details.as_ref())?;
 
-        // 3. 解析 credential 里 SDK 自用的字段(SA 不消费,转发前会 strip 掉):
-        //    - cumulativeAmount(初始 voucher 金额,默认 0)
-        //    - voucherSignature(初始 voucher EIP-712 签名)
-        //    两种模式统一用 voucherSignature key,不再区分 hash 模式 fallback 到 signature。
+        // 3. Extract SDK-only fields from credential (SA does not consume
+        //    them; they get stripped before forwarding):
+        //    - cumulativeAmount (initial voucher amount; defaults to 0)
+        //    - initial voucher EIP-712 signature: in transaction mode it
+        //      lives in `voucherSignature` (so it doesn't collide with the
+        //      EIP-3009 deposit `signature`); in hash mode it occupies
+        //      `signature` directly (there is no deposit signature).
         let payload = &credential.payload;
         let payload_type = payload.get("type").and_then(|v| v.as_str()).unwrap_or("");
-        let initial_voucher_sig = parse_optional_hex_bytes(payload.get("voucherSignature"))?;
+        let voucher_sig_key = if payload_type == "hash" { "signature" } else { "voucherSignature" };
+        let initial_voucher_sig = parse_optional_hex_bytes(payload.get(voucher_sig_key))?;
         let cumulative_amount = parse_u128_default_zero(payload.get("cumulativeAmount"))?;
 
-        // 4. 解析 channel_id(从 client 的 payload,不依赖 SA 返回 — fail-fast 用)
+        // 4. Parse channel_id from the client's payload (don't wait for SA's
+        //    response; this enables fail-fast).
         let channel_id_str = extract_str(payload, "channelId");
         if channel_id_str.is_empty() {
             return Err(SaApiError::new(70000, "open payload missing channelId"));
@@ -814,22 +894,25 @@ impl EvmSessionMethod {
         let channel_id_b256 = parse_b256(channel_id_str)?;
         let escrow_contract = parse_address(&method_details.escrow_contract)?;
 
-        // 5. 解析 payer / authorized_signer
+        // 5. Resolve payer / authorized_signer:
         // - transaction: payer = payload.authorization.from
-        // - hash:        payer = parse(source DID 末段地址,严格 did:pkh:eip155 格式)
+        // - hash:        payer = parse(source DID address segment; strict did:pkh:eip155 format)
         let (payer, authorized_signer) = extract_payer_and_signer(
             payload,
             credential.source.as_deref(),
             method_details.chain_id,
         )?;
 
-        // 6. ★ 本地 fail-fast 校验初始 voucher 签名(转 SA 调链前先验)
-        //    transaction 模式可省 gas:验签失败就不去 SA broadcast open tx。
-        //    hash 模式 client 已自己上链,gas 已花,但仍先验签语义更清晰。
+        // 6. Local fail-fast verify of the initial voucher signature
+        //    (before forwarding to SA). In transaction mode this saves gas:
+        //    a bad signature means we never broadcast the open tx via SA.
+        //    In hash mode the client already paid gas, but doing it first
+        //    is still semantically cleaner.
         if let Some(sig) = initial_voucher_sig.as_ref() {
-            // 6a. transaction 模式可以本地校验 cum 上限:
-            //     cumulativeAmount 不能超过 client 自报的 authorization.value(deposit)
-            //     hash 模式 deposit 要等 SA 调用后从 receipt 拿,本地校验放后面
+            // 6a. Transaction mode: locally enforce cum <= client-claimed
+            //     authorization.value (the deposit). In hash mode the
+            //     deposit only becomes known after SA returns the receipt,
+            //     so the check is deferred.
             if payload_type != "hash" {
                 let claimed_deposit = parse_u128_str(extract_str(
                     payload.get("authorization").unwrap_or(&serde_json::Value::Null),
@@ -844,7 +927,7 @@ impl EvmSessionMethod {
                     ));
                 }
             }
-            // 6b. EIP-712 ecrecover 严格校验
+            // 6b. Strict EIP-712 ecrecover.
             verify_voucher(
                 &self.domain_meta,
                 escrow_contract,
@@ -857,12 +940,15 @@ impl EvmSessionMethod {
             .map_err(|e| SaApiError::new(70004, format!("initial voucher: {e}")))?;
         }
 
-        // 7. 转发 credential 给 SA。SDK-only 字段(cumulativeAmount / voucherSignature)
-        //    要 strip 掉再发 — SA spec 不列这两字段,我们只在 SDK 内部用作 baseline。
+        // 7. Forward credential to SA — SDK-only fields must be stripped
+        //    first (SA spec doesn't list them).
+        //    Transaction mode strips cumulativeAmount + voucherSignature
+        //    (keeps EIP-3009 signature). Hash mode strips cumulativeAmount
+        //    + signature (the entire `signature` is the SDK-only voucher sig).
         let credential_for_sa = strip_sdk_only_open_fields(credential)?;
         let receipt = self.sa_client.session_open(&credential_for_sa).await?;
 
-        // 8. SA 链上 sanity:返回的 channelId 必须跟 client payload 自报的一致
+        // 8. SA on-chain sanity: returned channelId must match the client-claimed one.
         if !receipt.channel_id.eq_ignore_ascii_case(channel_id_str) {
             return Err(SaApiError::new(
                 8000,
@@ -873,9 +959,9 @@ impl EvmSessionMethod {
             ));
         }
 
-        // 9. deposit 来源(到这里两种模式都能拿到):
-        //    - transaction:client payload.authorization.value(已经在 6a 用过)
-        //    - hash:        SA receipt.deposit(链上权威值)
+        // 9. Resolve deposit (both modes have one by this point):
+        //    - transaction: client payload.authorization.value (already used in 6a).
+        //    - hash:        SA receipt.deposit (authoritative on-chain value).
         let deposit = if payload_type == "hash" {
             let dep_str = receipt
                 .deposit
@@ -893,7 +979,7 @@ impl EvmSessionMethod {
             ))?
         };
 
-        // 9b. hash 模式补一次 cum vs deposit 校验(transaction 已在 6a 校验过)
+        // 9b. Hash mode: deferred cum-vs-deposit check (transaction already did this in 6a).
         if payload_type == "hash" && cumulative_amount > deposit {
             return Err(SaApiError::new(
                 70012,
@@ -909,7 +995,7 @@ impl EvmSessionMethod {
             .map(parse_u128_str)
             .transpose()?;
 
-        // 10. 写 store
+        // 10. Write store.
         let channel_id = receipt.channel_id.clone();
         let record = ChannelRecord {
             channel_id: channel_id.clone(),
@@ -934,15 +1020,24 @@ impl EvmSessionMethod {
     }
 
     async fn handle_topup(&self, credential: &PaymentCredential) -> Result<Receipt, SaApiError> {
-        // session/topUp 不需要 challenge,只发 { source, payload }。
+        // Pre-flight: reject `additionalDeposit == 0` before hitting SA. Saves
+        // a wasted round-trip and prevents no-op records from polluting state.
+        let additional = parse_u128_str(extract_str(&credential.payload, "additionalDeposit"))?;
+        if additional == 0 {
+            return Err(SaApiError::new(
+                70000,
+                "topUp additionalDeposit must be greater than 0",
+            ));
+        }
+
+        // session/topUp doesn't need challenge — send { source, payload }.
         let mut body = serde_json::json!({ "payload": credential.payload });
         if let Some(s) = credential.source.as_deref() {
             body["source"] = serde_json::Value::String(s.to_string());
         }
         let receipt = self.sa_client.session_top_up(&body).await?;
 
-        // 累加 deposit
-        let additional = parse_u128_str(extract_str(&credential.payload, "additionalDeposit"))?;
+        // Accumulate deposit.
         let updater: ChannelUpdater = Box::new(move |r: &mut ChannelRecord| {
             r.deposit = r
                 .deposit
@@ -950,9 +1045,13 @@ impl EvmSessionMethod {
                 .ok_or_else(|| SaApiError::new(8000, "deposit overflow"))?;
             Ok(())
         });
-        // 如果本地没有 record（比如 SDK 重启后 topUp 直接来），update 会返 70010
-        // —— 上层 SA API 已成功，这里只记 warning 不阻断（虽然本地状态会不一致，
-        // 但下次 submit_voucher 也会因 miss 而报错引导）。
+        // If the local record is missing (e.g. topUp arriving after an SDK
+        // restart), `update` returns 70010 — but SA already succeeded on-chain,
+        // so we only log a warning instead of blocking. Local state will be
+        // inconsistent until the merchant either restarts a clean session or
+        // implements a `session/status`-based recovery path.
+        // TODO: auto-recover by calling `session_status` and rebuilding the
+        // ChannelRecord from on-chain truth (FR-recover, gap A in lifecycle audit).
         if let Err(e) = self.store.update(&receipt.channel_id, updater).await {
             tracing::warn!(channel_id = %receipt.channel_id, error = %e, "topup local update skipped");
         }
@@ -972,9 +1071,11 @@ impl EvmSessionMethod {
         let cum = parse_u128_str(extract_str(payload, "cumulativeAmount"))?;
         let sig = parse_optional_hex_bytes(payload.get("signature"))?
             .ok_or_else(|| SaApiError::new(70000, "voucher missing signature"))?;
-        // 字节级重放只跳过验签 + highest 更新；deduct 仍照扣。对齐 mppx /
-        // OKX TS Session：client 一次签大额 voucher 后可重复发送同一份字节复用余额。
-        // 网络重传双扣的保护建议放到 challenge.id 维度做幂等（TS 也未做，留作后续）。
+        // Byte-level replay only skips verify + highest update; deduct
+        // still runs. Matches mppx / OKX TS Session: a client can sign one
+        // large voucher and replay the same bytes to drain the balance.
+        // Double-deduct protection on network retries belongs at the
+        // challenge.id level (TS also doesn't do this; future work).
         self.submit_voucher(channel_id, cum, sig).await?;
         let amount = parse_u128_str(&request.amount)?;
         let updated = self.deduct_from_channel(channel_id, amount).await?;
@@ -994,7 +1095,7 @@ impl EvmSessionMethod {
         let cum = parse_u128_str(extract_str(payload, "cumulativeAmount"))?;
         let voucher_sig = parse_optional_hex_bytes(payload.get("signature"))?;
 
-        // payer 提供的最终 voucher 必须先在本地验签（B-1 方案）
+        // The payer-provided final voucher must be locally verified first (B-1 path).
         if let Some(sig) = voucher_sig.as_ref() {
             let channel_id_b256 = parse_b256(channel_id)?;
             let channel = self
@@ -1062,7 +1163,7 @@ mod tests {
 
     #[test]
     fn parse_did_pkh_wrong_prefix_rejected() {
-        // did:ethr:... 不是 pkh
+        // did:ethr:... is not pkh.
         let did = "did:ethr:eip155:196:0x76a5a6ef2a5bd42b22de258994ff792d27c08ec3";
         let err = parse_did_pkh_eip155(did, 196).unwrap_err();
         assert_eq!(err.code, 70000);
@@ -1079,7 +1180,7 @@ mod tests {
 
     #[test]
     fn parse_did_pkh_extra_colon_in_address_rejected() {
-        // 地址段含冒号 → 拒(防伪造扩展)
+        // Address segment contains a colon → reject (suffix-forgery guard).
         let did = "did:pkh:eip155:196:0x76a5a6ef2a5bd42b22de258994ff792d27c08ec3:bonus";
         let err = parse_did_pkh_eip155(did, 196).unwrap_err();
         assert_eq!(err.code, 70000);
@@ -1114,13 +1215,14 @@ mod tests {
         let (payer, signer) = extract_payer_and_signer(&payload, None, 196).unwrap();
         let expected = address!("76a5a6ef2a5bd42b22de258994ff792d27c08ec3");
         assert_eq!(payer, expected);
-        assert_eq!(signer, expected); // authorizedSigner 缺失 → fallback payer
+        assert_eq!(signer, expected); // authorizedSigner missing → fall back to payer.
     }
 
     #[test]
     fn extract_transaction_mode_ignores_source() {
-        // transaction 模式不交叉校验 source 与 from:即使 source 末段地址
-        // 跟 from 不同,SDK 也以 from 为准(authorization.from 是签名捆绑的权威值)。
+        // Transaction mode does not cross-check source against from: even
+        // when the source DID's address segment differs from `from`, the
+        // SDK uses `from` (it's the signature-bound authoritative value).
         let payload = serde_json::json!({
             "type": "transaction",
             "authorization": {
@@ -1185,7 +1287,7 @@ mod tests {
 
     #[test]
     fn extract_authorized_signer_equals_payer_silently_accepted() {
-        // client 显式发了 authorizedSigner == from(冗余但合规)→ 静默接受,不归一化
+        // Explicit `authorizedSigner == from` (redundant but valid) → silently accepted, not normalized.
         let payer_str = "0x76a5a6ef2a5bd42b22de258994ff792d27c08ec3";
         let payload = serde_json::json!({
             "type": "transaction",
@@ -1206,9 +1308,38 @@ mod tests {
 
     // ===================== strip_sdk_only_open_fields =====================
 
+    /// Build an open-credential fixture.
+    ///
+    /// `payload_type` determines the voucher-signature field name:
+    /// - `"transaction"` → `voucherSignature` (`signature` is reserved for the EIP-3009 deposit sig).
+    /// - `"hash"`        → `signature` (no deposit sig in hash mode; voucher takes the slot).
+    ///
+    /// The transaction fixture also stuffs a fake `signature` (EIP-3009)
+    /// field to verify that `strip` doesn't remove it.
     fn fixture_credential_with_initial_voucher(
         payload_type: &str,
     ) -> PaymentCredential {
+        let mut payload = serde_json::Map::new();
+        payload.insert("action".into(), serde_json::json!("open"));
+        payload.insert("type".into(), serde_json::json!(payload_type));
+        payload.insert("channelId".into(), serde_json::json!("0xchan"));
+        payload.insert("salt".into(), serde_json::json!("0xsalt"));
+        payload.insert("cumulativeAmount".into(), serde_json::json!("0")); // ← SDK-only
+
+        let voucher_sig = format!("0x{}", "ab".repeat(65));
+        if payload_type == "hash" {
+            // hash mode: `signature` IS the voucher sig — SDK-only, must be stripped.
+            payload.insert("hash".into(), serde_json::json!(format!("0x{}", "cd".repeat(32))));
+            payload.insert("signature".into(), serde_json::json!(voucher_sig));
+        } else {
+            // transaction mode: `signature` is the EIP-3009 deposit sig — SA must keep it.
+            payload.insert(
+                "signature".into(),
+                serde_json::json!(format!("0x{}", "ef".repeat(65))),
+            );
+            payload.insert("voucherSignature".into(), serde_json::json!(voucher_sig));
+        }
+
         PaymentCredential {
             challenge: ChallengeEcho {
                 id: "ch-strip".into(),
@@ -1221,37 +1352,48 @@ mod tests {
                 opaque: None,
             },
             source: Some("did:pkh:eip155:196:0xabc".into()),
-            payload: serde_json::json!({
-                "action": "open",
-                "type": payload_type,
-                "channelId": "0xchan",
-                "salt": "0xsalt",
-                "cumulativeAmount": "0",                       // ← SDK-only
-                "voucherSignature": format!("0x{}", "ab".repeat(65)), // ← SDK-only
-            }),
+            payload: serde_json::Value::Object(payload),
         }
     }
 
     #[test]
-    fn strip_removes_cumulative_and_voucher_sig_keeps_others() {
+    fn strip_transaction_removes_cumulative_and_voucher_sig_keeps_signature() {
         let cred = fixture_credential_with_initial_voucher("transaction");
         let stripped = strip_sdk_only_open_fields(&cred).unwrap();
         let payload = stripped.get("payload").and_then(|v| v.as_object()).unwrap();
         assert!(!payload.contains_key("cumulativeAmount"), "cumulativeAmount must be stripped");
         assert!(!payload.contains_key("voucherSignature"), "voucherSignature must be stripped");
-        // 其他字段保留
+        // EIP-3009 signature must be kept.
+        assert!(payload.contains_key("signature"), "transaction signature (EIP-3009) must be kept");
+        // Other fields preserved.
         assert_eq!(payload.get("action").and_then(|v| v.as_str()), Some("open"));
         assert_eq!(payload.get("type").and_then(|v| v.as_str()), Some("transaction"));
         assert_eq!(payload.get("channelId").and_then(|v| v.as_str()), Some("0xchan"));
         assert_eq!(payload.get("salt").and_then(|v| v.as_str()), Some("0xsalt"));
-        // 顶层 challenge / source 也保留
+        // Top-level challenge / source preserved.
         assert!(stripped.get("challenge").is_some());
         assert_eq!(stripped.get("source").and_then(|v| v.as_str()), Some("did:pkh:eip155:196:0xabc"));
     }
 
     #[test]
+    fn strip_hash_removes_cumulative_and_signature_keeps_hash() {
+        let cred = fixture_credential_with_initial_voucher("hash");
+        let stripped = strip_sdk_only_open_fields(&cred).unwrap();
+        let payload = stripped.get("payload").and_then(|v| v.as_object()).unwrap();
+        assert!(!payload.contains_key("cumulativeAmount"), "cumulativeAmount must be stripped");
+        // hash mode: `signature` is the voucher sig (SDK-only) — must be stripped.
+        assert!(!payload.contains_key("signature"), "hash-mode signature (voucher) must be stripped");
+        // `hash` is required by SA — must be kept.
+        assert!(payload.contains_key("hash"), "tx hash must be kept");
+        // Other fields preserved.
+        assert_eq!(payload.get("action").and_then(|v| v.as_str()), Some("open"));
+        assert_eq!(payload.get("type").and_then(|v| v.as_str()), Some("hash"));
+        assert_eq!(payload.get("channelId").and_then(|v| v.as_str()), Some("0xchan"));
+    }
+
+    #[test]
     fn strip_works_when_sdk_only_fields_absent() {
-        // CLI 不发这两字段时,strip 是 no-op,不应崩
+        // When the CLI doesn't send these fields, strip is a no-op (must not panic).
         let mut cred = fixture_credential_with_initial_voucher("transaction");
         if let Some(obj) = cred.payload.as_object_mut() {
             obj.remove("cumulativeAmount");
@@ -1262,10 +1404,10 @@ mod tests {
         assert_eq!(payload.get("action").and_then(|v| v.as_str()), Some("open"));
     }
 
-    /// 用 fixture_signer 在 test channel/escrow 下签 voucher。
+    /// Sign a voucher with `fixture_signer` against the test channel/escrow.
     fn fixture_voucher_sig(cum: u128) -> Bytes {
         let signer = fixture_signer();
-        let escrow = address!("eb18025208061781a287fFc2c1F31C03A24a24c0");
+        let escrow = address!("5E550002e64FaF79B41D89fE8439eEb1be66CE3b");
         let channel_id = b256!("6d0f4fdf1f2f6a1f6c1b0fbd6a7d5c2c0a8d3d7b1f6a9c1b3e2d4a5b6c7d8e9f");
         let domain = crate::eip712::build_domain(&DomainMeta::default(), 196, escrow);
         let voucher = Voucher {
@@ -1283,7 +1425,7 @@ mod tests {
             channel_id: "0x6d0f4fdf1f2f6a1f6c1b0fbd6a7d5c2c0a8d3d7b1f6a9c1b3e2d4a5b6c7d8e9f"
                 .into(),
             chain_id: 196,
-            escrow_contract: address!("eb18025208061781a287fFc2c1F31C03A24a24c0"),
+            escrow_contract: address!("5E550002e64FaF79B41D89fE8439eEb1be66CE3b"),
             payer: signer.address(),
             payee: signer.address(),
             authorized_signer: signer.address(),
@@ -1377,7 +1519,7 @@ mod tests {
         let method = EvmSessionMethod::new(Arc::new(StubSa::default()))
             .with_signer(fixture_signer());
 
-        // 先把 fixture record 塞进 store
+        // Seed the store with the fixture record first.
         let record = fixture_channel_record();
         let cid = record.channel_id.clone();
         method.store.put(record).await;
@@ -1405,10 +1547,10 @@ mod tests {
 
         method.submit_voucher(&cid, 100, sig100.clone()).await.unwrap();
 
-        // 同 cum + 同 sig → 幂等成功
+        // Same cum + same sig → idempotent success.
         method.submit_voucher(&cid, 100, sig100.clone()).await.unwrap();
 
-        // 较低 cum 但合法签名 → 70013 (delta <= 0,统一归到 voucher_delta_too_small)
+        // Lower cum with a valid sig → 70013 (delta <= 0, mapped to voucher_delta_too_small).
         let err = method.submit_voucher(&cid, 50, sig50).await.unwrap_err();
         assert_eq!(err.code, 70013);
     }
@@ -1473,7 +1615,7 @@ mod tests {
         let err = method.deduct_from_channel(&cid, 200).await.unwrap_err();
         assert_eq!(err.code, 70015);
 
-        // store 不应被修改
+        // store must not be mutated.
         let r = method.store.get(&cid).await.unwrap();
         assert_eq!(r.spent, 0);
         assert_eq!(r.units, 0);
@@ -1490,11 +1632,12 @@ mod tests {
         assert_eq!(err.code, 70010);
     }
 
-    /// 验证 `with_signer` 接受任何 `Signer` 实现,包括用户提供的远程签名器。
-    /// 这里用一个最小 mock(本地包了一层 PrivateKeySigner,语义上等价于 KMS /
-    /// Ledger / WalletConnect 等远程 signer 的 wrapper),验证泛型 trait bound
-    /// 真的能满足、`dyn Signer + Send + Sync` 字段类型在 `signer.address()` /
-    /// `signer.sign_hash()` 调用路径上都跑得通。
+    /// Verify `with_signer` accepts any `Signer` impl, including merchant
+    /// remote signers. Uses a minimal mock (locally wraps a
+    /// `PrivateKeySigner`; semantically equivalent to a KMS / Ledger /
+    /// WalletConnect remote-signer wrapper) to confirm the generic trait
+    /// bound holds and `dyn Signer + Send + Sync` works on the
+    /// `signer.address()` / `signer.sign_hash()` call paths.
     #[tokio::test]
     async fn with_signer_accepts_arbitrary_signer_impl() {
         use alloy_signer::Signature;
@@ -1524,12 +1667,12 @@ mod tests {
         };
         let expected_address = wrapped.address();
 
-        // 关键验证:`with_signer` 接受任意 Signer 实现,而不只是 PrivateKeySigner。
+        // Key check: `with_signer` accepts any Signer impl, not just PrivateKeySigner.
         let method = EvmSessionMethod::new(Arc::new(StubSa::default())).with_signer(wrapped);
 
-        // payee_address 来自 signer.address(),应该等于内部 PrivateKeySigner 地址。
+        // payee_address comes from signer.address(); should match the inner PrivateKeySigner.
         assert_eq!(method.payee_address, Some(expected_address));
-        // verify_payee 链式 fast-fail 也走 trait method,无 dyn 调用问题。
+        // The verify_payee chained fast-fail also goes through the trait method (no dyn-call issues).
         let method = method
             .verify_payee(expected_address)
             .expect("payee match must pass for self-wrapped signer");
@@ -1554,7 +1697,7 @@ mod tests {
     #[tokio::test]
     async fn settle_without_signer_fails_8000() {
         let method = EvmSessionMethod::new(Arc::new(StubSa::default()));
-        // 没注入 signer
+        // No signer injected.
         let err = method
             .settle_with_authorization("0xabc")
             .await
@@ -1578,6 +1721,32 @@ mod tests {
             .await
             .unwrap();
         assert!(method.store.get(&cid).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn close_rejects_cum_below_local_highest() {
+        let method = EvmSessionMethod::new(Arc::new(StubSa::default()))
+            .with_signer(fixture_signer());
+
+        let mut record = fixture_channel_record();
+        record.highest_voucher_amount = 300;
+        record.highest_voucher_signature = Some(Bytes::from(vec![0x02; 65]));
+        let cid = record.channel_id.clone();
+        method.store.put(record).await;
+
+        let err = method
+            .close_with_authorization(&cid, Some(100), Some(Bytes::from(vec![0x03; 65])))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, 70012);
+        assert!(
+            err.to_string().contains("below local highest"),
+            "unexpected error message: {}",
+            err
+        );
+
+        // Channel must remain in the store — close was rejected, not consumed.
+        assert!(method.store.get(&cid).await.is_some());
     }
 
     fn dummy_request() -> SessionRequest {
@@ -1629,26 +1798,28 @@ mod tests {
         let receipt = method.verify_session(&cred, &req).await.unwrap();
         assert_eq!(receipt.reference, cid);
 
-        // store 应记录 spent=150 / units=1
+        // store should record spent=150 / units=1.
         let r = method.store.get(&cid).await.unwrap();
         assert_eq!(r.spent, 150);
         assert_eq!(r.units, 1);
         assert_eq!(r.highest_voucher_amount, 200);
 
-        // respond() 应回 spent / units
+        // respond() should return spent / units.
         let body = method.respond(&cred, &receipt).expect("respond body for voucher");
         assert_eq!(body.get("spent").and_then(|v| v.as_str()), Some("150"));
         assert_eq!(body.get("units").and_then(|v| v.as_u64()), Some(1));
 
-        // 二次 respond 同 challenge_id 应返 None（已 take 走）
+        // A second respond() with the same challenge_id returns None (already taken).
         assert!(method.respond(&cred, &receipt).is_none());
     }
 
     #[tokio::test]
     async fn voucher_byte_replay_keeps_deducting_until_balance_exhausted() {
-        // 对齐 mppx / OKX TS Session:同一份 voucher 字节可以多次复用,每次
-        // 都走 deduct,直到 spent 顶到 highest 才返 70015。client 由此可以
-        // 一次签大额 voucher,后续多次请求复用同一份字节而不必重新签名。
+        // Matches mppx / OKX TS Session: the same voucher bytes can be
+        // replayed many times; each call still runs deduct, and 70015 only
+        // fires once spent reaches highest. This lets a client sign one
+        // large voucher and replay the same bytes for subsequent requests
+        // without re-signing.
         let method = EvmSessionMethod::new(Arc::new(StubSa::default()))
             .with_signer(fixture_signer());
 
@@ -1680,26 +1851,26 @@ mod tests {
         let mut req = dummy_request();
         req.amount = "80".into();
 
-        // 第一次:扣 80 → spent=80 units=1
+        // 1st call: deduct 80 → spent=80 units=1.
         let r1 = method.verify_session(&make_cred(), &req).await.unwrap();
         let body1 = method.respond(&make_cred(), &r1).expect("body1");
         assert_eq!(body1.get("spent").and_then(|v| v.as_str()), Some("80"));
         assert_eq!(body1.get("units").and_then(|v| v.as_u64()), Some(1));
 
-        // 第二次:同 voucher 字节级重发 → 仍 deduct → spent=160 units=2
+        // 2nd call: byte-level replay of the same voucher → still deduct → spent=160 units=2.
         let r2 = method.verify_session(&make_cred(), &req).await.unwrap();
         let body2 = method.respond(&make_cred(), &r2).expect("body2");
         assert_eq!(body2.get("spent").and_then(|v| v.as_str()), Some("160"));
         assert_eq!(body2.get("units").and_then(|v| v.as_u64()), Some(2));
 
-        // 第三次:available=200-160=40 < 80 → 70015,不再扣
+        // 3rd call: available = 200 - 160 = 40 < 80 → 70015, no deduction.
         let err = method
             .verify_session(&make_cred(), &req)
             .await
             .unwrap_err();
         assert!(err.to_string().contains("insufficient"), "expected insufficient balance, got: {err}");
 
-        // store 仍是 spent=160 units=2(第三次失败不写)
+        // store stays at spent=160 units=2 (3rd failed call doesn't write).
         let s = method.store.get(&cid).await.unwrap();
         assert_eq!(s.spent, 160);
         assert_eq!(s.units, 2);
@@ -1717,13 +1888,14 @@ mod tests {
         let cum = 100u128;
         let sig = fixture_voucher_sig(cum);
 
-        // 第一次:新 voucher 接受
+        // 1st call: new voucher accepted.
         method.submit_voucher(&cid, cum, sig.clone()).await.unwrap();
         let r1 = method.store.get(&cid).await.unwrap();
         assert_eq!(r1.highest_voucher_amount, cum);
 
-        // 第二次:同字节重发 → 仍 Ok,store 状态不变(submit_voucher 不再
-        // 暴露 replay 信号给调用方;deduct 责任在 handle_voucher 那一层)
+        // 2nd call: same bytes replayed → still Ok; store state unchanged.
+        // `submit_voucher` no longer exposes a replay signal to the caller —
+        // deduct responsibility belongs to `handle_voucher`.
         method.submit_voucher(&cid, cum, sig).await.unwrap();
         let r2 = method.store.get(&cid).await.unwrap();
         assert_eq!(r2.highest_voucher_amount, cum);
@@ -1760,7 +1932,7 @@ mod tests {
                 "signature": format!("0x{}", hex::encode(&sig)),
             }),
         };
-        // 请求 200 但 voucher 只到 100 → insufficient
+        // Request 200 but voucher only covers 100 → insufficient.
         let mut req = dummy_request();
         req.amount = "200".into();
 
@@ -1791,5 +1963,43 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("unknown session action"));
+    }
+
+    #[tokio::test]
+    async fn topup_rejects_zero_additional_deposit_before_sa_call() {
+        // StubSa::session_top_up is unreachable!(); if the guard fires correctly
+        // we never reach SA. If the guard regressed, the test would panic via
+        // unreachable!().
+        let method = EvmSessionMethod::new(Arc::new(StubSa::default()))
+            .with_signer(fixture_signer());
+        let cred = PaymentCredential {
+            challenge: ChallengeEcho {
+                id: "ch-1".into(),
+                realm: "test".into(),
+                method: "evm".into(),
+                intent: "session".into(),
+                request: Base64UrlJson::from_value(&serde_json::json!({})).unwrap(),
+                expires: None,
+                digest: None,
+                opaque: None,
+            },
+            source: None,
+            payload: serde_json::json!({
+                "action": "topUp",
+                "channelId": "0xabc",
+                "additionalDeposit": "0",
+            }),
+        };
+        let err = method
+            .verify_session(&cred, &dummy_request())
+            .await
+            .unwrap_err();
+        // `verify_session` returns upstream `VerificationError`, which doesn't
+        // expose the SaApiError code directly — match on the message instead.
+        assert!(
+            err.to_string().contains("greater than 0"),
+            "unexpected error: {}",
+            err
+        );
     }
 }

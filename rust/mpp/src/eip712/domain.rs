@@ -1,34 +1,39 @@
 //! EIP-712 domain constants for OKX EvmPaymentChannel.
 //!
-//! `domainSeparator` 由合约暴露 `domainSeparator()` 方法可直接读链上取，
-//! SDK 启动时建议做一次链上 vs 本地 `eip712_domain!` 算出的值的相等性校验
-//! —— 不一致直接拒绝启动，避免后续所有签名都无效。
+//! The contract exposes `domainSeparator()`, so the on-chain value can be
+//! read directly. At SDK startup it's recommended to compare the on-chain
+//! value against the locally computed one and refuse to start on
+//! mismatch — otherwise every subsequent signature will be invalid.
 //!
-//! ## 4 个 domain 字段如何配置
+//! ## How the 4 domain fields are configured
 //!
-//! - `name` / `version`:走 [`DomainMeta`],默认 `"EVM Payment Channel"` / `"1"`,
-//!   开发者 fork 合约时可通过 `EvmSessionMethod::with_domain_meta(...)` 改
-//! - `chainId` / `verifying_contract`:每次 [`build_domain`] 调用按入参传入
+//! - `name` / `version`: come from [`DomainMeta`]; defaults are
+//!   `"EVM Payment Channel"` / `"1"`. Fork the contract? Override via
+//!   `EvmSessionMethod::with_domain_meta(...)`.
+//! - `chainId` / `verifying_contract`: passed as arguments on every
+//!   [`build_domain`] call.
 
 use std::borrow::Cow;
 
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::Eip712Domain;
 
-/// EIP-712 domain `name` 字段默认值。值来自 OKX EvmPaymentChannel 合约 source code,
-/// 必须**逐字节**和合约一致:大小写、空格、标点不能错。
+/// Default value for the EIP-712 domain `name` field. Sourced from the
+/// OKX EvmPaymentChannel contract; **must match byte-for-byte** —
+/// capitalization, whitespace, and punctuation cannot drift.
 pub const VOUCHER_DOMAIN_NAME: &str = "EVM Payment Channel";
 
-/// EIP-712 domain `version` 字段默认值。
+/// Default value for the EIP-712 domain `version` field.
 pub const VOUCHER_DOMAIN_VERSION: &str = "1";
 
-/// EIP-712 domain 的可配置元数据(`name` / `version` 两个字段)。
+/// Configurable EIP-712 domain metadata (`name` and `version` only).
 ///
-/// `chainId` 和 `verifying_contract` 从来都是按场景动态传入,所以不在这里。
-/// 只有当开发者 fork 合约改了 `name` / `version` 时才需要构造非默认值。
+/// `chainId` / `verifying_contract` are always supplied per call, so
+/// they're not part of this struct. Construct a non-default value only
+/// when forking the contract with a different `name` / `version`.
 ///
-/// `Default::default()` 返回标准 OKX EvmPaymentChannel domain
-/// (`"EVM Payment Channel"` / `"1"`)。
+/// `Default::default()` returns the canonical OKX EvmPaymentChannel
+/// domain (`"EVM Payment Channel"` / `"1"`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DomainMeta {
     pub name: Cow<'static, str>,
@@ -45,8 +50,9 @@ impl Default for DomainMeta {
 }
 
 impl DomainMeta {
-    /// 构造自定义 DomainMeta。`name` / `version` 必须跟合约部署时的 EIP-712 domain
-    /// 完全一致(逐字节),否则签名验证一定挂。
+    /// Construct a custom `DomainMeta`. `name` / `version` must match the
+    /// deployed contract's EIP-712 domain byte-for-byte; otherwise signature
+    /// verification will fail.
     pub fn new(
         name: impl Into<Cow<'static, str>>,
         version: impl Into<Cow<'static, str>>,
@@ -58,16 +64,18 @@ impl DomainMeta {
     }
 }
 
-/// 构造 EIP-712 domain,用于 Voucher / SettleAuthorization / CloseAuthorization
-/// 三种 typed message 的签名与验签。
+/// Build the EIP-712 domain used to sign / verify the three typed
+/// messages (Voucher, SettleAuthorization, CloseAuthorization).
 ///
-/// `meta` 决定 `name` / `version`(默认走 OKX 标准值,见 [`DomainMeta::default`]);
-/// `chain_id` / `escrow_contract` 必填。
+/// `meta` controls `name` / `version` (defaults are the OKX canonical
+/// values — see [`DomainMeta::default`]); `chain_id` and
+/// `escrow_contract` are required.
 ///
-/// 注意:这里**不能**用 `eip712_domain!` 宏 — 该宏要求 `name`/`version` 是编译期
-/// `&'static str` 字面量,而我们的 [`DomainMeta`] 里是运行期 `Cow<'static, str>`
-/// (`Cow::Owned(String)` 满足 `'static` 但宏不接 runtime 值)。所以直接构造
-/// `Eip712Domain`,把 Cow 移进去。
+/// Note: we **cannot** use the `eip712_domain!` macro here — it requires
+/// `name` / `version` to be compile-time `&'static str` literals, while
+/// [`DomainMeta`] holds a runtime `Cow<'static, str>` (`Cow::Owned(String)`
+/// satisfies `'static` but the macro doesn't accept runtime values).
+/// We therefore construct `Eip712Domain` directly and move the `Cow`s in.
 pub fn build_domain(
     meta: &DomainMeta,
     chain_id: u64,
@@ -96,7 +104,7 @@ mod tests {
 
     #[test]
     fn build_domain_is_deterministic() {
-        let escrow = address!("eb18025208061781a287fFc2c1F31C03A24a24c0");
+        let escrow = address!("5E550002e64FaF79B41D89fE8439eEb1be66CE3b");
         let m = DomainMeta::default();
         let a = build_domain(&m, 196, escrow);
         let b = build_domain(&m, 196, escrow);
@@ -105,7 +113,7 @@ mod tests {
 
     #[test]
     fn different_chain_id_yields_different_separator() {
-        let escrow = address!("eb18025208061781a287fFc2c1F31C03A24a24c0");
+        let escrow = address!("5E550002e64FaF79B41D89fE8439eEb1be66CE3b");
         let m = DomainMeta::default();
         let a = build_domain(&m, 196, escrow).separator();
         let b = build_domain(&m, 1, escrow).separator();
@@ -120,7 +128,7 @@ mod tests {
         let b = build_domain(
             &m,
             chain_id,
-            address!("eb18025208061781a287fFc2c1F31C03A24a24c0"),
+            address!("5E550002e64FaF79B41D89fE8439eEb1be66CE3b"),
         )
         .separator();
         assert_ne!(a, b);
@@ -128,7 +136,7 @@ mod tests {
 
     #[test]
     fn different_meta_yields_different_separator() {
-        let escrow = address!("eb18025208061781a287fFc2c1F31C03A24a24c0");
+        let escrow = address!("5E550002e64FaF79B41D89fE8439eEb1be66CE3b");
         let default = DomainMeta::default();
         let custom = DomainMeta::new("Forked Channel", "2");
         let a = build_domain(&default, 196, escrow).separator();
@@ -138,8 +146,8 @@ mod tests {
 
     #[test]
     fn custom_meta_with_default_values_matches_default() {
-        // 显式传跟 Default 同样的值 → separator 相等
-        let escrow = address!("eb18025208061781a287fFc2c1F31C03A24a24c0");
+        // Explicitly passing the Default values → separators must be equal.
+        let escrow = address!("5E550002e64FaF79B41D89fE8439eEb1be66CE3b");
         let default = DomainMeta::default();
         let custom = DomainMeta::new(VOUCHER_DOMAIN_NAME, VOUCHER_DOMAIN_VERSION);
         assert_eq!(

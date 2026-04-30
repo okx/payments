@@ -1,16 +1,16 @@
 //! Local EIP-712 Voucher verification.
 //!
-//! 用于：
-//! - Payee SDK 验 Payer / authorizedSigner 在 HTTP 402 流程中送来的 voucher
-//!   （`submit_voucher` 9 步守卫的 H 步）
-//! - ACTION_OPEN 时验 Payer 提供的初始 voucher（如有）
-//! - ACTION_CLOSE B-1 路径里验 Payer 提交的最终 voucher
+//! Used by:
+//! - The payee SDK to verify vouchers from the payer / authorizedSigner
+//!   over the HTTP 402 flow (step H of `submit_voucher`'s 9-step guards).
+//! - `ACTION_OPEN` to verify the initial voucher (when present).
+//! - `ACTION_CLOSE` B-1 path to verify the final payer-submitted voucher.
 //!
-//! 设计要点：
-//! 1. 长度严格 65 字节（拒 EIP-2098 紧凑），对齐合约
-//! 2. Low-s 显式预检（s ≤ secp256k1_order/2），从 Java Eip712VerifyUtil 借
-//! 3. EIP-712 编码用 `alloy::sol!` 宏 + `eip712_signing_hash`，单一真源
-//! 4. ecrecover + 严格地址比对（Address 类型天然大小写无关）
+//! Design notes:
+//! 1. Strict 65-byte length (rejects EIP-2098 compact form), matching the contract.
+//! 2. Explicit low-s precheck (s <= secp256k1_order / 2), borrowed from Java `Eip712VerifyUtil`.
+//! 3. EIP-712 encoding via `alloy::sol!` + `eip712_signing_hash` — single source of truth.
+//! 4. ecrecover + strict address comparison (`Address` is naturally case-insensitive).
 
 use alloy_primitives::{Address, U256};
 use alloy_signer::Signature;
@@ -18,8 +18,8 @@ use alloy_sol_types::{sol, SolStruct};
 
 use super::domain::{build_domain, DomainMeta};
 
-/// secp256k1 曲线阶的一半：N/2。s > 此值即视为 high-s（malleable signature）。
-/// 借自 Java `Eip712VerifyUtil.SECP256K1_ORDER_HALF`。
+/// Half the secp256k1 curve order (N/2). `s > N/2` is high-s
+/// (malleable signature). Borrowed from Java `Eip712VerifyUtil.SECP256K1_ORDER_HALF`.
 const SECP256K1_HALF_N: U256 = U256::from_limbs([
     0xDFE9_2F46_681B_20A0,
     0x5D57_6E73_57A4_501D,
@@ -28,7 +28,7 @@ const SECP256K1_HALF_N: U256 = U256::from_limbs([
 ]);
 
 sol! {
-    /// EIP-712 typed struct，必须与 OKX EvmPaymentChannel 合约 1:1 对齐。
+    /// EIP-712 typed struct; must match the OKX EvmPaymentChannel contract 1:1.
     #[derive(Debug)]
     struct Voucher {
         bytes32 channelId;
@@ -36,16 +36,18 @@ sol! {
     }
 }
 
-/// 本地验签 Voucher。返回 `Ok(())` 表示签名有效且 `recovered == expected_signer`。
+/// Locally verify a Voucher. Returns `Ok(())` when the signature is
+/// valid and `recovered == expected_signer`.
 ///
-/// `meta` 指定 EIP-712 domain 的 `name` / `version`(默认走 OKX 标准值,见
-/// [`DomainMeta::default`])。商户 fork 合约改了 domain 的话需传自定义 meta。
+/// `meta` selects the EIP-712 domain's `name` / `version` (defaults to
+/// the OKX canonical values — see [`DomainMeta::default`]). Pass a custom
+/// meta when the merchant has forked the contract with a different domain.
 ///
-/// # 守卫顺序
-/// 1. 长度严格 65 字节
-/// 2. Low-s 预检
-/// 3. EIP-712 digest 计算
-/// 4. ecrecover + 严格地址比对
+/// # Guard order
+/// 1. Strict 65-byte length.
+/// 2. Low-s precheck.
+/// 3. EIP-712 digest computation.
+/// 4. ecrecover + strict address comparison.
 pub fn verify_voucher(
     meta: &DomainMeta,
     escrow_contract: Address,
@@ -55,18 +57,18 @@ pub fn verify_voucher(
     signature: &[u8],
     expected_signer: Address,
 ) -> Result<(), VerifyError> {
-    // ① 长度严格 65 字节（拒 EIP-2098 紧凑 64 字节格式）
+    // (1) Strict 65-byte length (rejects EIP-2098 compact 64-byte form).
     if signature.len() != 65 {
         return Err(VerifyError::BadLength(signature.len()));
     }
 
-    // ② Low-s 预检：s 必须 ≤ secp256k1_order / 2，否则视为 malleable
+    // (2) Low-s precheck: s must be <= secp256k1_order / 2; otherwise malleable.
     let s = U256::from_be_slice(&signature[32..64]);
     if s > SECP256K1_HALF_N {
         return Err(VerifyError::HighS);
     }
 
-    // ③ EIP-712 digest（sol! + eip712_signing_hash）
+    // (3) EIP-712 digest (sol! + eip712_signing_hash).
     let domain = build_domain(meta, chain_id, escrow_contract);
     let voucher = Voucher {
         channelId: channel_id,
@@ -74,7 +76,7 @@ pub fn verify_voucher(
     };
     let digest = voucher.eip712_signing_hash(&domain);
 
-    // ④ ecrecover + 严格地址比对
+    // (4) ecrecover + strict address comparison.
     let sig = Signature::try_from(signature).map_err(|_| VerifyError::SignatureParse)?;
     let recovered = sig
         .recover_address_from_prehash(&digest)
@@ -88,7 +90,8 @@ pub fn verify_voucher(
     Ok(())
 }
 
-/// 本地验签的细分错误类型，方便生产环境定位根因。
+/// Detailed error types for local verification — useful for diagnosing
+/// production failures.
 #[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 pub enum VerifyError {
     #[error("signature must be 65 bytes, got {0}")]
@@ -115,21 +118,21 @@ mod tests {
     use alloy_signer_local::PrivateKeySigner;
 
     fn fixture_signer() -> PrivateKeySigner {
-        // 固定 key，便于 round-trip 测试可重现
+        // Fixed key — keeps round-trip tests reproducible.
         "0x4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318"
             .parse()
             .unwrap()
     }
 
     fn fixture_escrow() -> Address {
-        address!("eb18025208061781a287fFc2c1F31C03A24a24c0")
+        address!("5E550002e64FaF79B41D89fE8439eEb1be66CE3b")
     }
 
     fn fixture_channel_id() -> alloy_primitives::B256 {
         b256!("6d0f4fdf1f2f6a1f6c1b0fbd6a7d5c2c0a8d3d7b1f6a9c1b3e2d4a5b6c7d8e9f")
     }
 
-    /// 帮助函数：用给定 signer 签 Voucher，返回 65 字节签名
+    /// Helper: sign a Voucher with the given signer, returning 65 bytes.
     fn sign_voucher_for_test(
         signer: &PrivateKeySigner,
         escrow: Address,
@@ -178,11 +181,11 @@ mod tests {
 
     #[test]
     fn high_s_signature_returns_high_s() {
-        // 构造一个 s 超过 N/2 的签名
+        // Build a signature where s exceeds N/2.
         let mut sig_bytes = vec![0u8; 65];
-        // r 任意非零
+        // r: any non-zero value.
         sig_bytes[0] = 0x01;
-        // s = secp256k1_order_half + 1（设最高位为 0xff... 必然 > N/2）
+        // s = secp256k1_order_half + 1 (all-0xff bytes are guaranteed > N/2).
         for i in 32..64 {
             sig_bytes[i] = 0xff;
         }
@@ -231,7 +234,7 @@ mod tests {
 
     #[test]
     fn corrupted_signature_returns_parse_or_recover_err() {
-        // r = 0 是无效 ECDSA 签名 → Signature::try_from 或 recover 失败
+        // r = 0 is an invalid ECDSA signature → Signature::try_from or recover fails.
         let signer_addr = fixture_signer().address();
         let result = verify_voucher(
             &DomainMeta::default(),
@@ -255,7 +258,7 @@ mod tests {
         let escrow = fixture_escrow();
         let channel_id = fixture_channel_id();
 
-        // 用 cum=100 签，但用 cum=200 验
+        // Sign with cum=100 but verify with cum=200.
         let sig = sign_voucher_for_test(&signer, escrow, 196, channel_id, 100);
         let result = verify_voucher(
             &DomainMeta::default(),
@@ -292,7 +295,7 @@ mod tests {
 
     #[test]
     fn custom_meta_works_when_used_consistently() {
-        // sign 用 custom meta,verify 用同一个 custom meta → 通过
+        // Sign with custom meta, verify with the same custom meta → pass.
         let signer = fixture_signer();
         let signer_addr = signer.address();
         let escrow = fixture_escrow();
@@ -314,7 +317,7 @@ mod tests {
 
     #[test]
     fn custom_meta_mismatch_fails_verify() {
-        // sign 用 custom meta,verify 用 default meta → AddressMismatch
+        // Sign with custom meta, verify with default meta → AddressMismatch.
         let signer = fixture_signer();
         let signer_addr = signer.address();
         let escrow = fixture_escrow();

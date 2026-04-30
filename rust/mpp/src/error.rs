@@ -1,8 +1,8 @@
 //! SA API error types and MPP RFC 9457 conversion.
 //!
-//! Source: SA API error codes (8000, 70000-70014) from [Pay] MPP EVM API 方案.
-//! HTTP status + problem type aligned with the 错误码对齐方案 and mpp-rs
-//! `PaymentErrorDetails` conventions.
+//! Source: SA API error codes (8000, 70000-70014) from the [Pay] MPP EVM API plan.
+//! HTTP status + problem type aligned with the error-code mapping plan
+//! and mpp-rs `PaymentErrorDetails` conventions.
 
 use mpp::PaymentErrorDetails;
 
@@ -95,7 +95,7 @@ fn map(code: u32) -> (Namespace, &'static str, u16, &'static str) {
         ),
         70013 => (Session, "delta-too-small", 402, "DeltaTooSmallError"),
         70014 => (Session, "channel-closing", 409, "ChannelClosingError"),
-        // SDK 本地扣费检查：deduct_from_channel 时 available < amount。
+        // SDK-local deduct check: `deduct_from_channel` when `available < amount`.
         70015 => (
             Session,
             "insufficient-balance",

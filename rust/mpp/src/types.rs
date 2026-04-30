@@ -9,9 +9,11 @@ use serde::{Deserialize, Serialize};
 
 /// SA API unified response: `{ code, data, msg }`.
 ///
-/// `code` 用 `i64` 而不是 `u32`,因为 SA backend 在某些异常路径下会返
-/// `code: -1`("unknown error"),u32 解析直接失败导致原始报错被吞掉。
-/// 业务错误码本身是非负整数(8000 / 70000-70014 等),向下兼容 `as u32`。
+/// `code` is `i64` rather than `u32` because the SA backend returns
+/// `code: -1` ("unknown error") on some error paths; parsing as `u32`
+/// would fail and swallow the original error message. Business codes
+/// themselves are non-negative integers (8000, 70000-70014, ...) so
+/// `as u32` casts cleanly downstream.
 #[derive(Debug, Clone, Deserialize)]
 pub struct SaApiResponse<T> {
     pub code: i64,
@@ -26,9 +28,9 @@ pub struct SaApiResponse<T> {
 pub const DEFAULT_CHAIN_ID: u64 = 196;
 
 // EIP-712 typed structs (Voucher / SettleAuthorization / CloseAuthorization)
-// 与 domain 常量已迁移到 `crate::eip712` 模块。请使用：
-//   - `crate::eip712::voucher::Voucher`（验签结构体）
-//   - `crate::eip712::authorization::{SettleAuthorization, CloseAuthorization}`（签名结构体）
+// and domain constants have moved to the `crate::eip712` module. Use:
+//   - `crate::eip712::voucher::Voucher` (verification struct)
+//   - `crate::eip712::authorization::{SettleAuthorization, CloseAuthorization}` (signing structs)
 //   - `crate::eip712::domain::{VOUCHER_DOMAIN_NAME, VOUCHER_DOMAIN_VERSION, build_domain}`
 
 // ==================== Challenge methodDetails (spec §8.1) ====================
@@ -149,9 +151,11 @@ pub struct ChargeReceipt {
 
 /// Receipt returned by POST `/session/{open,topUp,settle,close}`.
 ///
-/// 必填字段:`method / intent / status / timestamp / channelId / chainId /
-/// reference / deposit`。`challengeId / acceptedCumulative / spent /
-/// confirmations / units` 是可选字段(协议精简后新接口不返,反序列化得到 None)。
+/// Required fields: `method / intent / status / timestamp / channelId /
+/// chainId / reference / deposit`. The new (post-cleanup) protocol no
+/// longer returns `challengeId / acceptedCumulative / spent /
+/// confirmations / units`; they're kept as `Option` for back-compat
+/// (deserialize as `None`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionReceipt {
@@ -164,11 +168,12 @@ pub struct SessionReceipt {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reference: Option<String>,
-    /// 当前 channel 在链上已知存款。
+    /// Current on-chain known deposit for this channel.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deposit: Option<String>,
 
-    /// 可选字段(协议精简后新接口不返,保留 Option 用于反序列化兼容)。
+    /// Optional fields (the new protocol skips them; kept as `Option`
+    /// for deserialization compatibility).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub challenge_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -185,8 +190,9 @@ pub struct SessionReceipt {
 
 /// Response from GET `/session/status`.
 ///
-/// `cumulativeAmount` 在 spec 中已删除("只有调用 settle 才会更新")。
-/// 字段保留为 `Option` 仅供向后兼容旧响应,新版 SA API 必返 `None`。
+/// `cumulativeAmount` was removed from the spec ("only settle updates
+/// it"). The field is kept as `Option` for backwards compatibility with
+/// old responses; new SA API responses always have it as `None`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChannelStatus {
@@ -202,43 +208,48 @@ pub struct ChannelStatus {
     pub cumulative_amount: Option<String>,
 }
 
-// ==================== Settle / Close 请求 payload ====================
+// ==================== Settle / Close request payloads ====================
 //
-// SDK 主动发起的 settle / close 请求 body 形状（不带 challenge wrapper）:
+// Body shape for merchant-initiated settle / close requests (no challenge wrapper):
 // settle:
 //   { "action": "settle", "channelId", "cumulativeAmount", "voucherSignature",
 //     "payeeSignature", "nonce", "deadline" }
-// close: 同上;waiver 分支 voucherSignature 传空串 ""(server 同时认
-//   `cumulativeAmount ≤ settledOnChain` 或 `voucherSignature == ""` 触发 waiver)。
+// close: same shape; the waiver branch sends `voucherSignature: ""` (the
+// server triggers waiver on either `cumulativeAmount <= settledOnChain`
+// or `voucherSignature == ""`).
 
-/// `POST /session/settle` 请求 body。
+/// `POST /session/settle` request body.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettleRequestPayload {
-    /// 约定传 `"settle"`，服务端不强校验。
+    /// Conventionally `"settle"`. The server does not enforce this strictly.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub action: Option<String>,
 
-    /// 通道 ID（bytes32 hex，0x-prefixed）。
+    /// Channel ID (bytes32 hex, 0x-prefixed).
     pub channel_id: String,
 
-    /// 本次结算的累计金额（uint128 十进制字符串）。
+    /// Cumulative settle amount (uint128 decimal string).
     pub cumulative_amount: String,
 
-    /// EIP-712 Voucher 签名（payer / authorizedSigner 签）。65 字节 r‖s‖v hex。
+    /// EIP-712 Voucher signature (signed by payer / authorizedSigner).
+    /// 65-byte `r ‖ s ‖ v` hex.
     pub voucher_signature: String,
 
-    /// EIP-712 SettleAuthorization 签名（payee 签）。65 字节 r‖s‖v hex。
+    /// EIP-712 SettleAuthorization signature (signed by payee).
+    /// 65-byte `r ‖ s ‖ v` hex.
     pub payee_signature: String,
 
-    /// uint256 十进制字符串。`(payee, channelId, nonce)` 三元组在合约层为已用集。
+    /// uint256 decimal string. `(payee, channelId, nonce)` is the
+    /// contract-level used-set key.
     pub nonce: String,
 
-    /// 签名过期时间,uint256 十进制字符串(unix 秒;SDK 默认 `U256::MAX`)。
+    /// Signature expiry — uint256 decimal string (unix seconds; SDK
+    /// defaults to `U256::MAX`).
     pub deadline: String,
 }
 
-/// `POST /session/close` 请求 body。
+/// `POST /session/close` request body.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CloseRequestPayload {
@@ -248,11 +259,12 @@ pub struct CloseRequestPayload {
     pub channel_id: String,
     pub cumulative_amount: String,
 
-    /// EIP-712 Voucher 签名。普通分支:65 字节 r‖s‖v hex;waiver 分支
-    /// (`cumulativeAmount ≤ settledOnChain` 或 SDK 本地无 voucher)传空串 `""`。
+    /// EIP-712 Voucher signature. Normal branch: 65-byte `r ‖ s ‖ v` hex.
+    /// Waiver branch (`cumulativeAmount <= settledOnChain` or no local
+    /// voucher): empty string `""`.
     pub voucher_signature: String,
 
-    /// EIP-712 CloseAuthorization 签名（payee 签）。
+    /// EIP-712 CloseAuthorization signature (signed by payee).
     pub payee_signature: String,
 
     pub nonce: String,
@@ -298,7 +310,7 @@ mod tests {
 
     #[test]
     fn session_receipt_open_shape_no_spent() {
-        // Per [Pay] MPP EVM API 方案: open response has no "spent" field.
+        // Per the [Pay] MPP EVM API plan: open response has no "spent" field.
         let json = r#"{
             "method":"evm",
             "intent":"session",
@@ -411,7 +423,7 @@ mod tests {
         assert_eq!(json["voucherSignature"], "0xvoucher");
         assert_eq!(json["payeeSignature"], "0xpayee");
         assert_eq!(json["nonce"], "17890324512398");
-        // deadline 序列化为 String,与协议对齐(uint256 十进制字符串)。
+        // deadline serializes as String, matching the protocol (uint256 decimal string).
         assert!(json["deadline"].is_string());
     }
 
@@ -427,13 +439,13 @@ mod tests {
             deadline: "999".into(),
         };
         let json = serde_json::to_value(&p).unwrap();
-        assert!(json.get("action").is_none(), "action 为 None 时应省略");
+        assert!(json.get("action").is_none(), "action must be omitted when None");
         assert_eq!(json["channelId"], "0xabc");
     }
 
     #[test]
     fn session_receipt_accepts_minimal_shape() {
-        // 最小返回(不含 challengeId / acceptedCumulative / spent)
+        // Minimal response (no challengeId / acceptedCumulative / spent).
         let json = r#"{
             "method":"evm",
             "intent":"session",
@@ -461,6 +473,6 @@ mod tests {
         }"#;
         let s: ChannelStatus = serde_json::from_str(json).unwrap();
         assert_eq!(s.session_status, "OPEN");
-        assert!(s.cumulative_amount.is_none(), "cumulativeAmount 字段不返");
+        assert!(s.cumulative_amount.is_none(), "cumulativeAmount must not be returned");
     }
 }

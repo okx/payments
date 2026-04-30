@@ -1,41 +1,49 @@
-//! Nonce 分配 trait + 默认 UUID v4 实现。
+//! Nonce allocation trait + default UUID v4 implementation.
 //!
-//! 合约层 nonce 已用集 key = `(payee, channelId, nonce)`，重复使用以
-//! `NonceAlreadyUsed` revert。SDK 只负责分配「大概率没用过」的 nonce，
-//! **不追踪已用集**（合约本身就是权威）—— 因此 trait 只有 `allocate` 一个方法，
-//! 没有 `mark_used` 钩子。
+//! The contract's used-nonce set is keyed by `(payee, channelId, nonce)`;
+//! reuse reverts with `NonceAlreadyUsed`. The SDK is only responsible for
+//! allocating a "very likely unused" nonce — it **does not track the used
+//! set** (the contract is the source of truth). The trait therefore has a
+//! single `allocate` method, with no `mark_used` hook.
 //!
-//! 默认实现 `UuidNonceProvider` 用 UUID v4 → U256：
-//! - 128 位纯随机，碰撞概率约 2⁻¹²⁸（实际可视为零）
-//! - 无状态，多副本部署 / 进程重启都不会撞车
-//! - 不需要外部存储，即开即用
+//! The default `UuidNonceProvider` encodes UUID v4 as a U256:
+//! - 128 bits of pure randomness, collision probability ~2⁻¹²⁸ (effectively zero).
+//! - Stateless — safe across replicas and restarts.
+//! - No external storage required.
 //!
-//! 如需自定义（递增计数、外部 KMS、Redis 中心化分配等），实现 `NonceProvider`
-//! 后通过 `EvmSessionMethod::with_nonce_provider(...)` 注入即可。
+//! For custom strategies (incrementing counter, external KMS, central
+//! Redis allocator, ...), implement `NonceProvider` and inject via
+//! `EvmSessionMethod::with_nonce_provider(...)`.
 
 use alloy_primitives::{Address, B256, U256};
 use async_trait::async_trait;
 
 use crate::error::SaApiError;
 
-/// Nonce 分配 trait。
+/// Nonce allocation trait.
 ///
-/// 单一方法 `allocate`，返回一个**当前 (payee, channel_id) 三元组下未使用过**
-/// 的 uint256。是否「未使用过」由实现方保证（默认 UUID 随机方案靠概率，
-/// 持久化方案应查询已用记录）。
+/// One method, `allocate`, returns a uint256 that **has not been used
+/// for the current `(payee, channel_id)` pair**. Implementations decide
+/// how to ensure "not used" (the default UUID-random impl relies on
+/// probability; a persistent impl should consult its used-set).
 #[async_trait]
 pub trait NonceProvider: Send + Sync {
-    /// 为给定 `(payee, channel_id)` 分配一个 nonce。
+    /// Allocate a nonce for the given `(payee, channel_id)`.
     ///
-    /// 实现方应保证返回值在该 key 下未被消费过。失败时（例如外部存储不可用）
-    /// 返回 `SaApiError`，调用方将停止后续 settle / close 流程。
+    /// Implementations must guarantee the returned value has not been
+    /// consumed under this key. On failure (e.g. external storage
+    /// unavailable) return `SaApiError` — the caller will stop the
+    /// settle / close flow.
     async fn allocate(&self, payee: Address, channel_id: B256) -> Result<U256, SaApiError>;
 }
 
-/// 默认实现：UUID v4 编码为 U256（高 128 位补零，低 128 位为 UUID 字节）。
+/// Default implementation: UUID v4 encoded as a U256 (upper 128 bits
+/// zero, lower 128 bits = UUID bytes).
 ///
-/// 适合绝大多数场景：单进程 / 多副本 / 进程重启都安全（无状态）。
-/// 不适合「需要确定性序号 / 审计已用 nonce」的场景，那种需要自实现持久化版本。
+/// Suitable for nearly every deployment: safe across single-process,
+/// multi-replica, and restart scenarios (stateless). Not suitable for
+/// "deterministic sequence numbers / auditable used-nonce trail" needs —
+/// those require a persistent implementation.
 #[derive(Debug, Default, Clone)]
 pub struct UuidNonceProvider;
 
@@ -57,8 +65,10 @@ mod tests {
         let payee = Address::from([0x11u8; 20]);
         let channel_id = B256::from([0x22u8; 32]);
 
-        // 1000 次循环不允许碰撞。理论碰撞概率约 2⁻¹¹⁸（生日悖论，1000²/2¹²⁸），
-        // 实际可视为零。如果这个测试失败，要么 UUID 实现坏了，要么宇宙射线击中。
+        // 1000 iterations must not collide. Birthday-paradox collision
+        // probability ~2⁻¹¹⁸ (1000² / 2¹²⁸) — effectively zero. If this
+        // test fails, either the UUID impl is broken or you got hit by a
+        // cosmic ray.
         let mut seen = HashSet::new();
         for _ in 0..1000 {
             let nonce = provider.allocate(payee, channel_id).await.unwrap();
@@ -68,8 +78,10 @@ mod tests {
 
     #[tokio::test]
     async fn uuid_provider_ignores_payee_channel_input() {
-        // 默认实现是无状态的，input 不影响输出（除了避免实现方误用）。
-        // 不同 (payee, channel_id) 也产出独立随机值。
+        // The default impl is stateless — inputs don't influence outputs
+        // (kept in the signature only to keep the trait extensible).
+        // Different (payee, channel_id) pairs still produce independent
+        // random values.
         let provider = UuidNonceProvider;
         let payee_a = Address::from([0x11u8; 20]);
         let payee_b = Address::from([0x22u8; 20]);
@@ -83,9 +95,10 @@ mod tests {
 
     #[tokio::test]
     async fn uuid_nonce_fits_in_lower_128_bits() {
-        // UuidNonceProvider 的 nonce 必然 < 2^128（UUID 是 16 字节，
-        // 填充到 U256 低 128 位）。这点对合约无影响（合约接受任意 uint256），
-        // 但便于 SDK 端日志可读和上限检查。
+        // `UuidNonceProvider` nonces always fit in the lower 128 bits
+        // (UUID is 16 bytes, packed into the lower half of the U256).
+        // The contract accepts any uint256, but this keeps SDK logs
+        // readable and makes upper-bound checks easy.
         let provider = UuidNonceProvider;
         let nonce = provider
             .allocate(Address::ZERO, B256::ZERO)

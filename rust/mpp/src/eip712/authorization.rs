@@ -1,9 +1,10 @@
 //! EIP-712 SettleAuthorization / CloseAuthorization signing for the payee SDK.
 //!
-//! Mirrors mpp-rs `protocol/methods/tempo/voucher.rs` 的设计：
-//! - 用 `alloy::sol!` 定义 typed struct
-//! - `eip712_signing_hash` 算 digest（EIP-712 单一真源）
-//! - `Signer` trait 注入，私钥/KMS/Ledger 由调用方提供，SDK 不持有
+//! Mirrors the design of mpp-rs `protocol/methods/tempo/voucher.rs`:
+//! - Typed structs defined via `alloy::sol!`.
+//! - `eip712_signing_hash` computes the digest (single EIP-712 source of truth).
+//! - `Signer` trait injection — private keys / KMS / Ledger come from
+//!   the caller; the SDK never holds them.
 
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_signer::Signer;
@@ -13,8 +14,8 @@ use super::domain::{build_domain, DomainMeta};
 use crate::error::SaApiError;
 
 sol! {
-    /// EIP-712 typed struct, 与合约 `SettleAuthorization` 1:1 对齐。
-    /// 签名人 = `channel.payee`。
+    /// EIP-712 typed struct; matches the contract's `SettleAuthorization` 1:1.
+    /// Signer = `channel.payee`.
     #[derive(Debug)]
     struct SettleAuthorization {
         bytes32 channelId;
@@ -23,8 +24,9 @@ sol! {
         uint256 deadline;
     }
 
-    /// EIP-712 typed struct, 与合约 `CloseAuthorization` 1:1 对齐。
-    /// 签名人 = `channel.payee`，与 SettleAuthorization 共享 `(payee, channelId, nonce)` 已用集。
+    /// EIP-712 typed struct; matches the contract's `CloseAuthorization` 1:1.
+    /// Signer = `channel.payee`. Shares the `(payee, channelId, nonce)`
+    /// "used" set with SettleAuthorization.
     #[derive(Debug)]
     struct CloseAuthorization {
         bytes32 channelId;
@@ -34,10 +36,11 @@ sol! {
     }
 }
 
-/// 已签名的 SettleAuthorization / CloseAuthorization 输出。
+/// Signed SettleAuthorization / CloseAuthorization output.
 ///
-/// `signature` 为 65 字节 `(r, s, v)` 标准格式，禁用 EIP-2098 紧凑 64 字节。
-/// 由 alloy `Signer::sign_hash` 自动产出该格式，high-s 由合约层拒绝。
+/// `signature` is the standard 65-byte `(r, s, v)` format; EIP-2098
+/// compact 64-byte form is not allowed. alloy's `Signer::sign_hash`
+/// produces this format, and the contract layer rejects high-s.
 #[derive(Debug, Clone)]
 pub struct SignedAuthorization {
     pub channel_id: B256,
@@ -47,8 +50,8 @@ pub struct SignedAuthorization {
     pub signature: Bytes,
 }
 
-/// 共用签名路径:`Signer.sign_hash(digest)` + 包成 `SignedAuthorization`。
-/// `label` 仅用于错误信息,无业务意义。
+/// Shared signing path: `Signer.sign_hash(digest)` + wrap into
+/// `SignedAuthorization`. `label` is for error messages only.
 async fn sign_with_digest(
     signer: &(impl Signer + ?Sized),
     digest: alloy_primitives::B256,
@@ -71,14 +74,15 @@ async fn sign_with_digest(
     })
 }
 
-/// 用注入的 Signer 签 SettleAuthorization。
+/// Sign a SettleAuthorization with the injected Signer.
 ///
-/// `meta` 指定 EIP-712 domain 的 `name` / `version`(默认走 OKX 标准值,见
-/// [`DomainMeta::default`])。商户 fork 合约改了 domain 的话需传自定义 meta。
+/// `meta` selects the EIP-712 domain `name` / `version` (defaults to the
+/// OKX canonical values — see [`DomainMeta::default`]). Pass a custom
+/// meta if the merchant has forked the contract with a different domain.
 ///
-/// Signer 来源由调用方决定:
+/// The signer comes from the caller:
 /// - dev: `PrivateKeySigner::random()` / `from_str(env_var)`
-/// - 生产: KMS（如 `alloy_signer_aws::AwsSigner`）/ 硬件钱包（`alloy_signer_ledger::LedgerSigner`）
+/// - prod: KMS (`alloy_signer_aws::AwsSigner`) or hardware wallets (`alloy_signer_ledger::LedgerSigner`)
 pub async fn sign_settle_authorization(
     meta: &DomainMeta,
     signer: &(impl Signer + ?Sized),
@@ -109,8 +113,9 @@ pub async fn sign_settle_authorization(
     .await
 }
 
-/// 用注入的 Signer 签 CloseAuthorization。结构对称 `sign_settle_authorization`，
-/// 只换 typed struct 类型；共享 `sign_with_digest` 完成实际签名。
+/// Sign a CloseAuthorization with the injected Signer. Symmetric to
+/// `sign_settle_authorization` — only the typed struct differs; both
+/// share `sign_with_digest` for the actual signing.
 pub async fn sign_close_authorization(
     meta: &DomainMeta,
     signer: &(impl Signer + ?Sized),
@@ -156,7 +161,7 @@ mod tests {
     #[tokio::test]
     async fn sign_settle_authorization_produces_65_byte_sig() {
         let signer = fixture_signer();
-        let escrow = address!("eb18025208061781a287fFc2c1F31C03A24a24c0");
+        let escrow = address!("5E550002e64FaF79B41D89fE8439eEb1be66CE3b");
         let channel_id = b256!("6d0f4fdf1f2f6a1f6c1b0fbd6a7d5c2c0a8d3d7b1f6a9c1b3e2d4a5b6c7d8e9f");
 
         let signed = sign_settle_authorization(
@@ -181,7 +186,7 @@ mod tests {
     #[tokio::test]
     async fn sign_close_authorization_produces_65_byte_sig() {
         let signer = fixture_signer();
-        let escrow = address!("eb18025208061781a287fFc2c1F31C03A24a24c0");
+        let escrow = address!("5E550002e64FaF79B41D89fE8439eEb1be66CE3b");
         let channel_id = b256!("6d0f4fdf1f2f6a1f6c1b0fbd6a7d5c2c0a8d3d7b1f6a9c1b3e2d4a5b6c7d8e9f");
 
         let signed = sign_close_authorization(
@@ -201,12 +206,13 @@ mod tests {
         assert_eq!(signed.deadline, U256::MAX);
     }
 
-    /// SettleAuth 和 CloseAuth 是不同的 typed struct（typehash 不同），
-    /// 同样输入下产出的签名必然不同 —— 防止跨类型重用 nonce 时被替换攻击。
+    /// SettleAuth and CloseAuth are distinct typed structs (different
+    /// typehashes), so identical inputs must yield different signatures —
+    /// preventing cross-type substitution attacks when reusing a nonce.
     #[tokio::test]
     async fn settle_and_close_signatures_differ_for_same_inputs() {
         let signer = fixture_signer();
-        let escrow = address!("eb18025208061781a287fFc2c1F31C03A24a24c0");
+        let escrow = address!("5E550002e64FaF79B41D89fE8439eEb1be66CE3b");
         let channel_id = b256!("6d0f4fdf1f2f6a1f6c1b0fbd6a7d5c2c0a8d3d7b1f6a9c1b3e2d4a5b6c7d8e9f");
         let nonce = U256::from(7u64);
         let deadline = U256::from(1_800_000_000u64);
@@ -225,15 +231,15 @@ mod tests {
 
         assert_ne!(
             s1.signature, s2.signature,
-            "Settle 和 Close typed struct 不同，签名必须不同"
+            "Settle and Close are distinct typed structs; signatures must differ"
         );
     }
 
-    /// 同一签名人对相同输入签名是确定性的（ECDSA + RFC 6979）。
+    /// A single signer over identical inputs is deterministic (ECDSA + RFC 6979).
     #[tokio::test]
     async fn deterministic_signature_for_identical_input() {
         let signer = fixture_signer();
-        let escrow = address!("eb18025208061781a287fFc2c1F31C03A24a24c0");
+        let escrow = address!("5E550002e64FaF79B41D89fE8439eEb1be66CE3b");
         let channel_id = b256!("6d0f4fdf1f2f6a1f6c1b0fbd6a7d5c2c0a8d3d7b1f6a9c1b3e2d4a5b6c7d8e9f");
         let meta = DomainMeta::default();
 
@@ -265,11 +271,12 @@ mod tests {
         assert_eq!(s1.signature, s2.signature);
     }
 
-    /// 不同 DomainMeta(自定义 name/version)产出的签名跟 default 不同。
+    /// A different DomainMeta (custom name / version) must produce a
+    /// different signature than the default.
     #[tokio::test]
     async fn custom_meta_yields_different_signature() {
         let signer = fixture_signer();
-        let escrow = address!("eb18025208061781a287fFc2c1F31C03A24a24c0");
+        let escrow = address!("5E550002e64FaF79B41D89fE8439eEb1be66CE3b");
         let channel_id = b256!("6d0f4fdf1f2f6a1f6c1b0fbd6a7d5c2c0a8d3d7b1f6a9c1b3e2d4a5b6c7d8e9f");
 
         let default = DomainMeta::default();

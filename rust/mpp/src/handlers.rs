@@ -1,12 +1,14 @@
 //! Drop-in Axum handlers for session management endpoints.
 //!
 //! Provides canned implementations of:
-//! - `POST /session/settle` — 商户主动结算（用本地最新 voucher，SDK 本地签 SettleAuth）
-//! - `GET  /session/status` — 链上 channel 状态查询
+//! - `POST /session/settle` — merchant-driven settle (uses the latest
+//!   local voucher; SDK signs SettleAuth locally).
+//! - `GET  /session/status` — on-chain channel status query.
 //!
-//! 这些 handler 包装 [`EvmSessionMethod::settle_with_authorization`] /
-//! [`EvmSessionMethod::status`]，把 [`SaApiError`] / [`VerificationError`]
-//! 翻译成 HTTP 响应：
+//! These handlers wrap
+//! [`EvmSessionMethod::settle_with_authorization`] /
+//! [`EvmSessionMethod::status`], translating
+//! [`SaApiError`] / [`VerificationError`] into HTTP responses:
 //!
 //! ```ignore
 //! use axum::{routing::{post, get}, Router};
@@ -20,10 +22,12 @@
 //!     .with_state(session_method);
 //! ```
 //!
-//! 注：`POST /session/voucher` **不在** SDK handlers 提供 —— 业务层从自己的 402
-//! 路径接收 voucher 后调 [`EvmSessionMethod::submit_voucher`]。
-//! `POST /session/close` 走 mpp-rs 的 [`SessionMethod::verify_session`]
-//! 流程，由商户 server 把 PaymentCredential 喂进框架，无需独立 handler。
+//! Note: `POST /session/voucher` is **not** provided here. After
+//! receiving a voucher from your own 402 path, the business layer should
+//! call [`EvmSessionMethod::submit_voucher`] directly.
+//! `POST /session/close` flows through mpp-rs's
+//! [`SessionMethod::verify_session`]; the merchant server feeds a
+//! `PaymentCredential` to the framework, so no standalone handler is needed.
 
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
@@ -36,8 +40,10 @@ use crate::session_method::EvmSessionMethod;
 
 /// Body for `POST /session/settle`.
 ///
-/// 仅需 channelId — 累计金额、payer 签名都从 SDK 本地 store 取（`submit_voucher`
-/// 阶段已存）。商户自己的鉴权（哪个 channel 归哪个商户）应该在 handler 之外做。
+/// Only `channelId` is required — cumulative amount and payer signature
+/// come from the SDK's local store (saved during `submit_voucher`). The
+/// merchant's own authorization (which channel belongs to which
+/// merchant) should be handled outside this handler.
 #[derive(Debug, Clone, Deserialize)]
 pub struct SettleBody {
     #[serde(rename = "channelId")]
@@ -51,9 +57,11 @@ pub struct StatusQuery {
     pub channel_id: String,
 }
 
-/// 把 `SaApiError` 转成对应的 HTTP 响应:状态码走 `to_problem_details`(70010 → 404,
-/// 70008 → 410,70004 → 401,etc.),body 用 `Display` 文本。商户需要 RFC 9457 JSON
-/// body 时,可直接调底层 `EvmSessionMethod` 自行组装响应。
+/// Convert `SaApiError` to an HTTP response: status code is derived
+/// from `to_problem_details` (70010 → 404, 70008 → 410, 70004 → 401, ...);
+/// the body uses the `Display` text. Merchants who want an RFC 9457
+/// JSON body can call the underlying `EvmSessionMethod` directly and
+/// build their own response.
 fn error_response(err: crate::error::SaApiError) -> Response {
     let problem = err.to_problem_details(None);
     let status = StatusCode::from_u16(problem.status)
@@ -63,10 +71,11 @@ fn error_response(err: crate::error::SaApiError) -> Response {
 
 /// Axum handler: `POST /session/settle`.
 ///
-/// Body: `{"channelId": "0x..."}`. 成功返回 SA API 的 [`SessionReceipt`] 200。
-/// 失败按 [`SaApiError`] 映射到 RFC 9457 ProblemDetails 的 HTTP 状态码,body
-/// 是错误 message 文本。商户需要 problem+json 体可直接调
-/// [`EvmSessionMethod::settle_with_authorization`]。
+/// Body: `{"channelId": "0x..."}`. On success returns SA API's
+/// [`SessionReceipt`] with HTTP 200. On failure, [`SaApiError`] maps to
+/// the RFC 9457 ProblemDetails HTTP status; the body is the error
+/// message text. Merchants who want a problem+json body can call
+/// [`EvmSessionMethod::settle_with_authorization`] directly.
 ///
 /// [`SessionReceipt`]: crate::types::SessionReceipt
 /// [`SaApiError`]: crate::error::SaApiError
@@ -178,12 +187,13 @@ mod tests {
         }
     }
 
-    /// 32 字节 channel_id（hex with 0x），固定值便于断言。
+    /// 32-byte channel_id (hex with 0x); fixed value for predictable asserts.
     const CHANNEL_ID: &str = "0x1111111111111111111111111111111111111111111111111111111111111111";
-    /// 65 字节假签名 — 仅占位，handler 测试不验签（settle 不会再校 voucher，只读 store）。
+    /// 65-byte fake signature — placeholder only; handler tests don't
+    /// verify (settle no longer re-checks the voucher; it just reads the store).
     const FAKE_VOUCHER_SIG: &str = "0x";
 
-    /// 构造一个已注入 signer + 预置 voucher 的 EvmSessionMethod。
+    /// Build an `EvmSessionMethod` with an injected signer and a preloaded voucher.
     async fn build_method(sa: Arc<MockSa>) -> Arc<EvmSessionMethod> {
         let signer = PrivateKeySigner::random();
         let payee = signer.address();
@@ -239,7 +249,7 @@ mod tests {
         assert_eq!(parsed.channel_id, CHANNEL_ID);
         assert_eq!(parsed.accepted_cumulative.as_deref(), Some("1000"));
 
-        // SDK 应该已经填好 payeeSignature / nonce / deadline
+        // The SDK should have populated payeeSignature / nonce / deadline.
         let captured = sa.last_settle.lock().unwrap().clone().unwrap();
         assert_eq!(captured.cumulative_amount, "1000");
         assert!(captured.payee_signature.starts_with("0x"));
@@ -251,7 +261,7 @@ mod tests {
     #[tokio::test]
     async fn settle_unknown_channel_returns_500_with_70010() {
         let sa = Arc::new(MockSa::default());
-        // 注：不预置 ChannelRecord，store get 会 miss
+        // Note: no ChannelRecord preloaded — store get will miss.
         let signer = PrivateKeySigner::random();
         let method = EvmSessionMethod::new(sa).with_signer(signer);
         let app = router(Arc::new(method));
@@ -286,7 +296,7 @@ mod tests {
         let parsed: ChannelStatus = serde_json::from_slice(&body).unwrap();
         assert_eq!(parsed.channel_id, CHANNEL_ID);
         assert_eq!(parsed.session_status, "OPEN");
-        // cumulative_amount 字段不再返回
+        // The `cumulative_amount` field is no longer returned.
         assert!(parsed.cumulative_amount.is_none());
     }
 

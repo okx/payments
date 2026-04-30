@@ -1,58 +1,67 @@
-//! `EvmChargeChallenger` —— upstream `mpp::server::axum::ChargeChallenger` trait
-//! 的 EVM + SA API 实现，让用户的 axum handler 可以直接用 `MppCharge<C>` 提取器
-//! 和 `WithReceipt<T>` 响应包装，零样板。
+//! `EvmChargeChallenger` — EVM + SA API implementation of the upstream
+//! `mpp::server::axum::ChargeChallenger` trait. Lets axum handlers use
+//! `MppCharge<C>` extractors and `WithReceipt<T>` response wrappers with
+//! zero boilerplate.
 //!
-//! 上游 `impl ChargeChallenger for Mpp<TempoChargeMethod<P>, S>` 是 Tempo 的，
-//! `impl ChargeChallenger for Mpp<StripeChargeMethod, S>` 是 Stripe 的。这两个
-//! 都没覆盖 OKX X Layer + SA API 的场景，所以我们自己 impl。
+//! Upstream ships `impl ChargeChallenger for Mpp<TempoChargeMethod<P>, S>`
+//! and `impl ChargeChallenger for Mpp<StripeChargeMethod, S>`, but neither
+//! covers the OKX X Layer + SA API path, so we provide our own impl.
 //!
-//! 上游注释明文留了这个扩展口（`src/server/axum.rs:239-240`）：
+//! Upstream documents this extension hook explicitly
+//! (`src/server/axum.rs:239-240`):
 //!
 //! > Implemented automatically for `Mpp<TempoChargeMethod<P>, S>` when the
-//! > `tempo` feature is enabled. **Can also be implemented manually for custom
-//! > payment methods.**
+//! > `tempo` feature is enabled. **Can also be implemented manually for
+//! > custom payment methods.**
 //!
-//! # 实现要点
+//! # Implementation notes
 //!
-//! - **内部持 `Mpp<EvmChargeMethod>`**：`verify_payment` 直接委托给
-//!   `Mpp::verify_credential`，自动做 HMAC 校验（防 challenge_id 伪造）和
-//!   过期检查 —— 跟 upstream Tempo / Stripe 的安全保证对等。
-//! - **EVM 特有字段独立持有**：`currency / recipient / chain_id / fee_payer`
-//!   是 EVM 后端的服务级配置，upstream `Mpp<M>` 结构里的同名字段是为 tempo
-//!   helper 服务的（`Mpp::charge()` 等），EVM 后端不走那些 helper，所以我们
-//!   在本结构里自己存。
-//! - **`secret_key` 重复存一份用于签 challenge**：upstream `Mpp<M>.secret_key`
-//!   没有 public getter，签 challenge 时我们需要一份；构造器里同时写给两处，
-//!   保证一致。
+//! - **Holds an internal `Mpp<EvmChargeMethod>`.** `verify_payment`
+//!   delegates to `Mpp::verify_credential`, which automatically does HMAC
+//!   verification (preventing challenge_id forgery) and expiry checks —
+//!   the same security guarantees as upstream Tempo / Stripe.
+//! - **EVM-specific fields stored separately.** `currency / recipient /
+//!   chain_id / fee_payer` are EVM-backend service-level configuration.
+//!   The fields with the same names on upstream `Mpp<M>` exist for the
+//!   Tempo helpers (`Mpp::charge()` and friends), which the EVM backend
+//!   does not use, so we keep our own copies here.
+//! - **`secret_key` is duplicated for challenge signing.** Upstream
+//!   `Mpp<M>.secret_key` has no public getter, but we need one to sign
+//!   challenges. The constructor writes it to both places to keep them in
+//!   sync.
 //!
-//! # `amount` 单位约定
+//! # `amount` unit conventions
 //!
-//! `ChargeConfig::amount()` 返回的字符串, 直接作为 `ChargeRequest.amount` 字段传给
-//! 客户端, 必须是**base units 整数字符串**（MPP 协议规范硬性要求）：
+//! `ChargeConfig::amount()`'s string is forwarded directly to
+//! `ChargeRequest.amount` and **must be a base-units integer string** —
+//! MPP protocol spec hard requirement:
 //!
 //! > `amount` MUST be a base-10 integer string with no sign, decimal point,
 //! > exponent, or surrounding whitespace.
 //!
-//! 例如 pathUSD (6 decimals) 下 0.01 pathUSD 写 `"10000"`, 不是 `"0.01"`。
+//! Example: pathUSD (6 decimals) `0.01 pathUSD` is `"10000"`, not `"0.01"`.
 //!
-//! upstream mpp-rs 的 doc 示例里写的是 `"0.01"`/`"1.00"` —— 那是 Tempo 后端特有的
-//! 约定（`TempoChargeMethod::charge_with_options` 内部做 dollar → base units 转换），
-//! 协议规范本身不允许 decimal point。本 EVM challenger 没做转换, 传进来什么就发出去什么,
-//! 所以**请写 base units**。
+//! Upstream mpp-rs doc examples show `"0.01"` / `"1.00"`, but that's a
+//! Tempo-backend convention (`TempoChargeMethod::charge_with_options`
+//! internally converts dollars to base units). The protocol spec itself
+//! disallows decimal points. This EVM challenger does not convert — it
+//! forwards the string as-is — so **always pass base units**.
 //!
-//! # 设计要点（对齐 spec §3 #5）
+//! # Design notes (per spec §3 #5)
 //!
-//! - **全局 state 放在 `EvmChargeChallenger` 本身**：`currency` / `recipient` /
-//!   `chain_id` / `fee_payer` / `realm` / `secret_key` 都是跨所有路由不变的
-//!   服务级参数，构造时一次性传入。
-//! - **per-route 参数通过 `ChargeConfig` trait 承载**：`amount` 和 `description`
-//!   由各路由自己实现 `impl ChargeConfig for OneCent` 定义，由 `MppCharge<C>`
-//!   在每次请求时传给 `challenge()`。
-//! - 一个 `EvmChargeChallenger` 实例服务所有 MPP 路由。
+//! - **Global state lives on `EvmChargeChallenger`**: `currency` /
+//!   `recipient` / `chain_id` / `fee_payer` / `realm` / `secret_key` are
+//!   service-level parameters that don't vary across routes, set once at
+//!   construction.
+//! - **Per-route parameters come through the `ChargeConfig` trait**:
+//!   `amount` and `description` are defined by each route's
+//!   `impl ChargeConfig for OneCent`, passed to `challenge()` on every
+//!   request by `MppCharge<C>`.
+//! - One `EvmChargeChallenger` instance serves all MPP routes.
 //!
-//! # 用法
+//! # Usage
 //!
-//! ## struct-literal 风格
+//! ## Struct-literal style
 //!
 //! ```no_run
 //! use std::sync::Arc;
@@ -73,7 +82,7 @@
 //! let _: Arc<dyn ChargeChallenger> = Arc::new(challenger);
 //! ```
 //!
-//! ## builder 风格（对齐 upstream `Mpp::new(..).with_session_method(..)` 链式）
+//! ## Builder style (matches upstream `Mpp::new(..).with_session_method(..)`)
 //!
 //! ```no_run
 //! use std::sync::Arc;
@@ -100,62 +109,67 @@ use crate::challenge::{build_charge_challenge, charge_request_with};
 use crate::charge_method::EvmChargeMethod;
 use crate::types::{ChargeMethodDetails, ChargeSplit};
 
-/// 构造 `EvmChargeChallenger` 所需的配置（struct-literal 风格）。
+/// Configuration for `EvmChargeChallenger` (struct-literal style).
 ///
-/// 全部字段都是**跨路由共享的服务级参数**。per-route 的 `amount` / `description`
-/// 不在这里 —— 那两个由用户定义的 `impl ChargeConfig for C` 提供。
+/// All fields are **service-level parameters shared across routes**.
+/// Per-route `amount` / `description` belong in the user-defined
+/// `impl ChargeConfig for C`, not here.
 pub struct EvmChargeChallengerConfig {
-    /// EVM 方法实例, 内部持 SA API client (典型为 `OkxSaApiClient`)。
+    /// EVM method instance, holding the SA API client (typically `OkxSaApiClient`).
     pub charge_method: EvmChargeMethod,
-    /// ERC-20 合约地址（收款代币），40-hex。
+    /// ERC-20 contract address (the payment token), 40-hex.
     pub currency: String,
-    /// 收款地址，40-hex。
+    /// Recipient address, 40-hex.
     pub recipient: String,
-    /// 链 ID（X Layer = 196）。
+    /// Chain ID (X Layer = 196).
     pub chain_id: u64,
-    /// 是否由服务端代付 gas。`None` 表示不设置（上游默认行为）。
+    /// Whether the server pays gas. `None` means unset (upstream default).
     pub fee_payer: Option<bool>,
-    /// MPP auth realm（放在 `WWW-Authenticate: Payment realm=...`）。
+    /// MPP auth realm (used in `WWW-Authenticate: Payment realm=...`).
     pub realm: String,
-    /// 签 challenge id 的 HMAC 密钥，服务端需一致。
+    /// HMAC key for signing challenge ids; the server must use the same value consistently.
     pub secret_key: String,
-    /// 分账列表（规范 §8.1 `ChargeMethodDetails.splits`）。
+    /// Splits list (spec §8.1 `ChargeMethodDetails.splits`).
     ///
-    /// 每个 split 写成 `ChargeSplit { amount, recipient, memo }`，金额是 base units
-    /// 整数字符串。约束：`sum(splits[].amount) < request.amount`，且 primary
-    /// `recipient` 必须保留非零余额（规范硬性要求，SA API 会兜底校验）。`None` 表示
-    /// 不启用分账。
+    /// Each entry is `ChargeSplit { amount, recipient, memo }` with the
+    /// amount as a base-units integer string. Constraints:
+    /// `sum(splits[].amount) < request.amount`, and the primary
+    /// `recipient` must keep a non-zero balance (spec hard requirement;
+    /// SA API enforces it). `None` disables splits.
     pub splits: Option<Vec<ChargeSplit>>,
 }
 
-/// EVM 后端 + SA API 的 `ChargeChallenger` 实现。
+/// `ChargeChallenger` implementation for the EVM backend + SA API.
 ///
-/// 用法见模块级文档。
+/// See the module-level docs for usage.
 #[derive(Clone)]
 pub struct EvmChargeChallenger {
     inner: Arc<Inner>,
 }
 
 struct Inner {
-    /// upstream 的 `Mpp<M>`，承担 HMAC+expiry 校验 (`verify_credential`) 和 realm/secret_key 存储。
+    /// Upstream `Mpp<M>`, which provides HMAC + expiry verification
+    /// (`verify_credential`) and stores realm / secret_key.
     mpp: Mpp<EvmChargeMethod>,
-    /// EVM 特有服务级配置。
+    /// EVM-specific service-level configuration.
     currency: String,
     recipient: String,
     chain_id: u64,
     fee_payer: Option<bool>,
-    /// **重复**持一份 `secret_key` 用于签发 challenge（upstream `Mpp::secret_key` 没 public getter）。
-    /// 构造器里保证跟 `mpp` 里的值一致。
+    /// **Duplicate** `secret_key` used to sign challenges (upstream
+    /// `Mpp::secret_key` has no public getter). The constructor keeps it
+    /// in sync with the one inside `mpp`.
     secret_key: String,
-    /// **重复**持一份 `realm` 用于签 challenge（可以通过 `mpp.realm()` 读, 但放一份省一次
-    /// 函数调用且增加可读性）。
+    /// **Duplicate** `realm` for challenge signing (also available via
+    /// `mpp.realm()`; a local copy saves a method call and improves readability).
     realm: String,
-    /// 分账列表（服务级配置，跨路由共享）。`None` / 空 `Vec` 均视为不启用。
+    /// Splits list (service-level config, shared across routes).
+    /// `None` / empty `Vec` both disable splits.
     splits: Option<Vec<ChargeSplit>>,
 }
 
 impl EvmChargeChallenger {
-    /// struct-literal 风格构造。
+    /// Struct-literal style constructor.
     pub fn new(cfg: EvmChargeChallengerConfig) -> Self {
         let mpp = Mpp::new(cfg.charge_method, cfg.realm.clone(), cfg.secret_key.clone());
         Self {
@@ -172,7 +186,8 @@ impl EvmChargeChallenger {
         }
     }
 
-    /// 链式 builder 构造，对齐 upstream `Mpp::new(..).with_session_method(..)` 风格。
+    /// Chained builder constructor, matching upstream
+    /// `Mpp::new(..).with_session_method(..)` style.
     pub fn builder(
         charge_method: EvmChargeMethod,
         realm: impl Into<String>,
@@ -191,10 +206,11 @@ impl EvmChargeChallenger {
     }
 }
 
-/// `EvmChargeChallenger` 链式 builder。
+/// Chained builder for `EvmChargeChallenger`.
 ///
-/// **必填**：`charge_method / realm / secret_key` 通过 `builder()` 入参传入；`currency /
-/// recipient / chain_id` 通过链式 setter 提供。`fee_payer` 可选。
+/// **Required**: `charge_method / realm / secret_key` via the `builder()`
+/// arguments; `currency / recipient / chain_id` via chained setters.
+/// `fee_payer` is optional.
 pub struct EvmChargeChallengerBuilder {
     charge_method: EvmChargeMethod,
     realm: String,
@@ -223,13 +239,15 @@ impl EvmChargeChallengerBuilder {
         self.fee_payer = Some(v);
         self
     }
-    /// 分账列表（规范 §8.1）。空 `Vec` 会被规范化为 `None`，避免发空数组给 SA API。
+    /// Splits list (spec §8.1). An empty `Vec` is normalized to `None`
+    /// so we never send an empty array to SA API.
     pub fn splits(mut self, v: Vec<ChargeSplit>) -> Self {
         self.splits = if v.is_empty() { None } else { Some(v) };
         self
     }
 
-    /// 收尾。如果 `currency / recipient / chain_id` 没 set, panic（缺必填字段是编程错误）。
+    /// Finalize. Panics if `currency / recipient / chain_id` aren't set
+    /// (missing a required field is a programmer error).
     pub fn build(self) -> EvmChargeChallenger {
         EvmChargeChallenger::new(EvmChargeChallengerConfig {
             charge_method: self.charge_method,
@@ -247,11 +265,12 @@ impl EvmChargeChallengerBuilder {
 }
 
 impl ChargeChallenger for EvmChargeChallenger {
-    /// 根据 per-route 的 `amount` 和服务级 state 合成 `PaymentChallenge`。
+    /// Assemble a `PaymentChallenge` from the per-route `amount` and
+    /// service-level state.
     ///
-    /// 组装链路:
-    /// 1. `ChargeMethodDetails { chain_id, fee_payer, ... }`       (EVM 方法特有字段)
-    /// 2. `charge_request_with(amount, currency, recipient, dtls)` (ChargeRequest, 含 method_details JSON)
+    /// Pipeline:
+    /// 1. `ChargeMethodDetails { chain_id, fee_payer, ... }`        (EVM method-specific fields)
+    /// 2. `charge_request_with(amount, currency, recipient, dtls)`  (`ChargeRequest`, with method_details JSON)
     /// 3. `build_charge_challenge(secret_key, realm, &request, expires=None, description)`
     fn challenge(
         &self,
@@ -280,17 +299,22 @@ impl ChargeChallenger for EvmChargeChallenger {
         )
     }
 
-    /// 解析凭证串 → 委托 upstream `Mpp::verify_credential`（**自动做 HMAC 校验 + expiry
-    /// 检查 + 回读 ChargeRequest + 调 method.verify**）→ 返回 `Receipt`。
+    /// Parse the credential string → delegate to upstream
+    /// `Mpp::verify_credential` (which **does HMAC verification + expiry
+    /// check + decodes the ChargeRequest + calls method.verify
+    /// automatically**) → return `Receipt`.
     ///
-    /// 相比早期直接调 `method.verify` 的实现, 这里的 HMAC 校验**防止客户端伪造
-    /// challenge_id 绕过服务端签发约束**（无 HMAC 的话, 攻击者可伪造任意 challenge
-    /// 把付费凭证送到 server, SA API 只验 EIP-3009 链上签名不管 challenge_id, 导致 replay 风险）。
+    /// Versus the earlier implementation that called `method.verify`
+    /// directly, the HMAC check here **prevents clients from forging
+    /// challenge_ids to bypass server-side issuance constraints**.
+    /// Without it, an attacker could forge any challenge and submit a
+    /// payment credential; SA API only checks the on-chain EIP-3009
+    /// signature and ignores challenge_id, which leaves a replay risk.
     fn verify_payment(
         &self,
         credential_str: &str,
     ) -> Pin<Box<dyn Future<Output = Result<Receipt, String>> + Send>> {
-        // 同步阶段: parse Authorization 头, 解出 credential (含 challenge + payload)。
+        // Sync phase: parse the Authorization header into a credential (challenge + payload).
         let credential = match parse_authorization(credential_str) {
             Ok(c) => c,
             Err(e) => {
@@ -299,7 +323,7 @@ impl ChargeChallenger for EvmChargeChallenger {
                 ))));
             }
         };
-        // 异步阶段: Mpp::verify_credential 内部做 verify_hmac_and_expiry → method.verify。
+        // Async phase: Mpp::verify_credential runs verify_hmac_and_expiry → method.verify.
         let mpp = self.inner.mpp.clone();
         Box::pin(async move {
             mpp.verify_credential(&credential)
@@ -319,8 +343,9 @@ mod tests {
     };
     use mpp::protocol::intents::ChargeRequest;
 
-    /// 测试专用 SA stub。`charge_settle` 返合成 receipt(reference 含 "MOCK"
-    /// 便于断言);其他方法 unreachable(本文件测试不会调到)。
+    /// Test-only SA stub. `charge_settle` returns a synthetic receipt
+    /// (`reference` contains "MOCK" for easy asserts); other methods are
+    /// `unreachable!()` since this file's tests don't exercise them.
     #[derive(Debug, Default)]
     struct StubSa;
 
@@ -445,8 +470,9 @@ mod tests {
 
     #[test]
     fn splits_flow_into_challenge_method_details() {
-        // 服务级配置的 splits 应通过 challenge() 进入 request.method_details.splits，
-        // 供客户端分别签 EIP-3009 分账授权。
+        // Service-level splits should flow through challenge() into
+        // request.method_details.splits, so the client can sign an
+        // EIP-3009 authorization for each split recipient.
         let sa = Arc::new(StubSa);
         let c = EvmChargeChallenger::builder(EvmChargeMethod::new(sa), "test.local", "test-secret")
             .currency("0x74b7F16337b8972027F6196A17a631aC6dE26d22")
@@ -482,7 +508,7 @@ mod tests {
 
     #[test]
     fn empty_splits_vec_is_normalized_to_none() {
-        // 空 Vec 不应发出空 splits 数组给客户端 / SA API。
+        // Empty Vec must not produce an empty splits array on the wire to client / SA API.
         let sa = Arc::new(StubSa);
         let c = EvmChargeChallenger::builder(EvmChargeMethod::new(sa), "test.local", "test-secret")
             .currency("0x74b7F16337b8972027F6196A17a631aC6dE26d22")
@@ -509,7 +535,8 @@ mod tests {
     #[tokio::test]
     async fn verify_valid_mock_credential_returns_receipt() {
         let c = test_challenger();
-        // 用 challenger 自己生成一个 challenge，id 是用我们 secret_key 签的，HMAC 校验能过
+        // Use the challenger itself to generate a challenge — the id is
+        // signed with our secret_key, so HMAC verification succeeds.
         let ch = c
             .challenge(
                 "100",
@@ -550,7 +577,8 @@ mod tests {
         assert!(receipt.reference.contains("MOCK"));
     }
 
-    /// 安全测试:伪造 challenge.id 绕开 HMAC 签发,应被 verify 拒绝。
+    /// Security check: a forged challenge.id that bypasses HMAC signing
+    /// must be rejected by verify.
     #[tokio::test]
     async fn verify_forged_challenge_id_is_rejected() {
         let c = test_challenger();
@@ -558,8 +586,9 @@ mod tests {
             .challenge("100", ChallengeOptions { description: None })
             .unwrap();
 
-        // 构造一个 credential,保留 challenge 的 realm/method/intent/request/expires,
-        // 但把 id 换成攻击者自造的值。verify 必须通过 HMAC 检测出 id 不匹配。
+        // Build a credential that keeps the challenge's
+        // realm/method/intent/request/expires but swaps `id` for an
+        // attacker-supplied value. Verify must detect the mismatch via HMAC.
         let forged = serde_json::json!({
             "challenge": {
                 "id": "attacker-forged-challenge-id",
@@ -585,7 +614,7 @@ mod tests {
             .verify_payment(&auth_header)
             .await
             .expect_err("forged challenge must be rejected by HMAC verify");
-        // upstream Mpp::verify_hmac_and_expiry 返回的 error 消息是 "Challenge ID mismatch - not issued by this server"
+        // Upstream Mpp::verify_hmac_and_expiry surfaces "Challenge ID mismatch - not issued by this server".
         assert!(
             err.to_lowercase().contains("challenge id mismatch")
                 || err.to_lowercase().contains("challenge_id")

@@ -2,12 +2,13 @@
 //!
 //! Verifies wire-format alignment between [`OkxSaApiClient`] and the SA API
 //! `/api/v6/pay/mpp/session/*` paths:
-//! - `/session/settle` — POST 扁平 payload(含 voucherSig/payeeSig/nonce/deadline)
-//! - `/session/close`  — POST 扁平 payload(同上字段)
-//! - `/session/status` — GET ?channelId=... → ChannelStatus(无 cumulativeAmount 字段)
+//! - `/session/settle` — POST flat payload (voucherSig / payeeSig / nonce / deadline).
+//! - `/session/close`  — POST flat payload (same fields).
+//! - `/session/status` — GET `?channelId=...` → `ChannelStatus` (no `cumulativeAmount`).
 //!
-//! 这些测试验证 SDK → SA API 的 HTTP 契约：路径、方法、body 字段名（camelCase）、
-//! 响应反序列化形状、SaApiError 映射。
+//! These tests cover the SDK → SA API HTTP contract: path, method,
+//! body field names (camelCase), response deserialization shape, and
+//! `SaApiError` mapping.
 
 use mpp_evm::{
     CloseRequestPayload, OkxSaApiClient, SaApiClient, SettleRequestPayload,
@@ -16,7 +17,7 @@ use serde_json::Value;
 use wiremock::matchers::{body_json, header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-/// 建一个连到 mock server 的客户端。
+/// Build a client wired to the mock server.
 fn client_for(server: &MockServer) -> OkxSaApiClient {
     OkxSaApiClient::with_base_url(
         server.uri(),
@@ -26,7 +27,7 @@ fn client_for(server: &MockServer) -> OkxSaApiClient {
     )
 }
 
-/// 标准 SA API 包装：`{ code: 0, data: {...}, msg: "" }`。
+/// Standard SA API envelope: `{ code: 0, data: {...}, msg: "" }`.
 fn sa_ok(data: Value) -> ResponseTemplate {
     ResponseTemplate::new(200).set_body_json(serde_json::json!({
         "code": 0,
@@ -81,7 +82,7 @@ fn close_payload(voucher_sig: &str) -> CloseRequestPayload {
 async fn settle_posts_camel_case_body_with_all_draft2_fields() {
     let server = MockServer::start().await;
     let payload = settle_payload();
-    // Spec: body 外层 wrap 一个 payload 字段
+    // Spec: outer object wraps a `payload` field.
     let expected_body: Value =
         serde_json::json!({ "payload": serde_json::to_value(&payload).unwrap() });
 
@@ -146,7 +147,7 @@ async fn close_with_voucher_sig_posts_payload() {
 #[tokio::test]
 async fn close_waiver_branch_accepts_empty_voucher_signature() {
     let server = MockServer::start().await;
-    // waiver path: payer 没有产生 voucher，cumulativeAmount=0，voucherSignature=""
+    // Waiver path: payer never produced a voucher → cumulativeAmount=0, voucherSignature="".
     let payload = CloseRequestPayload {
         action: Some("close".into()),
         channel_id: CHANNEL_ID.into(),
@@ -160,7 +161,7 @@ async fn close_waiver_branch_accepts_empty_voucher_signature() {
             .into(),
     };
 
-    // 关键断言：voucherSignature 必须以空串(非 null / 非省略)发送
+    // Key assertion: voucherSignature must go on the wire as an empty string (not null / not omitted).
     Mock::given(method("POST"))
         .and(path("/api/v6/pay/mpp/session/close"))
         .and(body_json(serde_json::json!({
@@ -207,7 +208,7 @@ async fn status_get_returns_channel_state_without_cumulative_amount() {
             "settledOnChain": "0",
             "sessionStatus": "OPEN",
             "remainingBalance": "999900000",
-            // cumulativeAmount 不在 status 响应中
+            // cumulativeAmount is not in the status response.
         })))
         .expect(1)
         .mount(&server)
@@ -258,8 +259,9 @@ async fn close_70008_channel_finalized_propagates() {
 async fn session_open_posts_credential_value_unchanged() {
     let server = MockServer::start().await;
 
-    // session_open 仍接 &serde_json::Value（透传 credential，body shape 由
-    // payer client 决定，包含 voucherSignature/authorizedSigner/salt 等字段）。
+    // session_open still takes `&serde_json::Value` (forwards the credential
+    // verbatim — body shape is decided by the payer client and includes
+    // fields like voucherSignature / authorizedSigner / salt).
     let credential = serde_json::json!({
         "challenge": { "id": "ch-open-1", "method": "evm" },
         "payload": {
