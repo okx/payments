@@ -3,12 +3,16 @@
 //! Implements the Adapter-pattern design from cross-language spec §1–§10.
 //! Spec principles (verbatim):
 //!
-//! 1. **Adapter 是薄壳**: only detect / get_challenge / wrap-inner-with-native;
-//!    真正的 verify/settle 由各 SDK 原生中间件完成。
-//! 2. **零侵入**: x402 not patched, MPP not patched, no upstream PR required.
-//! 3. **paymentrouter 层自产 402**: parallel `get_challenge` → multi-row 402.
-//! 4. **priority 升序串行 detect** (first-match-wins), challenge 生成并发。
-//! 5. 行为跨语言完全一致 (通过 conformance 验收)。
+//! 1. **Adapter is a thin shell**: only detect / get_challenge /
+//!    wrap-inner-with-native; the actual verify/settle is performed by
+//!    each SDK's native middleware.
+//! 2. **Zero intrusion**: x402 not patched, MPP not patched, no upstream
+//!    PR required.
+//! 3. **Router-level 402 synthesis**: parallel `get_challenge` →
+//!    multi-row 402.
+//! 4. **Ascending-priority serial detect** (first-match-wins), challenge
+//!    generation runs concurrently.
+//! 5. Cross-language behavior parity (verified by the conformance suite).
 //!
 //! # Quick start
 //!

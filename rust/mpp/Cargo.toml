@@ -51,14 +51,15 @@ thiserror.workspace = true
 tracing.workspace = true
 
 # EIP-712 signing & verification
-# 版本与 mpp-rs 间接拉入的版本严格对齐(子 crate v1.5.7,signer crate v2.0.1)。
-# 用 = 锁版本,避免出现两份不兼容的 alloy 共存。
+# Versions pinned to match the alloy crates that mpp-rs pulls in
+# transitively (sub-crates v1.5.7, signer crate v2.0.1). The `=` lock
+# avoids two incompatible alloy copies coexisting in the build graph.
 alloy-primitives   = "=1.5.7"   # Address / B256 / U256 / Bytes
 alloy-sol-types    = "=1.5.7"   # sol! / eip712_domain! / SolStruct
 alloy-signer       = "=2.0.1"   # Signer trait + Signature
 alloy-signer-local = "=2.0.1"   # PrivateKeySigner
 
-# Nonce 生成(UUID v4 → U256)
+# Nonce generation (UUID v4 → U256).
 uuid = { version = "1", features = ["v4"] }
 
 # Tower

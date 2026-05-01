@@ -4,7 +4,8 @@
 //! `x402_axum::PaymentMiddleware(inner)` — all hooks / resolver / timeout
 //! recovery / settle / PAYMENT-RESPONSE header injection run through the
 //! real x402-axum middleware wrapping the real handler. Spec §1 principle
-//! "零侵入 x402" satisfied: no x402 code is duplicated or reimplemented.
+//! "Zero intrusion into x402" satisfied: no x402 code is duplicated or
+//! reimplemented.
 //!
 //! For `get_challenge`, we invoke a *clone* of the same layer against a
 //! dummy inner service. With no payment header present, the middleware

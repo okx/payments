@@ -2,8 +2,8 @@
 //!
 //! When no adapter detected, we concurrently ask each adapter to produce its
 //! 402 challenge headers, then merge them into a single response with multiple
-//! same-name `WWW-Authenticate` rows (see spec §3 #3 / §9 "Challenge 合并" —
-//! no comma-concatenation).
+//! same-name `WWW-Authenticate` rows (see spec §3 #3 / §9 "Challenge
+//! merging" — no comma-concatenation).
 //!
 //! A single adapter failing (`Err(msg)`) or returning `None` does not block
 //! the others — remaining challenges still contribute. Per-adapter timeout is

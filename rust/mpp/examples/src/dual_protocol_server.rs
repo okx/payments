@@ -15,7 +15,7 @@
 //! # Running
 //!
 //! ```bash
-//! # 全部 MPP 凭证必填,x402 部分按需配置
+//! # All MPP credentials required; x402 vars are optional.
 //! export MPP_SA_URL=... MPP_SA_KEY=... MPP_SA_SECRET=... MPP_SA_PASSPHRASE=...
 //! export MPP_SECRET_KEY=... MPP_REALM=... MPP_CURRENCY=0x... MPP_RECIPIENT=0x...
 //! export X402_API_KEY=... X402_SECRET_KEY=... X402_PASSPHRASE=...
@@ -64,8 +64,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ------------- x402 side (optional) -------------
     //
-    // x402 requires a real facilitator to call `initialize()`. 没设置 x402 env
-    // 时 example 不挂 x402 adapter,只跑 MPP 单协议路径。
+    // x402 requires a real facilitator to call `initialize()`. When the
+    // x402 env vars are unset the example skips the x402 adapter and
+    // runs the MPP-only single-protocol path.
     let mut protocols: Vec<Arc<dyn ProtocolAdapter>> = vec![mpp_adapter];
     let mut x402_registered = false;
 

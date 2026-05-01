@@ -1,13 +1,17 @@
-//! MPP EVM Payment-Gated Photo Server —— ergonomic extractor 版。
+//! MPP EVM Payment-Gated Photo Server — ergonomic-extractor edition.
 //!
-//! 用 upstream `MppCharge<C>` extractor + `WithReceipt<T>` 响应包装 + 我们的
-//! `EvmChargeChallenger`（`impl ChargeChallenger`），彻底省掉手写 parse/verify/
-//! format_www_authenticate 的样板。整个 server 一屏就写完。
+//! Uses upstream `MppCharge<C>` extractor + `WithReceipt<T>` response
+//! wrapper + our `EvmChargeChallenger` (`impl ChargeChallenger`), which
+//! eliminates the boilerplate of hand-written parse / verify /
+//! format_www_authenticate. The whole server fits on one screen.
 //!
-//! 流程（对外 HTTP 行为跟旧版完全等价）：
-//! 1. `GET /photo` 无 Authorization → 402 + `WWW-Authenticate: Payment ...`
-//! 2. 客户端签 EIP-3009 → 带 `Authorization: Payment <base64url>` 重试
-//! 3. 服务端通过 SA API 验签 + 扣费 → 200 + `Payment-Receipt` header + 照片 URL
+//! Flow (HTTP behavior is identical to the older hand-rolled example):
+//! 1. `GET /photo` without Authorization → 402 +
+//!    `WWW-Authenticate: Payment ...`
+//! 2. Client signs an EIP-3009 voucher and retries with
+//!    `Authorization: Payment <base64url>`
+//! 3. Server verifies + deducts via SA API → 200 + `Payment-Receipt`
+//!    header + photo URL
 //!
 //! # Running (real SA API)
 //!
@@ -29,14 +33,16 @@ use mpp_evm::{EvmChargeChallenger, EvmChargeChallengerConfig, EvmChargeMethod, O
 use serde_json::{json, Value};
 
 // ---------------------------------------------------------------------------
-// 每路由价格 —— per-route config, 由 MppCharge<C> 在每次请求时拿 C::amount()
+// Per-route price — `MppCharge<C>` reads `C::amount()` on every request.
 // ---------------------------------------------------------------------------
 
-/// 100 base units of pathUSD (6 decimals) = 0.0001 pathUSD。
+/// 100 base units of pathUSD (6 decimals) = 0.0001 pathUSD.
 ///
-/// amount() 必须是 base units 整数字符串 —— MPP 协议规范强制要求 request 里的 amount
-/// 是 "base-10 integer string with no sign, decimal point, exponent"。不要写 "0.0001"
-/// 那种 dollar 风格（那是 upstream Tempo 后端内部做了转换才能用的, 协议规范本身不允许）。
+/// `amount()` MUST be a base-units integer string — the MPP protocol
+/// requires `request.amount` to be a "base-10 integer string with no
+/// sign, decimal point, or exponent". Do NOT write "0.0001" (a dollar-
+/// style decimal): that's an upstream Tempo backend convenience, not
+/// part of the protocol spec.
 struct OnePhoto;
 impl ChargeConfig for OnePhoto {
     fn amount() -> &'static str {
@@ -48,12 +54,14 @@ impl ChargeConfig for OnePhoto {
 }
 
 // ---------------------------------------------------------------------------
-// 业务 handler —— 付费验签过后 MppCharge<OnePhoto> 才会提取成功。
-// 用 WithReceipt 包装响应, 自动挂 Payment-Receipt header。
+// Business handler — `MppCharge<OnePhoto>` extracts only after the
+// payment is verified. `WithReceipt` wraps the response and attaches
+// the `Payment-Receipt` header automatically.
 // ---------------------------------------------------------------------------
 
 async fn photo(charge: MppCharge<OnePhoto>) -> WithReceipt<Json<Value>> {
-    // 固定返回一个示例 URL, 不发外网请求 (便于离线 / onchainos 联调环境跑通)
+    // Return a fixed sample URL with no outbound HTTP call, so this works
+    // in offline / onchainos integration environments.
     WithReceipt {
         receipt: charge.receipt,
         body: Json(json!({ "url": "https://picsum.photos/id/42/1024/1024.jpg" })),
@@ -65,7 +73,7 @@ async fn health() -> Json<Value> {
 }
 
 // ---------------------------------------------------------------------------
-// main: 装 challenger -> 挂到 axum state -> 起服务
+// main: build the challenger -> install it as axum state -> serve.
 // ---------------------------------------------------------------------------
 
 #[tokio::main]
@@ -108,7 +116,7 @@ async fn main() {
 }
 
 // ---------------------------------------------------------------------------
-// 环境装载 —— 全部 SA API 凭证 + 商户配置必填
+// Env loading — all SA API credentials and merchant config are required.
 // ---------------------------------------------------------------------------
 
 struct Env {

@@ -59,7 +59,7 @@ with either:
 
 Use upstream `MppCharge<C>` extractor + `WithReceipt<T>` response wrapper + our
 `EvmChargeChallenger` (`impl ChargeChallenger` for EVM + SA API). Handler
-boilerplate 近零。
+boilerplate is near zero.
 
 ```rust,no_run
 use axum::{routing::get, Json, Router};
@@ -75,7 +75,8 @@ impl ChargeConfig for OnePhoto {
     fn description() -> Option<&'static str> { Some("One photo") }
 }
 
-// 2. Handler —— extractor 成功说明已付款 + 已验签 + 未过期。WithReceipt 自动挂 Payment-Receipt header。
+// 2. Handler — successful extraction means paid + verified + not expired.
+//    `WithReceipt` attaches the `Payment-Receipt` header automatically.
 async fn photo(charge: MppCharge<OnePhoto>) -> WithReceipt<Json<Value>> {
     WithReceipt {
         receipt: charge.receipt,
@@ -83,7 +84,7 @@ async fn photo(charge: MppCharge<OnePhoto>) -> WithReceipt<Json<Value>> {
     }
 }
 
-// 3. 构造 challenger 挂到 axum state。
+// 3. Build the challenger and install it as axum state.
 #[tokio::main]
 async fn main() {
     let sa = Arc::new(OkxSaApiClient::new(
@@ -171,7 +172,7 @@ let ledger = LedgerSigner::new(HDPath::LedgerLive(0), Some(196)).await?;
 let method = EvmSessionMethod::new(sa_client).with_signer(ledger);
 ```
 
-### Custom remote signer (WalletConnect / 自建签名服务 / 任意 RPC)
+### Custom remote signer (WalletConnect / self-hosted signing service / any RPC)
 
 Implement `Signer` over your transport. The four methods below are the full surface SDK touches:
 
@@ -420,9 +421,9 @@ Sandbox tests require: `MPP_SA_SANDBOX_URL / _KEY / _SECRET / _PASSPHRASE`.
 
 ## References
 
-- MPP 集成方案 (spec §8 data model) —
+- MPP integration design (spec §8 data model) —
   https://okg-block.sg.larksuite.com/wiki/HVuEwbo3fiTndzkNAmKlZll5gdg
-- MPP EVM API 方案 —
+- MPP EVM API design —
   https://okg-block.sg.larksuite.com/wiki/OXbOwA4rviD3tQkUKIElaRRpgfe
 - mpp-rs upstream — https://github.com/tempoxyz/mpp-rs (v0.10)
 - mpp-specs — https://github.com/okx/mpp-specs

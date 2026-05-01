@@ -123,9 +123,10 @@ struct Config {
     escrow: String,
 }
 
-/// 装载 SA API client + Config + payee Signer。
+/// Load the SA API client, config, and payee signer from env.
 ///
-/// 所有 env var 都必填(包括 `MPP_MERCHANT_PRIVATE_KEY`,必须与 `MPP_RECIPIENT` 同地址)。
+/// All env vars are required (including `MPP_MERCHANT_PRIVATE_KEY`,
+/// whose address must equal `MPP_RECIPIENT`).
 fn load_client_and_config() -> (Arc<dyn SaApiClient>, Config, PrivateKeySigner) {
     let cfg = match load_config() {
         Ok(c) => c,
@@ -150,7 +151,8 @@ fn load_client_and_config() -> (Arc<dyn SaApiClient>, Config, PrivateKeySigner) 
         eprintln!("invalid MPP_MERCHANT_PRIVATE_KEY: {e}");
         std::process::exit(1);
     });
-    // signer/recipient mismatch 在 main 用 EvmSessionMethod::verify_payee fast-fail。
+    // signer/recipient mismatch is fast-failed in `main` via
+    // `EvmSessionMethod::verify_payee`.
     let client: Arc<dyn SaApiClient> = Arc::new(OkxSaApiClient::with_base_url(
         cfg.sa_url.clone(),
         cfg.sa_key.clone(),
@@ -205,7 +207,8 @@ async fn manage(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl 
                         Ok(receipt) => {
                             let respond_body = state.session_method.respond(&credential, &receipt);
                             // Management action (open / topUp / close): only respond body.
-                            // Voucher: respond body 含 spent/units,需与商户业务负载合并。
+                            // Voucher: respond body carries spent/units; merge it
+                            // into the merchant's business payload.
                             if action != "voucher" {
                                 if let Some(body) = respond_body {
                                     return (StatusCode::OK, Json(body)).into_response();
@@ -225,7 +228,8 @@ async fn manage(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl 
                             if let Some(serde_json::Value::Object(map)) = respond_body {
                                 let body_obj = body.as_object_mut().unwrap();
                                 for (k, v) in map {
-                                    // 不覆盖业务字段,只补缺失的 spent / units 等
+                                    // Don't overwrite business fields; only fill
+                                    // in missing keys (spent / units / etc.).
                                     body_obj.entry(k).or_insert(v);
                                 }
                             }
@@ -252,9 +256,11 @@ async fn manage(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl 
     }
 
     // No credential — issue a 402 session challenge.
-    // MPP_FEE_PAYER 控制 challenge 走哪种 open 模式:
-    //   true (默认):seller 兜底 broadcast,客户端发 EIP-3009 → transaction mode
-    //   false:客户端自己上链 broadcast,只回报 tx hash → hash mode
+    // MPP_FEE_PAYER selects which `open` mode the challenge requests:
+    //   true  (default): seller broadcasts on-chain; client signs an
+    //                    EIP-3009 voucher → transaction mode
+    //   false:           client broadcasts itself and reports the tx
+    //                    hash → hash mode
     let fee_payer = std::env::var("MPP_FEE_PAYER")
         .ok()
         .map(|v| !v.eq_ignore_ascii_case("false") && v != "0")

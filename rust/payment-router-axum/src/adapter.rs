@@ -1,4 +1,4 @@
-//! `ProtocolAdapter` trait — spec §3 薄壳 adapter.
+//! `ProtocolAdapter` trait — spec §3 thin-shell adapter.
 //!
 //! Each adapter does three things:
 //!
@@ -100,6 +100,6 @@ pub trait ProtocolAdapter: Send + Sync + 'static {
     /// Returned service is called only when `detect` returned `true` for the
     /// incoming request. Implementations must delegate to the native SDK
     /// middleware (x402-axum `PaymentMiddleware`, mpp-evm `EvmChargeChallenger`)
-    /// — spec §1 principle "Adapter 是薄壳".
+    /// — spec §1 principle "Adapter is a thin shell".
     fn make_service(&self, inner: InnerService) -> InnerService;
 }

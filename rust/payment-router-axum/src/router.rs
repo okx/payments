@@ -1,4 +1,4 @@
-//! Route matcher. Spec §9 路由匹配 + path normalization.
+//! Route matcher. Spec §9 route matching + path normalization.
 //!
 //! Contract (must match other-language implementations):
 //!
