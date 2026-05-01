@@ -29,11 +29,35 @@
 //! implementor — local key (`PrivateKeySigner`), AWS KMS, Ledger / Trezor,
 //! WalletConnect bridges, or merchant-defined wrappers. Internally stored as
 //! `Arc<dyn Signer + Send + Sync>` for sharing.
+//!
+//! ## Known limitations
+//!
+//! ### topUp partial failure leaves stale local deposit
+//!
+//! `handle_topup` forwards the credential to SA first (which broadcasts
+//! the on-chain top-up), then increments the local `deposit` counter.
+//! If the local update fails — typically because the in-memory record
+//! was lost on SDK restart and the merchant has not configured a
+//! persistent [`SessionStore`] — the on-chain state is updated but the
+//! local cap is stale. Subsequent vouchers may then be rejected by the
+//! local guard `cumulativeAmount > deposit` (70012) even though the
+//! on-chain deposit would cover them.
+//!
+//! Mitigations:
+//! 1. Run a persistent `SessionStore` impl in production so restarts
+//!    don't drop records.
+//! 2. If a stale local cap is suspected, the merchant can re-fetch
+//!    on-chain state via `session_status` and rebuild the
+//!    `ChannelRecord` manually (no auto-recovery built in — the SDK
+//!    does not call `session_status` from `handle_topup` to avoid
+//!    masking other errors).
+//!
+//! A `refresh_from_chain` helper is on the roadmap.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex as StdMutex};
 
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_signer::Signer;
 use tokio::sync::Mutex as AsyncMutex;
 
@@ -269,6 +293,43 @@ impl EvmSessionMethod {
         self.sa_client.session_status(channel_id).await
     }
 
+    /// Verify the locally computed EIP-712 domain separator matches the
+    /// on-chain `domainSeparator()` view return value. (H8)
+    ///
+    /// Pass the `bytes32` returned from
+    /// `EvmPaymentChannel.domainSeparator()` (called via your own RPC
+    /// provider — the SDK intentionally does not bundle an RPC client).
+    /// Mismatch → 8000 with details on what diverged. Run this once at
+    /// startup before signing anything; an undetected mismatch means
+    /// **every** voucher / settle / close signature will be invalid
+    /// against the contract.
+    ///
+    /// ```ignore
+    /// // Pseudocode — fetch via your own provider:
+    /// let on_chain: B256 = provider
+    ///     .call(escrow_addr, "domainSeparator()")
+    ///     .await?;
+    /// session_method.assert_domain_matches(on_chain)?;
+    /// ```
+    pub fn assert_domain_matches(&self, on_chain: B256) -> Result<(), SaApiError> {
+        let method_details = crate::session_method::decode::decode_method_details(
+            self.method_details.as_ref(),
+        )?;
+        let escrow = crate::session_method::decode::parse_address(&method_details.escrow_contract)?;
+        let domain = crate::eip712::build_domain(&self.domain_meta, method_details.chain_id, escrow);
+        let computed = domain.separator();
+        if computed != on_chain {
+            return Err(SaApiError::new(
+                8000,
+                format!(
+                    "EIP-712 domain separator mismatch — computed {computed:#x} != on-chain {on_chain:#x}; \
+                     check chain_id / escrow_contract / DomainMeta(name,version) against the deployed contract"
+                ),
+            ));
+        }
+        Ok(())
+    }
+
     // ===================== submit_voucher (local processing, 9-step guards) =====================
 
     /// Process a voucher locally: verify signature + atomically update
@@ -288,9 +349,23 @@ impl EvmSessionMethod {
         cumulative_amount: u128,
         signature: Bytes,
     ) -> Result<(), SaApiError> {
-        // A. Per-channel lock.
+        // Public entry: acquire the per-channel lock, then run the lock-held core.
         let _guard = self.channel_locks.lock(channel_id).await;
+        self.submit_voucher_locked(channel_id, cumulative_amount, signature)
+            .await
+    }
 
+    /// Lock-held core of [`submit_voucher`]. Caller MUST already hold the
+    /// per-channel lock from `self.channel_locks.lock(channel_id)`. Use
+    /// this when chaining multiple operations under a single lock (e.g.
+    /// [`handle_voucher`](super::handlers) submits + deducts in one
+    /// critical section to avoid the H3.c partial-update race).
+    pub(super) async fn submit_voucher_locked(
+        &self,
+        channel_id: &str,
+        cumulative_amount: u128,
+        signature: Bytes,
+    ) -> Result<(), SaApiError> {
         // B. Load the local record (miss → 70010; no auto-recovery — see module note #5).
         let channel = self
             .store
@@ -372,7 +447,18 @@ impl EvmSessionMethod {
         channel_id: &str,
         amount: u128,
     ) -> Result<ChannelRecord, SaApiError> {
+        // Public entry: acquire the per-channel lock, then run the lock-held core.
         let _guard = self.channel_locks.lock(channel_id).await;
+        self.deduct_from_channel_locked(channel_id, amount).await
+    }
+
+    /// Lock-held core of [`deduct_from_channel`]. Caller MUST already hold
+    /// the per-channel lock. See [`submit_voucher_locked`] for rationale.
+    pub(super) async fn deduct_from_channel_locked(
+        &self,
+        channel_id: &str,
+        amount: u128,
+    ) -> Result<ChannelRecord, SaApiError> {
         let updater: ChannelUpdater = Box::new(move |c: &mut ChannelRecord| {
             let available = c
                 .highest_voucher_amount
@@ -469,7 +555,24 @@ impl EvmSessionMethod {
         cumulative_amount: Option<u128>,
         provided_voucher_sig: Option<Bytes>,
     ) -> Result<SessionReceipt, SaApiError> {
+        // Public entry: acquire the per-channel lock, then run the lock-held core.
         let _guard = self.channel_locks.lock(channel_id).await;
+        self.close_with_authorization_locked(channel_id, cumulative_amount, provided_voucher_sig)
+            .await
+    }
+
+    /// Lock-held core of [`close_with_authorization`]. Caller MUST already
+    /// hold the per-channel lock. Use this when an outer handler (e.g.
+    /// [`handle_close`](super::handlers)) needs to do verification +
+    /// close under the same critical section to avoid the H3 TOCTOU
+    /// where another voucher could land between the verify and the
+    /// close lock acquisition.
+    pub(super) async fn close_with_authorization_locked(
+        &self,
+        channel_id: &str,
+        cumulative_amount: Option<u128>,
+        provided_voucher_sig: Option<Bytes>,
+    ) -> Result<SessionReceipt, SaApiError> {
         let signer = self
             .signer
             .as_ref()
@@ -1152,6 +1255,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn assert_domain_matches_accepts_correct_separator() {
+        let method = EvmSessionMethod::new(Arc::new(StubSa::default()))
+            .with_typed_method_details(SessionMethodDetails {
+                chain_id: 196,
+                escrow_contract: "0x5E550002e64FaF79B41D89fE8439eEb1be66CE3b".into(),
+                channel_id: None,
+                min_voucher_delta: None,
+                fee_payer: None,
+                splits: None,
+            })
+            .unwrap();
+        // Compute the local separator the same way the SDK will, then
+        // verify assert_domain_matches accepts it.
+        let escrow = address!("5E550002e64FaF79B41D89fE8439eEb1be66CE3b");
+        let computed = crate::eip712::build_domain(&DomainMeta::default(), 196, escrow).separator();
+        method.assert_domain_matches(computed).expect("domain match");
+    }
+
+    #[tokio::test]
+    async fn assert_domain_matches_rejects_wrong_separator() {
+        let method = EvmSessionMethod::new(Arc::new(StubSa::default()))
+            .with_typed_method_details(SessionMethodDetails {
+                chain_id: 196,
+                escrow_contract: "0x5E550002e64FaF79B41D89fE8439eEb1be66CE3b".into(),
+                channel_id: None,
+                min_voucher_delta: None,
+                fee_payer: None,
+                splits: None,
+            })
+            .unwrap();
+        let bogus = B256::from([0xffu8; 32]);
+        let err = method.assert_domain_matches(bogus).unwrap_err();
+        assert_eq!(err.code, 8000);
+        assert!(err.msg.contains("domain separator mismatch"));
+    }
+
+    #[tokio::test]
     async fn close_rejects_cum_below_local_highest() {
         let method = EvmSessionMethod::new(Arc::new(StubSa::default()))
             .with_signer(fixture_signer());
@@ -1428,6 +1568,46 @@ mod tests {
             err.to_string().contains("greater than 0"),
             "unexpected error: {}",
             err
+        );
+    }
+
+    /// Review #4 regression: topup against a channel with no local record
+    /// must fail BEFORE calling SA, so on-chain state and local state
+    /// don't diverge. StubSa's `session_top_up` is `unreachable!()`, so
+    /// reaching it would panic the test.
+    #[tokio::test]
+    async fn topup_pre_flight_rejects_when_local_record_missing() {
+        let method = EvmSessionMethod::new(Arc::new(StubSa::default()))
+            .with_signer(fixture_signer());
+        let cred = PaymentCredential {
+            challenge: ChallengeEcho {
+                id: "ch-pf".into(),
+                realm: "test".into(),
+                method: "evm".into(),
+                intent: "session".into(),
+                request: Base64UrlJson::from_value(&serde_json::json!({})).unwrap(),
+                expires: None,
+                digest: None,
+                opaque: None,
+            },
+            source: None,
+            payload: serde_json::json!({
+                "action": "topUp",
+                "channelId": "0xnotinstore",
+                "additionalDeposit": "1000",
+            }),
+        };
+        let err = method
+            .verify_session(&cred, &dummy_request())
+            .await
+            .unwrap_err();
+        // Error surfaces as 70010 channel-not-found semantics — message
+        // mentions "channel not found" plus our "before SA broadcast" hint.
+        let msg = err.to_string();
+        assert!(
+            msg.contains("channel not found")
+                && msg.to_lowercase().contains("before sa"),
+            "expected pre-flight 70010 message, got: {msg}",
         );
     }
 }

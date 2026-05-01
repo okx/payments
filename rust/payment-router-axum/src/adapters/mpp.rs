@@ -14,9 +14,10 @@
 //! 4. On failure / missing: return 402 with `WWW-Authenticate: Payment ...`
 //!    built from upstream `format_www_authenticate`.
 
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
 use axum::body::Body;
@@ -29,13 +30,20 @@ use serde_json::Value;
 use tower::util::BoxCloneSyncService;
 use tower::{Service, ServiceExt};
 
-use crate::adapter::{ChallengeFuture, InnerService, ProtocolAdapter};
+use crate::adapter::{ChallengeFuture, ChallengeResponse, InnerService, ProtocolAdapter};
 
 /// MPP adapter. Spec §9: built-in priority = 10 (tried before x402).
 #[derive(Clone)]
 pub struct MppAdapter {
     challenger: Arc<dyn ChargeChallenger>,
     priority: u32,
+    /// Lazily-leaked `description` cache. Upstream
+    /// `ChallengeOptions::description` is `Option<&'static str>`, so we have
+    /// to leak. Caching by source string bounds total leaked memory by the
+    /// number of *distinct* descriptions across route configs (typically
+    /// proportional to route count) — without it, every unauthorized request
+    /// would leak the description anew, giving attackers an OOM DoS vector.
+    description_cache: Arc<Mutex<HashMap<String, &'static str>>>,
 }
 
 impl MppAdapter {
@@ -44,6 +52,7 @@ impl MppAdapter {
         Self {
             challenger,
             priority: 10,
+            description_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -85,6 +94,7 @@ impl ProtocolAdapter for MppAdapter {
     ) -> ChallengeFuture<'a> {
         let challenger = self.challenger.clone();
         let route_cfg = route_cfg.clone();
+        let description_cache = self.description_cache.clone();
         Box::pin(async move {
             let amount = route_cfg
                 .get("amount")
@@ -94,11 +104,16 @@ impl ProtocolAdapter for MppAdapter {
                 .get("description")
                 .and_then(|v| v.as_str())
                 .map(|s| {
-                    // Upstream `ChallengeOptions::description` is `&'static str`.
-                    // Leak a copy so we don't have to plumb lifetimes through
-                    // every call site. Router configs are built once at
-                    // startup; leak is one-shot per route definition.
-                    &*Box::leak(s.to_string().into_boxed_str())
+                    // Upstream `ChallengeOptions::description` is
+                    // `Option<&'static str>`, so a `&'static str` is required
+                    // here. Leak the heap copy on first sight and cache it,
+                    // so repeated 402s for the same route don't accumulate
+                    // leaks (DoS guard). Cache size is bounded by the number
+                    // of distinct descriptions ever observed.
+                    let mut guard = description_cache.lock().unwrap();
+                    *guard.entry(s.to_string()).or_insert_with(|| {
+                        Box::leak(s.to_string().into_boxed_str())
+                    })
                 });
             let options = ChallengeOptions { description };
             let challenge = challenger
@@ -111,7 +126,9 @@ impl ProtocolAdapter for MppAdapter {
                 WWW_AUTHENTICATE_HEADER,
                 HeaderValue::from_str(&www).map_err(|e| e.to_string())?,
             );
-            Ok(Some(map))
+            // MPP carries everything in headers; let the merger use its
+            // default RFC 9457 body (problem+json minimal form).
+            Ok(Some(ChallengeResponse::headers_only(map)))
         })
     }
 
@@ -292,5 +309,85 @@ mod tests {
         let a = adapter();
         assert_eq!(a.name(), "mpp");
         assert_eq!(a.priority(), 10);
+    }
+
+    /// Stub challenger that returns a fixed dummy `PaymentChallenge`, just
+    /// enough for `get_challenge` to run end-to-end and exercise the
+    /// description-leak cache. Real signing is not exercised here.
+    struct OkChallenger;
+    impl ChargeChallenger for OkChallenger {
+        fn challenge(
+            &self,
+            _amount: &str,
+            _options: ChallengeOptions,
+        ) -> Result<mpp::protocol::core::PaymentChallenge, String> {
+            use mpp::protocol::core::Base64UrlJson;
+            let req = Base64UrlJson::from_value(&serde_json::json!({"amount": "1"}))
+                .map_err(|e| e.to_string())?;
+            Ok(mpp::protocol::core::PaymentChallenge::new(
+                "id-1", "test-realm", "evm", "charge", req,
+            ))
+        }
+        fn verify_payment(
+            &self,
+            _: &str,
+        ) -> Pin<
+            Box<dyn std::future::Future<Output = Result<mpp::protocol::core::Receipt, String>> + Send>,
+        > {
+            Box::pin(async { Err("not implemented".into()) })
+        }
+    }
+
+    #[tokio::test]
+    async fn get_challenge_caches_description_leak_across_calls() {
+        // Regression for the per-request `Box::leak` DoS: hitting
+        // `get_challenge` N times with the same `description` must leak
+        // exactly once (cache size stays at 1 after warm-up).
+        let adapter = MppAdapter::new(Arc::new(OkChallenger));
+        let cfg = serde_json::json!({
+            "amount": "1000",
+            "description": "Premium photo access",
+        });
+        let parts = parts_no_auth();
+
+        for _ in 0..100 {
+            let _ = adapter
+                .get_challenge(&parts, &cfg)
+                .await
+                .expect("challenge ok");
+        }
+        let cache = adapter.description_cache.lock().unwrap();
+        assert_eq!(
+            cache.len(),
+            1,
+            "100 identical-description requests must leak exactly one string, got {} cached",
+            cache.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn get_challenge_caches_distinct_descriptions_separately() {
+        // Distinct descriptions each leak once (bounded by distinct count).
+        let adapter = MppAdapter::new(Arc::new(OkChallenger));
+        let parts = parts_no_auth();
+
+        for desc in ["one-shot photo", "premium api", "byte-streaming"] {
+            let cfg = serde_json::json!({ "amount": "1", "description": desc });
+            let _ = adapter
+                .get_challenge(&parts, &cfg)
+                .await
+                .expect("challenge ok");
+            let _ = adapter
+                .get_challenge(&parts, &cfg)
+                .await
+                .expect("challenge ok again — cached");
+        }
+        let cache = adapter.description_cache.lock().unwrap();
+        assert_eq!(
+            cache.len(),
+            3,
+            "3 distinct descriptions ⇒ 3 cache entries, got {}",
+            cache.len()
+        );
     }
 }

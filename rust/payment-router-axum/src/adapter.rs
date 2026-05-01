@@ -19,7 +19,7 @@ use std::convert::Infallible;
 use std::future::Future;
 use std::pin::Pin;
 
-use axum::body::Body;
+use axum::body::{Body, Bytes};
 use http::{HeaderMap, Request, Response, request::Parts};
 use serde_json::Value;
 use tower::util::BoxCloneSyncService;
@@ -33,13 +33,40 @@ use tower::util::BoxCloneSyncService;
 /// `BoxCloneService` is only Send+!Sync and would fail the axum trait bound.
 pub type InnerService = BoxCloneSyncService<Request<Body>, Response<Body>, Infallible>;
 
+/// Output of `ProtocolAdapter::get_challenge`. Carries both the headers
+/// the adapter wants merged into the 402 response, and an optional body.
+///
+/// **Body handling**: x402 spec requires its 402 to carry an `accepts[]`
+/// array in the response body. MPP carries everything in headers and
+/// expects an RFC 9457 problem+json body (`{type, title, status}`). When
+/// multiple adapters contribute bodies, [`merge_challenges`] picks the
+/// first non-empty one (lower-priority adapters win), so the merged
+/// response stays interoperable with x402 clients.
+#[derive(Debug, Clone, Default)]
+pub struct ChallengeResponse {
+    pub headers: HeaderMap,
+    /// Optional response body bytes. `None` means "use the merger's
+    /// default RFC 9457 problem+json body".
+    pub body: Option<Bytes>,
+}
+
+impl ChallengeResponse {
+    /// Convenience: header-only response (MPP-style).
+    pub fn headers_only(headers: HeaderMap) -> Self {
+        Self {
+            headers,
+            body: None,
+        }
+    }
+}
+
 /// Future returned by `ProtocolAdapter::get_challenge`.
 ///
 /// Lifetime `'a` is tied to `&Parts` / `&Value` — the future cannot outlive
 /// those borrows. In practice `merger` awaits `join_all` before either goes out
 /// of scope.
 pub type ChallengeFuture<'a> =
-    Pin<Box<dyn Future<Output = Result<Option<HeaderMap>, String>> + Send + 'a>>;
+    Pin<Box<dyn Future<Output = Result<Option<ChallengeResponse>, String>> + Send + 'a>>;
 
 /// Spec §3 ProtocolAdapter. Implementors must be `Send + Sync + 'static`
 /// because `Arc<dyn ProtocolAdapter>` is cloned into adapter services and

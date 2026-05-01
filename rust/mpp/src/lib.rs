@@ -18,9 +18,12 @@
 //! - [`charge`] — Charge intent (one-shot pay → settle): [`EvmChargeMethod`]
 //!   (`impl mpp::protocol::traits::ChargeMethod`), [`EvmChargeChallenger`],
 //!   and the shared `method="evm"` challenge builders.
-//! - [`session_method`] — [`EvmSessionMethod`] with 5-minute idle-timeout
-//!   auto-settle (calls `/session/settle`, not `/close`, so no client
-//!   signature is needed on timeout).
+//! - [`session_method`] — [`EvmSessionMethod`] (`impl
+//!   mpp::protocol::traits::SessionMethod`). Merchant-driven lifecycle:
+//!   the merchant calls [`EvmSessionMethod::settle_with_authorization`] /
+//!   [`EvmSessionMethod::close_with_authorization`] explicitly. There is
+//!   **no idle timer**; abandoned channels stay open until the merchant
+//!   settles or the on-chain escrow timeout fires.
 //! - [`store`] — Minimal session channel registry ([`SessionStore`] trait +
 //!   [`InMemorySessionStore`] default). Name intentionally distinct from
 //!   upstream `tempo::session_method::ChannelStore` which has a different model.

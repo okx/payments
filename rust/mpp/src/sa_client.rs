@@ -88,13 +88,27 @@ pub trait SaApiClient: Send + Sync {
 ///     "your-passphrase".into(),
 /// );
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct OkxSaApiClient {
     base_url: String,
     api_key: String,
     secret_key: String,
     passphrase: String,
     client: reqwest::Client,
+}
+
+// Manual `Debug` so an accidental `tracing::debug!(?client)` or panic
+// frame can't leak the API key, secret key, or passphrase. Only the
+// non-sensitive `base_url` is shown verbatim. (M2)
+impl std::fmt::Debug for OkxSaApiClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OkxSaApiClient")
+            .field("base_url", &self.base_url)
+            .field("api_key", &"***")
+            .field("secret_key", &"***")
+            .field("passphrase", &"***")
+            .finish()
+    }
 }
 
 impl OkxSaApiClient {
@@ -137,14 +151,18 @@ impl OkxSaApiClient {
         let body_str = serde_json::to_string(body)
             .map_err(|e| SaApiError::new(8000, format!("serialize error: {}", e)))?;
 
-        // Debug-level request log. Body contains credential (on-chain-public EIP-3009
-        // sig + amounts). Auth headers (API key / sign / passphrase / timestamp) are
-        // intentionally NOT logged. Enable with `RUST_LOG=mpp_evm=debug`.
+        // Debug-level request log. The full body contains EIP-3009
+        // signatures (and per-split sigs), which are **bearer credentials**
+        // until the on-chain tx is mined: anyone with the bytes can
+        // broadcast `transferWithAuthorization` themselves before
+        // `validBefore`. We therefore log only metadata, never body.
+        // Auth headers (API key / sign / passphrase / timestamp) are also
+        // intentionally not logged.
         tracing::debug!(
             target: "mpp_evm::sa",
             method = "POST",
             %url,
-            body = %body_str,
+            body_bytes = body_str.len(),
             "SA API → request"
         );
 
@@ -175,13 +193,16 @@ impl OkxSaApiClient {
             tracing::warn!(target: "mpp_evm::sa", %url, %status, error = %e, "SA API ← body read error");
             SaApiError::new(8000, format!("read response failed: {}", e))
         })?;
+        // Response body may echo back signatures or sensitive fields; do
+        // not log it at debug level. Errors capture body content via
+        // `parse_sa_response` -> SaApiError when a structured error is
+        // surfaced (already redacted at that layer; see M3).
         tracing::debug!(
             target: "mpp_evm::sa",
             method = "POST",
             %url,
             %status,
             bytes = text.len(),
-            body = %text,
             "SA API ← response"
         );
 
@@ -223,13 +244,15 @@ impl OkxSaApiClient {
             tracing::warn!(target: "mpp_evm::sa", %url, %status, error = %e, "SA API ← body read error");
             SaApiError::new(8000, format!("read response failed: {}", e))
         })?;
+        // GET response (session/status etc.) — no body at debug level for
+        // the same reason as POST responses. See parse_sa_response for
+        // sanitized error surfacing.
         tracing::debug!(
             target: "mpp_evm::sa",
             method = "GET",
             %url,
             %status,
             bytes = text.len(),
-            body = %text,
             "SA API ← response"
         );
 
@@ -257,6 +280,9 @@ fn parse_sa_response<T: serde::de::DeserializeOwned>(
     let envelope: SaApiResponse<serde_json::Value> = match serde_json::from_str(text) {
         Ok(v) => v,
         Err(e) => {
+            // Log full preview server-side only; do NOT embed SA-controlled
+            // body text into the SaApiError that propagates back to
+            // unauthenticated clients via PaymentErrorDetails.detail (M3).
             let preview: String = text.chars().take(512).collect();
             tracing::warn!(
                 target: "mpp_evm::sa",
@@ -268,7 +294,7 @@ fn parse_sa_response<T: serde::de::DeserializeOwned>(
             );
             return Err(SaApiError::new(
                 8000,
-                format!("parse envelope failed (status={}): {}: {}", status, e, preview),
+                format!("parse envelope failed (status={status})"),
             ));
         }
     };
@@ -306,6 +332,8 @@ fn parse_sa_response<T: serde::de::DeserializeOwned>(
         SaApiError::new(8000, "empty data in response")
     })?;
     serde_json::from_value::<T>(data_value.clone()).map_err(|e| {
+        // Log preview server-side only (M3): do not embed SA body into the
+        // error that flows back to unauthenticated callers.
         let preview: String = data_value.to_string().chars().take(512).collect();
         tracing::warn!(
             target: "mpp_evm::sa",
@@ -315,10 +343,7 @@ fn parse_sa_response<T: serde::de::DeserializeOwned>(
             data_preview = %preview,
             "SA API ← data shape mismatch (code=0 but data missing required fields)"
         );
-        SaApiError::new(
-            8000,
-            format!("parse data failed (status={}, code=0): {}: {}", status, e, preview),
-        )
+        SaApiError::new(8000, format!("parse data failed (status={status})"))
     })
 }
 
@@ -380,9 +405,36 @@ impl SaApiClient for OkxSaApiClient {
     }
 
     async fn session_status(&self, channel_id: &str) -> Result<ChannelStatus, SaApiError> {
-        let path = format!("/api/v6/pay/mpp/session/status?channelId={}", channel_id);
+        // Validate at the boundary so an attacker-controlled `channel_id`
+        // can't inject extra query params (`&extra=...`), fragments
+        // (`#frag`), or path traversal — even though HMAC would still be
+        // signed against the polluted path, the resolved endpoint would
+        // not match expectations. (H2)
+        validate_channel_id_shape(channel_id)?;
+        let path = format!("/api/v6/pay/mpp/session/status?channelId={channel_id}");
         self.get(&path).await
     }
+}
+
+/// Reject any `channel_id` that isn't a well-formed bytes32 hex
+/// (`0x` + 64 hex chars). MPP `channel_id` is always
+/// `keccak256(abi.encode(payer, payee, ...))` — exactly 32 bytes.
+/// Rejecting at the boundary closes URL-injection vectors before
+/// signing or HTTP composition. (H2)
+fn validate_channel_id_shape(s: &str) -> Result<(), SaApiError> {
+    let body = s
+        .strip_prefix("0x")
+        .ok_or_else(|| SaApiError::new(70000, "channel_id must start with 0x"))?;
+    if body.len() != 64 {
+        return Err(SaApiError::new(
+            70000,
+            "channel_id must be 0x + 64 hex chars (bytes32)",
+        ));
+    }
+    if !body.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(SaApiError::new(70000, "channel_id contains non-hex chars"));
+    }
+    Ok(())
 }
 
 // ==================== OKX HMAC Auth ====================
@@ -510,13 +562,14 @@ mod tests {
 
     #[tokio::test]
     async fn session_status_uses_query_string_get() {
+        let cid = "0x1111111111111111111111111111111111111111111111111111111111111111";
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/api/v6/pay/mpp/session/status"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "code": 0,
                 "data": {
-                    "channelId": "0xabc",
+                    "channelId": cid,
                     "payer": "0xp", "payee": "0xq", "token": "0xt",
                     "deposit": "10000", "cumulativeAmount": "1000",
                     "settledOnChain": "500", "sessionStatus": "OPEN",
@@ -528,9 +581,28 @@ mod tests {
             .await;
 
         let client = mk_client(server.uri());
-        let status = client.session_status("0xabc").await.unwrap();
-        assert_eq!(status.channel_id, "0xabc");
+        let status = client.session_status(cid).await.unwrap();
+        assert_eq!(status.channel_id, cid);
         assert_eq!(status.session_status, "OPEN");
+    }
+
+    #[tokio::test]
+    async fn session_status_rejects_malformed_channel_id() {
+        // H2 regression: must reject anything that isn't 0x + 64 hex chars
+        // before composing the URL, so attackers can't inject `&` / `#` /
+        // `?` to alter the resolved endpoint. We don't need a mock server
+        // since validation happens before any HTTP call.
+        let client = mk_client("http://unused".into());
+        for bad in [
+            "0xabc",                                                                 // too short
+            "abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234",      // missing 0x
+            "0xZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ",    // non-hex
+            "0x1111111111111111111111111111111111111111111111111111111111111111&x=1", // injection
+            "0x1111111111111111111111111111111111111111111111111111111111111111#x",   // fragment
+        ] {
+            let err = client.session_status(bad).await.unwrap_err();
+            assert_eq!(err.code, 70000, "bad channel_id {bad:?} must yield 70000");
+        }
     }
 
     /// On business errors SA actually returns `data: {}` (empty object,

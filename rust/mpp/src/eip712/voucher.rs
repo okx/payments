@@ -11,6 +11,23 @@
 //! 2. Explicit low-s precheck (s <= secp256k1_order / 2), borrowed from Java `Eip712VerifyUtil`.
 //! 3. EIP-712 encoding via `alloy::sol!` + `eip712_signing_hash` — single source of truth.
 //! 4. ecrecover + strict address comparison (`Address` is naturally case-insensitive).
+//!
+//! ## Limitation: EOA signers only
+//!
+//! `verify_voucher` recovers a secp256k1 signer via ecrecover and compares
+//! the recovered address against `expected_signer`. **Smart-contract
+//! wallets (EIP-1271, ERC-4337, Safe, Argent, Coinbase Smart Wallet) are
+//! not supported as voucher signers.** ERC-1271's
+//! `isValidSignature(bytes32, bytes)` would require an on-chain RPC call
+//! per voucher, which is incompatible with the local-only verification
+//! design (verifying every voucher on-chain would defeat MPP's
+//! off-chain-voucher performance model).
+//!
+//! Merchants requiring smart-contract-wallet payers should either:
+//! 1. Have the payer set `authorizedSigner` to an EOA delegate at channel
+//!    open time (the contract supports this), and let the EOA sign vouchers; or
+//! 2. Build their own EIP-1271-aware `SessionMethod` impl on top of these
+//!    primitives.
 
 use alloy_primitives::{Address, U256};
 use alloy_signer::Signature;
@@ -116,6 +133,33 @@ mod tests {
     use alloy_primitives::{address, b256};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
+
+    /// Self-check for the hand-written `SECP256K1_HALF_N` constant: a typo in
+    /// the U256 limbs would silently weaken or break the high-s precheck. Lock
+    /// it against the canonical `secp256k1.org/curve` value (`N/2`).
+    /// (Review #5)
+    #[test]
+    fn secp256k1_half_n_matches_canonical() {
+        let expected = U256::from_be_slice(&alloy_primitives::hex!(
+            "7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0"
+        ));
+        assert_eq!(
+            SECP256K1_HALF_N, expected,
+            "SECP256K1_HALF_N drifted from the canonical secp256k1 N/2 value"
+        );
+        // Also assert the upper-bound relationship `2 * (N/2) + 1 == N`
+        // — i.e. that we're representing exactly half of the curve order.
+        // N (curve order):
+        let n = U256::from_be_slice(&alloy_primitives::hex!(
+            "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141"
+        ));
+        let two_half = SECP256K1_HALF_N.checked_mul(U256::from(2u8)).unwrap();
+        assert_eq!(
+            two_half.checked_add(U256::from(1u8)).unwrap(),
+            n,
+            "2 * SECP256K1_HALF_N + 1 must equal the secp256k1 curve order N"
+        );
+    }
 
     fn fixture_signer() -> PrivateKeySigner {
         // Fixed key — keeps round-trip tests reproducible.

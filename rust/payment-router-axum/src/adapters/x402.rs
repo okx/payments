@@ -27,7 +27,7 @@ use x402_axum::{PaymentLayer, PaymentMiddlewareBuilder};
 use x402_core::http::RoutesConfig;
 use x402_core::server::X402ResourceServer;
 
-use crate::adapter::{ChallengeFuture, InnerService, ProtocolAdapter};
+use crate::adapter::{ChallengeFuture, ChallengeResponse, InnerService, ProtocolAdapter};
 
 /// Builder for [`X402Adapter`]. Mirror of [`PaymentMiddlewareBuilder`] with
 /// one extra field (priority). All x402 hooks are exposed unchanged.
@@ -186,7 +186,20 @@ impl ProtocolAdapter for X402Adapter {
             if resp.status() != StatusCode::PAYMENT_REQUIRED {
                 return Ok(None);
             }
-            Ok(Some(resp.headers().clone()))
+            // x402 spec requires the 402 body to carry the `accepts[]`
+            // array. We harvest both headers AND body (H5) so the merger
+            // can produce a spec-compliant response. Body is bounded by
+            // x402-axum's own builder, so the read is safe.
+            let headers = resp.headers().clone();
+            let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .map_err(|e| format!("x402 get_challenge read body: {e}"))?;
+            let body = if body_bytes.is_empty() {
+                None
+            } else {
+                Some(body_bytes)
+            };
+            Ok(Some(ChallengeResponse { headers, body }))
         })
     }
 

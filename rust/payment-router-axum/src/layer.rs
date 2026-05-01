@@ -255,7 +255,9 @@ mod tests {
                 ))
                 .unwrap(),
             );
-            Box::pin(async move { Ok(Some(map)) })
+            Box::pin(async move {
+                Ok(Some(crate::adapter::ChallengeResponse::headers_only(map)))
+            })
         }
         fn make_service(&self, inner: InnerService) -> InnerService {
             let name = self.name.clone();

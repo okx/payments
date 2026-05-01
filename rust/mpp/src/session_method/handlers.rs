@@ -46,12 +46,22 @@ impl EvmSessionMethod {
         //      lives in `voucherSignature` (so it doesn't collide with the
         //      EIP-3009 deposit `signature`); in hash mode it occupies
         //      `signature` directly (there is no deposit signature).
+        //
+        // Use an explicit match (not `if hash else default`) so a future
+        // payload type or a missing `type` field surfaces as a 70000
+        // error here rather than silently mapping to "voucherSignature".
+        // (Review #6)
         let payload = &credential.payload;
         let payload_type = payload.get("type").and_then(|v| v.as_str()).unwrap_or("");
-        let voucher_sig_key = if payload_type == "hash" {
-            "signature"
-        } else {
-            "voucherSignature"
+        let voucher_sig_key = match payload_type {
+            "transaction" => "voucherSignature",
+            "hash" => "signature",
+            other => {
+                return Err(SaApiError::new(
+                    70000,
+                    format!("unsupported open payload type {other:?} (expected transaction|hash)"),
+                ));
+            }
         };
         let initial_voucher_sig = parse_optional_hex_bytes(payload.get(voucher_sig_key))?;
         let cumulative_amount = parse_u128_default_zero(payload.get("cumulativeAmount"))?;
@@ -203,6 +213,32 @@ impl EvmSessionMethod {
             ));
         }
 
+        // Hold the per-channel lock for the whole topup so we can't race
+        // `handle_close` (which removes the record). Without this guard,
+        // a close could win the lock between SA's on-chain accept and the
+        // local store update, leaving on-chain funds in escrow that the
+        // SDK no longer tracks. (H3.b)
+        let channel_id_for_lock = extract_str(&credential.payload, "channelId").to_string();
+        let _guard = self.channel_locks.lock(&channel_id_for_lock).await;
+
+        // **Pre-flight existence check.** Refuse the topup outright if we
+        // don't already hold a `ChannelRecord` for this channel — typically
+        // because the SDK restarted with an in-memory store, or the
+        // merchant is running multiple SDK instances and this one didn't
+        // open the channel. Without this, SA would broadcast the on-chain
+        // top-up and return 200, but the post-SA local update would fail
+        // with 70010, leaving on-chain deposit ahead of local cap → all
+        // subsequent vouchers blocked by the local `cum > deposit` guard.
+        // Catching this BEFORE the SA call keeps on-chain state and local
+        // state aligned. (Review #4)
+        if self.store.get(&channel_id_for_lock).await.is_none() {
+            return Err(SaApiError::new(
+                70010,
+                "channel not found in local store; refusing topUp before SA broadcast \
+                 to avoid on-chain/local divergence",
+            ));
+        }
+
         // session/topUp doesn't need challenge — send { source, payload }.
         let mut body = serde_json::json!({ "payload": credential.payload });
         if let Some(s) = credential.source.as_deref() {
@@ -218,13 +254,11 @@ impl EvmSessionMethod {
                 .ok_or_else(|| SaApiError::new(8000, "deposit overflow"))?;
             Ok(())
         });
-        // If the local record is missing (e.g. topUp arriving after an SDK
-        // restart), `update` returns 70010 — but SA already succeeded on-chain,
-        // so we only log a warning instead of blocking. Local state will be
-        // inconsistent until the merchant either restarts a clean session or
-        // implements a `session/status`-based recovery path.
-        // TODO: auto-recover by calling `session_status` and rebuilding the
-        // ChannelRecord from on-chain truth (FR-recover, gap A in lifecycle audit).
+        // Residual race: pre-flight passed but the record vanished before
+        // we could update it (concurrent close, store backend hiccup, etc.).
+        // SA already broadcast on-chain, so blocking here would only widen
+        // the divergence — log a warning and let the caller proceed. The
+        // module-level `## Known limitations` doc covers recovery options.
         if let Err(e) = self.store.update(&receipt.channel_id, updater).await {
             tracing::warn!(channel_id = %receipt.channel_id, error = %e, "topup local update skipped");
         }
@@ -244,15 +278,21 @@ impl EvmSessionMethod {
         let cum = parse_u128_str(extract_str(payload, "cumulativeAmount"))?;
         let sig = parse_optional_hex_bytes(payload.get("signature"))?
             .ok_or_else(|| SaApiError::new(70000, "voucher missing signature"))?;
+        let amount = parse_u128_str(&request.amount)?;
+
+        // Hold the per-channel lock for the entire submit + deduct pair.
+        // Without this, a future drop (client disconnect) between the two
+        // public-API calls would leave `highest_voucher_amount` advanced
+        // but `spent` un-incremented — i.e. merchant under-bills. (H3.c)
+        //
         // Byte-level replay only skips verify + highest update; deduct
         // still runs. Matches mppx / OKX TS Session: a client can sign one
         // large voucher and replay the same bytes to drain the balance.
-        // Double-deduct protection on network retries belongs at the
-        // challenge.id level (TS also doesn't do this; future work).
-        self.submit_voucher(channel_id, cum, sig).await?;
-        let amount = parse_u128_str(&request.amount)?;
-        let updated = self.deduct_from_channel(channel_id, amount).await?;
+        let _guard = self.channel_locks.lock(channel_id).await;
+        self.submit_voucher_locked(channel_id, cum, sig).await?;
+        let updated = self.deduct_from_channel_locked(channel_id, amount).await?;
         let (spent, units) = (updated.spent, updated.units);
+        drop(_guard);
 
         self.voucher_deduct_results
             .lock()
@@ -270,6 +310,12 @@ impl EvmSessionMethod {
         let channel_id = extract_str(payload, "channelId");
         let cum = parse_u128_str(extract_str(payload, "cumulativeAmount"))?;
         let voucher_sig = parse_optional_hex_bytes(payload.get("signature"))?;
+
+        // Hold the per-channel lock across verify + close so a concurrent
+        // voucher cannot land between our verify (which reads the store
+        // unlocked) and `close_with_authorization`'s own store read.
+        // Mirrors the H3.c handle_voucher pattern. (Review #3)
+        let _guard = self.channel_locks.lock(channel_id).await;
 
         // The payer-provided final voucher must be locally verified first (B-1 path).
         if let Some(sig) = voucher_sig.as_ref() {
@@ -292,8 +338,9 @@ impl EvmSessionMethod {
         }
 
         let receipt = self
-            .close_with_authorization(channel_id, Some(cum), voucher_sig)
+            .close_with_authorization_locked(channel_id, Some(cum), voucher_sig)
             .await?;
+        drop(_guard);
         Ok(Receipt::success(
             "evm",
             receipt.reference.clone().unwrap_or(receipt.channel_id),

@@ -15,7 +15,7 @@ use std::sync::Arc;
 use axum::{routing::{get, post}, Json, Router};
 use http::{HeaderMap, HeaderValue, header::WWW_AUTHENTICATE, request::Parts};
 use payment_router_axum::{
-    adapter::{ChallengeFuture, InnerService, ProtocolAdapter},
+    adapter::{ChallengeFuture, ChallengeResponse, InnerService, ProtocolAdapter},
     PaymentRouterConfig, PaymentRouterLayer, UnifiedRouteConfig,
 };
 use serde_json::{json, Value};
@@ -68,7 +68,7 @@ impl ProtocolAdapter for FakeAdapter {
                         http::HeaderName::from_bytes(name.as_bytes()).unwrap(),
                         HeaderValue::from_str(&val).unwrap(),
                     );
-                    Ok(Some(map))
+                    Ok(Some(ChallengeResponse::headers_only(map)))
                 }
                 None => Ok(None),
             }

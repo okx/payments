@@ -68,7 +68,9 @@ mod tests {
             _parts: &'a Parts,
             _route_cfg: &'a Value,
         ) -> ChallengeFuture<'a> {
-            Box::pin(async { Ok::<Option<HeaderMap>, String>(None) })
+            Box::pin(async {
+                Ok::<Option<crate::adapter::ChallengeResponse>, String>(None)
+            })
         }
         fn make_service(&self, inner: InnerService) -> InnerService {
             inner

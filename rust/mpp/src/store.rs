@@ -162,8 +162,14 @@ impl SessionStore for InMemorySessionStore {
         let record = map
             .get_mut(channel_id)
             .ok_or_else(|| SaApiError::new(70010, "channel not found"))?;
-        updater(record)?;
-        Ok(record.clone())
+        // Apply the updater to a clone, then write back ONLY on success.
+        // This honors the documented transaction semantics: Err leaves the
+        // store unchanged. Cloning is cheap (ChannelRecord is small) and
+        // matches upstream mpp-rs's value-based `update_channel` contract.
+        let mut draft = record.clone();
+        updater(&mut draft)?;
+        *record = draft.clone();
+        Ok(draft)
     }
 }
 
@@ -267,8 +273,8 @@ mod tests {
             .update(
                 "0xa",
                 Box::new(|r| {
-                    // The closure modifies a field then returns an error,
-                    // confirming the in-memory impl leaves a half-modified record.
+                    // Closure mutates the draft, then returns Err.
+                    // The store must NOT persist the mutation.
                     r.highest_voucher_amount = 999;
                     Err(SaApiError::new(70013, "delta too small"))
                 }),
@@ -277,18 +283,15 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().code, 70013);
 
-        // Check whether the store rolled back. The current behavior is
-        // "closure failure leaves a half-modified record" — a deliberate
-        // trade-off in the in-memory impl since std Mutex can't roll back
-        // transactions. Implementations that genuinely need transactional
-        // updates (SqliteSessionStore, etc.) should wrap their `update` in
-        // BEGIN/COMMIT internally.
-        //
-        // SoA here: confirm the closure ran (even when it returned Err);
-        // callers should know the in-memory impl doesn't guarantee
-        // transactional rollback.
+        // Stored value must remain at the pre-update value (100).
+        // This honors the trait's transactional contract: closure Err →
+        // no write happens.
         let got = store.get("0xa").await.unwrap();
-        assert_eq!(got.highest_voucher_amount, 999);
+        assert_eq!(
+            got.highest_voucher_amount, 100,
+            "closure Err must roll back; record was modified to {} but should be 100",
+            got.highest_voucher_amount,
+        );
     }
 
     #[tokio::test]

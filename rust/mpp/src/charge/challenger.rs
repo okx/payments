@@ -546,6 +546,8 @@ mod tests {
             )
             .unwrap();
 
+        // Authorization fields must match the challenge (recipient + amount)
+        // for C1 binding to pass.
         let credential_json = serde_json::json!({
             "challenge": {
                 "id": ch.id,
@@ -559,7 +561,9 @@ mod tests {
                 "type": "transaction",
                 "authorization": {
                     "type": "eip-3009",
-                    "from": "0xfrom", "to": "0xto", "value": "100",
+                    "from": "0xfrom",
+                    "to": "0x4b22fdbc399bd422b6fefcbce95f76642ea29df1",
+                    "value": "100",
                     "validAfter": "0", "validBefore": "9999999999",
                     "nonce": "0x01", "signature": "0xsig"
                 }
