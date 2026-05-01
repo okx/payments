@@ -53,7 +53,18 @@ impl EvmSessionMethod {
         // error here rather than silently mapping to "voucherSignature".
         // (Review #6)
         let payload = &credential.payload;
-        let payload_type = payload.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        // Require `type` explicitly so a missing field surfaces as
+        // "missing required field type" rather than the confusing
+        // "unsupported type \"\"" we'd get from `unwrap_or("")`.
+        let payload_type = payload
+            .get("type")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                SaApiError::new(
+                    70000,
+                    "open payload missing required field type (expected transaction|hash)",
+                )
+            })?;
         let voucher_sig_key = match payload_type {
             "transaction" => "voucherSignature",
             "hash" => "signature",
@@ -256,7 +267,12 @@ impl EvmSessionMethod {
             ));
         }
 
-        // session/topUp doesn't need challenge — send { source, payload }.
+        // session/topUp body shape: `{ source?, payload }` — no challenge
+        // wrapper. Per the [Pay] MPP EVM API plan §8.3 ACTION_TOPUP, the
+        // topUp endpoint accepts the credential payload directly: SA
+        // re-derives the channel-binding from `payload.channelId` plus the
+        // on-chain authorization, so a stand-alone challenge isn't needed.
+        // Re-verify against the latest spec when upgrading SA contracts.
         let mut body = serde_json::json!({ "payload": credential.payload });
         if let Some(s) = credential.source.as_deref() {
             body["source"] = serde_json::Value::String(s.to_string());
@@ -271,13 +287,32 @@ impl EvmSessionMethod {
                 .ok_or_else(|| SaApiError::new(8000, "deposit overflow"))?;
             Ok(())
         });
-        // Residual race: pre-flight passed but the record vanished before
-        // we could update it (concurrent close, store backend hiccup, etc.).
-        // SA already broadcast on-chain, so blocking here would only widen
-        // the divergence — log a warning and let the caller proceed. The
-        // module-level `## Known limitations` doc covers recovery options.
+        // Residual race: pre-flight passed (with the per-channel lock held)
+        // but the record vanished before we could update it. Under the
+        // default SDK API path this is unreachable — `handle_close` holds
+        // the same lock — but a custom `SessionStore` impl that mutates
+        // out-of-band could trigger it. SA already broadcast on-chain, so
+        // we cannot rewind the deposit; we instead surface the divergence
+        // as 8000 with the on-chain reference and a reconcile hint, so the
+        // merchant's caller can act (call `session_status`, refresh local
+        // state, decide whether to retry vouchers). Silently returning Ok
+        // would let further vouchers get rejected by the (stale) local
+        // `cum > deposit` guard with no signal to recover.
         if let Err(e) = self.store.update(&receipt.channel_id, updater).await {
-            tracing::warn!(channel_id = %receipt.channel_id, error = %e, "topup local update skipped");
+            tracing::warn!(
+                channel_id = %receipt.channel_id,
+                reference = receipt.reference.as_deref().unwrap_or(""),
+                error = %e,
+                "topup on-chain ok but local store update failed",
+            );
+            return Err(SaApiError::new(
+                8000,
+                format!(
+                    "topup on-chain succeeded (reference={}) but local store update failed: \
+                     {e}; call session_status to reconcile before sending further vouchers",
+                    receipt.reference.as_deref().unwrap_or("(none)"),
+                ),
+            ));
         }
         Ok(Receipt::success(
             "evm",

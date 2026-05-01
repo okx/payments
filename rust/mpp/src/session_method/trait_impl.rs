@@ -81,15 +81,31 @@ impl SessionMethod for EvmSessionMethod {
                     .lock()
                     .unwrap()
                     .remove(challenge_id);
-                deduct.map(|(spent, units)| {
-                    serde_json::json!({
+                match deduct {
+                    Some((spent, units)) => Some(serde_json::json!({
                         "action":    action,
                         "status":    "ok",
                         "channelId": channel_id,
                         "spent":     spent.to_string(),
                         "units":     units,
-                    })
-                })
+                    })),
+                    None => {
+                        // Should not happen on a successful voucher path:
+                        // `handle_voucher` records the deduct snapshot
+                        // before returning Ok, and `respond` is only called
+                        // after `verify_session` returns Ok. A None here
+                        // indicates an internal bug or a duplicate
+                        // `respond` invocation for the same challenge_id.
+                        tracing::warn!(
+                            target: "mpp_evm::session",
+                            %challenge_id,
+                            %channel_id,
+                            "voucher deduct snapshot missing in respond — \
+                             possible internal bug or duplicate respond call",
+                        );
+                        None
+                    }
+                }
             }
             _ => None,
         }
