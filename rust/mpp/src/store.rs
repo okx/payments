@@ -111,6 +111,20 @@ pub trait SessionStore: Send + Sync {
     /// write back.
     /// `None` (channel absent) → returns `70010 channel_not_found`.
     /// `updater` returns `Err` → no write happens; the error propagates.
+    ///
+    /// **Atomicity is the implementer's responsibility.** The trait is
+    /// closure-based for exactly this reason: the implementation owns the
+    /// critical section and MUST ensure the read + `updater(&mut draft)` +
+    /// write back happen as a single transactional unit. Concretely:
+    /// - In-process: hold a `Mutex` / `RwLock` across the whole sequence.
+    /// - SQL: wrap in a transaction with `SELECT ... FOR UPDATE` (or
+    ///   `WHERE` + version compare, then re-read on retry).
+    /// - Redis: use `WATCH` / `MULTI` / `EXEC` or a Lua script.
+    ///
+    /// Implementations that drop the critical section between read and
+    /// write will silently lose updates under concurrent topup / voucher
+    /// / deduct calls. There is no compile-time check for this — the SDK
+    /// trusts the contract.
     async fn update(
         &self,
         channel_id: &str,

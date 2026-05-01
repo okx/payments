@@ -344,12 +344,18 @@ impl EvmSessionMethod {
         self.submit_voucher_locked(channel_id, cum, sig).await?;
         let updated = self.deduct_from_channel_locked(channel_id, amount).await?;
         let (spent, units) = (updated.spent, updated.units);
-        drop(_guard);
-
+        // Insert before releasing the per-channel lock so a concurrent
+        // voucher with the same `challenge_id` (e.g. an upstream replay)
+        // cannot land its own deduct snapshot under the same key while
+        // we're between the deduct and the insert. Defense-in-depth: the
+        // mpp-rs framework normally rejects challenge replays at the
+        // server boundary, but writing the snapshot atomically with the
+        // deduct keeps the snapshot bound to *this* execution's bill.
         self.voucher_deduct_results
             .lock()
             .unwrap()
             .insert(credential.challenge.id.clone(), (spent, units));
+        drop(_guard);
 
         Ok(Receipt::success("evm", channel_id.to_string()))
     }
