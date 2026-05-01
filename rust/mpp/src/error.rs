@@ -109,8 +109,23 @@ fn map(code: u32) -> (Namespace, &'static str, u16, &'static str) {
             "InsufficientBalanceError",
         ),
 
-        // Unknown — fall back to a generic verification failure.
-        _ => (Core, "verification-failed", 402, "VerificationFailedError"),
+        // Unknown — fall back to a generic verification failure. If this
+        // fires on a 70000+ code, it's almost certainly a new SA backend
+        // code that hasn't been added to this map yet (see "When
+        // extending" note above). We warn so the divergence shows up in
+        // production logs instead of silently misclassifying as 402
+        // verification-failed for the lifetime of the deployment.
+        _ => {
+            if (70000..80000).contains(&code) {
+                tracing::warn!(
+                    target: "mpp_evm::error",
+                    code,
+                    "unmapped SA error code in 70000+ range falling through to verification-failed; \
+                     extend mpp_evm::error::map() and the documented-codes test"
+                );
+            }
+            (Core, "verification-failed", 402, "VerificationFailedError")
+        }
     }
 }
 

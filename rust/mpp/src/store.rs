@@ -174,8 +174,8 @@ impl SessionStore for InMemorySessionStore {
         // matches upstream mpp-rs's value-based `update_channel` contract.
         let mut draft = record.clone();
         updater(&mut draft)?;
-        *record = draft.clone();
-        Ok(draft)
+        *record = draft;
+        Ok(record.clone())
     }
 }
 

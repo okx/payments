@@ -389,6 +389,12 @@ impl EvmSessionMethod {
             .map_err(|e| SaApiError::new(70004, format!("close voucher: {e}")))?;
         }
 
+        // The `cum >= channel.highest_voucher_amount` guard lives inside
+        // `close_with_authorization_locked` (mod.rs, the 70012 branch) so
+        // both the public `close_with_authorization` and this
+        // payer-credential entry path are protected against a malicious
+        // close that under-reports cumulative spend. Don't duplicate it
+        // here — keep the invariant single-sourced.
         let receipt = self
             .close_with_authorization_locked(channel_id, Some(cum), voucher_sig)
             .await?;
