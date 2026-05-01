@@ -36,7 +36,10 @@ async fn main() {
         .register("eip155:196", AggrDeferredEvmScheme::new());
 
     // MUST initialize before use (fetches facilitator's supported schemes)
-    server.initialize().await.expect("Failed to initialize: check facilitator connectivity");
+    server
+        .initialize()
+        .await
+        .expect("Failed to initialize: check facilitator connectivity");
 
     // Multiple routes with different prices
     let routes = HashMap::from([
@@ -79,7 +82,7 @@ async fn main() {
                 }],
                 description: "Premium analytics data".into(),
                 mime_type: "application/json".into(),
-            sync_settle: None,
+                sync_settle: None,
             },
         ),
     ]);
@@ -90,9 +93,7 @@ async fn main() {
         .route("/health", get(health_handler)) // Free endpoint, no payment
         .layer(payment_middleware(routes, server));
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:4021")
-        .await
-        .unwrap();
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:4021").await.unwrap();
     println!("Server listening at http://localhost:4021");
     println!("Free:    curl http://localhost:4021/health");
     println!("Paid:    curl http://localhost:4021/api/weather   ($0.001)");

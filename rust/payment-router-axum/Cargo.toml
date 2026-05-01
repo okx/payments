@@ -1,0 +1,45 @@
+[package]
+name = "payment-router-axum"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Dual-protocol (MPP + x402) payment router Tower Layer for axum. Adapter pattern per spec §1-§10."
+
+[dependencies]
+# Upstream MPP (ChargeChallenger trait, format_www_authenticate, format_receipt, parse_authorization).
+# Pinned to crates.io 0.10.x — see mpp/Cargo.toml for rationale.
+mpp = { version = "0.10", features = ["server", "evm", "tower", "axum"] }
+
+# OKX MPP EVM SDK (EvmChargeChallenger)
+mpp-evm = { path = "../mpp" }
+
+# x402 SDKs (native PaymentMiddleware + X402ResourceServer per-call API)
+x402-axum = { path = "../x402/x402-axum" }
+x402-core = { path = "../x402/x402-core" }
+
+# Tower / axum / http
+axum = { workspace = true }
+tower = { workspace = true }
+tower-service = { workspace = true }
+http = { workspace = true }
+http-body-util = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+async-trait = { workspace = true }
+futures = "0.3"
+
+# Serialization (for route configs as serde_json::Value)
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+reqwest = { workspace = true }

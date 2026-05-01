@@ -32,7 +32,8 @@ pub trait SchemeNetworkServer: Send + Sync {
     /// Convert a user-friendly price to the scheme's specific amount and asset format.
     ///
     /// Mirrors TS: `parsePrice(price: Price, network: Network): Promise<AssetAmount>`
-    async fn parse_price(&self, price: &Price, network: &Network) -> Result<AssetAmount, X402Error>;
+    async fn parse_price(&self, price: &Price, network: &Network)
+        -> Result<AssetAmount, X402Error>;
 
     /// Build payment requirements for this scheme/network combination.
     ///

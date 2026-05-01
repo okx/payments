@@ -1,0 +1,42 @@
+[package]
+name = "mpp-examples"
+description = "Example servers using the MPP Rust Seller SDK"
+# `version` required by manifest schema; irrelevant because `publish = false`.
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+mpp-evm = { path = "..", features = ["handlers"] }
+mpp = { version = "0.10", features = ["server", "evm", "tower", "axum"] }
+payment-router-axum = { path = "../../payment-router-axum" }
+x402-axum = { path = "../../x402/x402-axum" }
+x402-core = { path = "../../x402/x402-core" }
+x402-evm = { path = "../../x402/x402-evm" }
+axum = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { workspace = true }
+base64 = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# mpp_session_server end-to-end demo needs PrivateKeySigner (payee signs SettleAuth).
+alloy-signer-local = "=2.0.1"
+alloy-primitives = "=1.5.7"
+
+[[example]]
+name = "mpp_photo_server"
+path = "src/mpp_photo_server.rs"
+
+[[example]]
+name = "mpp_photo_split_server"
+path = "src/mpp_photo_split_server.rs"
+
+[[example]]
+name = "mpp_session_server"
+path = "src/mpp_session_server.rs"
+
+[[example]]
+name = "dual_protocol_server"
+path = "src/dual_protocol_server.rs"

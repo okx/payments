@@ -10,11 +10,11 @@
 //! - [`exact`] — Exact scheme server implementation
 //! - [`aggr_deferred`] — Deferred scheme server implementation (OKX extension)
 
-pub mod types;
+pub mod aggr_deferred;
 pub mod constants;
 pub mod exact;
-pub mod aggr_deferred;
+pub mod types;
 
 // Re-export main types for convenience
-pub use exact::ExactEvmScheme;
 pub use aggr_deferred::AggrDeferredEvmScheme;
+pub use exact::ExactEvmScheme;

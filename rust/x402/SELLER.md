@@ -219,7 +219,7 @@ app.layer(layer);
 
 | Chain | Network ID | Token | Contract | Decimals |
 |-------|-----------|-------|----------|----------|
-| X Layer | `eip155:196` | USDT | `0x779ded0c9e1022225f8e0630b35a9b54be713736` | 6 |
+| X Layer | `eip155:196` | USD₮0 | `0x779ded0c9e1022225f8e0630b35a9b54be713736` | 6 |
 
 X Layer assets are pre-registered — the SDK converts dollar prices to token amounts automatically.
 

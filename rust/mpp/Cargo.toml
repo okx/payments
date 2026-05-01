@@ -1,0 +1,70 @@
+[package]
+name = "mpp-evm"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "MPP EVM integration for OKX Payments SDK"
+
+[features]
+default = []
+# Enables drop-in Axum handlers for /session/settle and /session/status. Enable
+# when you want to use the ready-made endpoints without writing your own.
+handlers = []
+
+[dev-dependencies]
+wiremock = { workspace = true }
+
+[dependencies]
+# MPP protocol (core traits + EVM types, no Tempo). `"0.10"` is Cargo's
+# caret-semver shorthand for `>=0.10.0, <0.11.0` — accepts upstream patch
+# releases (0.10.1 / 0.10.2 / ...) but rejects 0.11+, which mpp-rs treats
+# as breaking in pre-1.0. Cargo.lock pins the exact resolved version so
+# builds stay reproducible. Avoids the "git main HEAD drift" supply-chain
+# risk the previous git dep had (Review L1).
+mpp = { version = "0.10", features = ["server", "evm", "tower", "axum"] }
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Async
+tokio.workspace = true
+async-trait.workspace = true
+
+# HTTP (SA API calls)
+reqwest.workspace = true
+
+# Auth (OKX HMAC signing)
+hmac.workspace = true
+sha2.workspace = true
+base64.workspace = true
+
+# Time
+chrono.workspace = true
+time.workspace = true
+
+# Error handling
+thiserror.workspace = true
+
+# Logging
+tracing.workspace = true
+
+# EIP-712 signing & verification
+# Versions pinned to match the alloy crates that mpp-rs pulls in
+# transitively (sub-crates v1.5.7, signer crate v2.0.1). The `=` lock
+# avoids two incompatible alloy copies coexisting in the build graph.
+alloy-primitives   = "=1.5.7"   # Address / B256 / U256 / Bytes
+alloy-sol-types    = "=1.5.7"   # sol! / eip712_domain! / SolStruct
+alloy-signer       = "=2.0.1"   # Signer trait + Signature
+alloy-signer-local = "=2.0.1"   # PrivateKeySigner
+
+# Nonce generation (UUID v4 → U256).
+uuid = { version = "1", features = ["v4"] }
+
+# Tower
+tower.workspace = true
+tower-service.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+axum.workspace = true

@@ -35,7 +35,13 @@ pub(crate) fn sign_request(
     request_path: &str,
     body: &str,
 ) -> Result<String, crate::error::X402Error> {
-    let message = format!("{}{}{}{}", timestamp, method.to_uppercase(), request_path, body);
+    let message = format!(
+        "{}{}{}{}",
+        timestamp,
+        method.to_uppercase(),
+        request_path,
+        body
+    );
 
     let mut mac = HmacSha256::new_from_slice(secret_key.as_bytes())
         .map_err(|e| crate::error::X402Error::Config(format!("invalid HMAC key: {}", e)))?;

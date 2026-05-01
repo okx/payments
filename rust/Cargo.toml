@@ -1,14 +1,19 @@
 [workspace]
 resolver = "2"
 members = [
-    "x402-core",
-    "x402-axum",
-    "x402-evm",
-    "examples",
+    "x402/x402-core",
+    "x402/x402-axum",
+    "x402/x402-evm",
+    "x402/examples",
+    "mpp",
+    "mpp/examples",
+    "payment-router-axum",
 ]
 
 [workspace.package]
-version = "0.1.0"
+# `version` intentionally NOT shared. Each crate manages its own version
+# so they can release independently (tag format `<crate-name>-v<version>`).
+# See per-crate Cargo.toml for current versions.
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/okx/payments"
@@ -41,6 +46,7 @@ thiserror = "2"
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }
+time = { version = "0.3", features = ["formatting", "macros", "parsing"] }
 
 # Logging
 tracing = "0.1"

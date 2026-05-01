@@ -5,8 +5,8 @@ use reqwest::Client;
 
 #[tokio::main]
 async fn main() {
-    let url = std::env::var("FACILITATOR_URL")
-        .unwrap_or_else(|_| "https://web3.okx.com".to_string());
+    let url =
+        std::env::var("FACILITATOR_URL").unwrap_or_else(|_| "https://web3.okx.com".to_string());
     let full_url = format!("{}/api/v6/pay/x402/supported", url);
 
     println!("Testing connectivity to: {}", full_url);
@@ -15,7 +15,11 @@ async fn main() {
     println!("\n--- Test 1: default reqwest client ---");
     let client = Client::new();
     match client.get(&full_url).send().await {
-        Ok(resp) => println!("OK! Status: {}, Body: {}", resp.status(), resp.text().await.unwrap_or_default()),
+        Ok(resp) => println!(
+            "OK! Status: {}, Body: {}",
+            resp.status(),
+            resp.text().await.unwrap_or_default()
+        ),
         Err(e) => {
             println!("FAILED: {}", e);
             if let Some(source) = std::error::Error::source(&e) {
@@ -37,7 +41,11 @@ async fn main() {
         .build()
         .expect("failed to build native-tls client");
     match client.get(&full_url).send().await {
-        Ok(resp) => println!("OK! Status: {}, Body: {}", resp.status(), resp.text().await.unwrap_or_default()),
+        Ok(resp) => println!(
+            "OK! Status: {}, Body: {}",
+            resp.status(),
+            resp.text().await.unwrap_or_default()
+        ),
         Err(e) => {
             println!("FAILED: {}", e);
             if let Some(source) = std::error::Error::source(&e) {
@@ -59,7 +67,11 @@ async fn main() {
         .build()
         .expect("failed to build client");
     match client.get(&full_url).send().await {
-        Ok(resp) => println!("OK! Status: {}, Body: {}", resp.status(), resp.text().await.unwrap_or_default()),
+        Ok(resp) => println!(
+            "OK! Status: {}, Body: {}",
+            resp.status(),
+            resp.text().await.unwrap_or_default()
+        ),
         Err(e) => {
             println!("FAILED: {}", e);
             if let Some(source) = std::error::Error::source(&e) {
@@ -82,7 +94,11 @@ async fn main() {
     println!("\n--- Test 5: HTTP (no TLS): {} ---", http_full);
     let client = Client::new();
     match client.get(&http_full).send().await {
-        Ok(resp) => println!("OK! Status: {}, Body: {}", resp.status(), resp.text().await.unwrap_or_default()),
+        Ok(resp) => println!(
+            "OK! Status: {}, Body: {}",
+            resp.status(),
+            resp.text().await.unwrap_or_default()
+        ),
         Err(e) => println!("FAILED: {}", e),
     }
 
@@ -95,7 +111,11 @@ async fn main() {
         .build()
         .expect("failed to build client");
     match client.get(&full_url).send().await {
-        Ok(resp) => println!("OK! Status: {}, Body: {}", resp.status(), resp.text().await.unwrap_or_default()),
+        Ok(resp) => println!(
+            "OK! Status: {}, Body: {}",
+            resp.status(),
+            resp.text().await.unwrap_or_default()
+        ),
         Err(e) => {
             println!("FAILED: {}", e);
             if let Some(source) = std::error::Error::source(&e) {
