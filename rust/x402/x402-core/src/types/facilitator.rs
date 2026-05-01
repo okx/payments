@@ -157,10 +157,7 @@ impl VerifyError {
     }
 
     fn display_message(&self) -> String {
-        let reason = self
-            .invalid_reason
-            .as_deref()
-            .unwrap_or("unknown reason");
+        let reason = self.invalid_reason.as_deref().unwrap_or("unknown reason");
         match &self.invalid_message {
             Some(msg) => format!("{}: {}", reason, msg),
             None => reason.to_string(),

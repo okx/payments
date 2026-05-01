@@ -7,8 +7,8 @@ use mpp::protocol::intents::SessionRequest;
 
 use super::decode::{
     decode_challenge_request_recipient, decode_method_details, extract_payer_and_signer,
-    extract_str, parse_address, parse_b256, parse_optional_hex_bytes, parse_u128_default_zero,
-    parse_u128_str, strip_sdk_only_open_fields,
+    extract_required_str, parse_address, parse_b256, parse_optional_hex_bytes,
+    parse_u128_default_zero, parse_u128_str, strip_sdk_only_open_fields,
 };
 use super::EvmSessionMethod;
 use crate::eip712::verify_voucher;
@@ -21,7 +21,8 @@ impl EvmSessionMethod {
         credential: &PaymentCredential,
     ) -> Result<Receipt, SaApiError> {
         // 1. Payee consistency: challenge.recipient == signer.address().
-        let challenge_recipient = decode_challenge_request_recipient(&credential.challenge.request)?;
+        let challenge_recipient =
+            decode_challenge_request_recipient(&credential.challenge.request)?;
         let signer_addr = self
             .payee_address
             .ok_or_else(|| SaApiError::new(8000, "no signer configured (call .with_signer)"))?;
@@ -68,10 +69,7 @@ impl EvmSessionMethod {
 
         // 4. Parse channel_id from the client's payload (don't wait for SA's
         //    response; this enables fail-fast).
-        let channel_id_str = extract_str(payload, "channelId");
-        if channel_id_str.is_empty() {
-            return Err(SaApiError::new(70000, "open payload missing channelId"));
-        }
+        let channel_id_str = extract_required_str(payload, "channelId")?;
         let channel_id_b256 = parse_b256(channel_id_str)?;
         let escrow_contract = parse_address(&method_details.escrow_contract)?;
 
@@ -95,10 +93,11 @@ impl EvmSessionMethod {
             //     deposit only becomes known after SA returns the receipt,
             //     so the check is deferred.
             if payload_type != "hash" {
-                let claimed_deposit = parse_u128_str(extract_str(
-                    payload.get("authorization").unwrap_or(&serde_json::Value::Null),
-                    "value",
-                ))?;
+                let authorization = payload.get("authorization").ok_or_else(|| {
+                    SaApiError::new(70000, "transaction mode missing authorization object")
+                })?;
+                let claimed_deposit =
+                    parse_u128_str(extract_required_str(authorization, "value")?)?;
                 if cumulative_amount > claimed_deposit {
                     return Err(SaApiError::new(
                         70012,
@@ -140,27 +139,41 @@ impl EvmSessionMethod {
             ));
         }
 
-        // 9. Resolve deposit (both modes have one by this point):
-        //    - transaction: client payload.authorization.value (already used in 6a).
-        //    - hash:        SA receipt.deposit (authoritative on-chain value).
-        let deposit = if payload_type == "hash" {
-            let dep_str = receipt
-                .deposit
-                .as_deref()
-                .filter(|s| !s.is_empty())
-                .ok_or_else(|| {
-                    SaApiError::new(70000, "hash mode: SA session_open response missing deposit")
+        // 9. Resolve deposit. **Prefer SA's authoritative `receipt.deposit`
+        //    in both modes**; fall back to the client-claimed
+        //    `payload.authorization.value` only for transaction mode when
+        //    SA omits the field. This keeps the source-of-truth consistent
+        //    across modes — earlier transaction mode trusted only the
+        //    client value, which would silently store a wrong cap if SA's
+        //    deposit ever differed (fee-on-transfer tokens, future
+        //    rounding).  Hash mode has no client-side deposit to fall back
+        //    to, so SA must populate it. (Review #6)
+        let deposit = match (
+            receipt.deposit.as_deref().filter(|s| !s.is_empty()),
+            payload_type,
+        ) {
+            (Some(dep), _) => parse_u128_str(dep)?,
+            (None, "hash") => {
+                return Err(SaApiError::new(
+                    70000,
+                    "hash mode: SA session_open response missing deposit",
+                ));
+            }
+            (None, _) => {
+                let authorization = payload.get("authorization").ok_or_else(|| {
+                    SaApiError::new(70000, "transaction mode missing authorization object")
                 })?;
-            parse_u128_str(dep_str)?
-        } else {
-            parse_u128_str(extract_str(
-                payload.get("authorization").unwrap_or(&serde_json::Value::Null),
-                "value",
-            ))?
+                parse_u128_str(extract_required_str(authorization, "value")?)?
+            }
         };
 
-        // 9b. Hash mode: deferred cum-vs-deposit check (transaction already did this in 6a).
-        if payload_type == "hash" && cumulative_amount > deposit {
+        // 9b. Re-check cum vs the resolved deposit. For transaction mode
+        //     this is normally redundant with 6a (which used the
+        //     client-claimed value), but if SA returned a smaller
+        //     authoritative deposit (e.g. fee-on-transfer), this catches it
+        //     before the local store is written. For hash mode this is the
+        //     first-and-only chance to enforce the bound.
+        if cumulative_amount > deposit {
             return Err(SaApiError::new(
                 70012,
                 format!(
@@ -205,7 +218,10 @@ impl EvmSessionMethod {
     ) -> Result<Receipt, SaApiError> {
         // Pre-flight: reject `additionalDeposit == 0` before hitting SA. Saves
         // a wasted round-trip and prevents no-op records from polluting state.
-        let additional = parse_u128_str(extract_str(&credential.payload, "additionalDeposit"))?;
+        let additional = parse_u128_str(extract_required_str(
+            &credential.payload,
+            "additionalDeposit",
+        )?)?;
         if additional == 0 {
             return Err(SaApiError::new(
                 70000,
@@ -218,7 +234,8 @@ impl EvmSessionMethod {
         // a close could win the lock between SA's on-chain accept and the
         // local store update, leaving on-chain funds in escrow that the
         // SDK no longer tracks. (H3.b)
-        let channel_id_for_lock = extract_str(&credential.payload, "channelId").to_string();
+        let channel_id_for_lock =
+            extract_required_str(&credential.payload, "channelId")?.to_string();
         let _guard = self.channel_locks.lock(&channel_id_for_lock).await;
 
         // **Pre-flight existence check.** Refuse the topup outright if we
@@ -274,8 +291,8 @@ impl EvmSessionMethod {
         request: &SessionRequest,
     ) -> Result<Receipt, SaApiError> {
         let payload = &credential.payload;
-        let channel_id = extract_str(payload, "channelId");
-        let cum = parse_u128_str(extract_str(payload, "cumulativeAmount"))?;
+        let channel_id = extract_required_str(payload, "channelId")?;
+        let cum = parse_u128_str(extract_required_str(payload, "cumulativeAmount")?)?;
         let sig = parse_optional_hex_bytes(payload.get("signature"))?
             .ok_or_else(|| SaApiError::new(70000, "voucher missing signature"))?;
         let amount = parse_u128_str(&request.amount)?;
@@ -307,8 +324,8 @@ impl EvmSessionMethod {
         credential: &PaymentCredential,
     ) -> Result<Receipt, SaApiError> {
         let payload = &credential.payload;
-        let channel_id = extract_str(payload, "channelId");
-        let cum = parse_u128_str(extract_str(payload, "cumulativeAmount"))?;
+        let channel_id = extract_required_str(payload, "channelId")?;
+        let cum = parse_u128_str(extract_required_str(payload, "cumulativeAmount")?)?;
         let voucher_sig = parse_optional_hex_bytes(payload.get("signature"))?;
 
         // Hold the per-channel lock across verify + close so a concurrent

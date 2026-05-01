@@ -20,7 +20,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 use axum::body::{Body, Bytes};
-use http::{HeaderMap, Request, Response, request::Parts};
+use http::{request::Parts, HeaderMap, Request, Response};
 use serde_json::Value;
 use tower::util::BoxCloneSyncService;
 
@@ -93,11 +93,7 @@ pub trait ProtocolAdapter: Send + Sync + 'static {
     /// - `Ok(Some(headers))` → add to merged 402
     /// - `Ok(None)` → skip this adapter (e.g. no config for this route)
     /// - `Err(msg)` → reported via `on_error`, treated as empty for merging
-    fn get_challenge<'a>(
-        &'a self,
-        parts: &'a Parts,
-        route_cfg: &'a Value,
-    ) -> ChallengeFuture<'a>;
+    fn get_challenge<'a>(&'a self, parts: &'a Parts, route_cfg: &'a Value) -> ChallengeFuture<'a>;
 
     /// Wrap the inner service with this protocol's native middleware.
     ///

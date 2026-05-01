@@ -12,9 +12,8 @@ use std::time::Duration;
 use crate::error::X402Error;
 use crate::facilitator::FacilitatorClient;
 use crate::types::{
-    PaymentPayload, PaymentRequirements,
-    ResourceInfo, SchemeNetworkServer, SettleRequest, SettleResponse,
-    SupportedResponse, VerifyRequest, VerifyResponse,
+    PaymentPayload, PaymentRequirements, ResourceInfo, SchemeNetworkServer, SettleRequest,
+    SettleResponse, SupportedResponse, VerifyRequest, VerifyResponse,
 };
 
 /// Core x402 Resource Server.
@@ -45,11 +44,7 @@ impl X402ResourceServer {
     /// Register a scheme implementation for a specific network.
     ///
     /// Mirrors TS: `server.register(network, scheme)`
-    pub fn register(
-        mut self,
-        network: &str,
-        scheme: impl SchemeNetworkServer + 'static,
-    ) -> Self {
+    pub fn register(mut self, network: &str, scheme: impl SchemeNetworkServer + 'static) -> Self {
         let scheme_name = scheme.scheme().to_string();
         self.schemes
             .entry(network.to_string())
@@ -125,7 +120,9 @@ impl X402ResourceServer {
         let price_obj = serde_json::from_str::<crate::types::AssetAmount>(price)
             .map(crate::types::Price::Asset)
             .unwrap_or_else(|_| crate::types::Price::Money(price.to_string()));
-        let asset_amount = scheme_impl.parse_price(&price_obj, &network.to_string()).await?;
+        let asset_amount = scheme_impl
+            .parse_price(&price_obj, &network.to_string())
+            .await?;
 
         // Merge extra: start with parsed price extras, then overlay config extras
         // Mirrors TS: { ...parsedPrice.extra, ...resourceConfig.extra }
@@ -180,10 +177,7 @@ impl X402ResourceServer {
     ///
     /// Should be called after `initialize()` to ensure all routes are valid
     /// before the server starts accepting requests.
-    pub fn validate_routes(
-        &self,
-        routes: &crate::http::RoutesConfig,
-    ) -> Result<(), X402Error> {
+    pub fn validate_routes(&self, routes: &crate::http::RoutesConfig) -> Result<(), X402Error> {
         let mut errors = Vec::new();
 
         for (path, config) in routes {
@@ -251,8 +245,10 @@ impl X402ResourceServer {
         // Apply settlement overrides (e.g., partial settlement for upto scheme)
         let effective_requirements = if let Some(overrides) = settlement_overrides {
             if let Some(ref raw_amount) = overrides.amount {
-                let resolved =
-                    crate::http::resolve_settlement_override_amount(raw_amount, payment_requirements)?;
+                let resolved = crate::http::resolve_settlement_override_amount(
+                    raw_amount,
+                    payment_requirements,
+                )?;
                 let mut reqs = payment_requirements.clone();
                 reqs.amount = resolved;
                 reqs
@@ -291,7 +287,9 @@ impl X402ResourceServer {
 
         tracing::info!(
             "[x402] polling /settle/status for tx={} (interval={:?}, deadline={:?})",
-            tx_hash, poll_interval, poll_deadline
+            tx_hash,
+            poll_interval,
+            poll_deadline
         );
 
         let result = tokio::time::timeout(poll_deadline, async {
@@ -308,19 +306,33 @@ impl X402ResourceServer {
                                 return PollResult::Success;
                             }
                             Some("pending") => {
-                                tracing::debug!("[x402] poll: tx={} → pending, retrying...", tx_hash);
+                                tracing::debug!(
+                                    "[x402] poll: tx={} → pending, retrying...",
+                                    tx_hash
+                                );
                             }
                             Some(other) => {
-                                tracing::warn!("[x402] poll: tx={} → unknown status '{}', treating as pending", tx_hash, other);
+                                tracing::warn!(
+                                    "[x402] poll: tx={} → unknown status '{}', treating as pending",
+                                    tx_hash,
+                                    other
+                                );
                             }
                             None => {
-                                tracing::debug!("[x402] poll: tx={} → no status, retrying...", tx_hash);
+                                tracing::debug!(
+                                    "[x402] poll: tx={} → no status, retrying...",
+                                    tx_hash
+                                );
                             }
                         }
                     }
                     Err(e) => {
                         // API error — continue polling if still within deadline
-                        tracing::warn!("[x402] poll: tx={} → API error: {}, retrying...", tx_hash, e);
+                        tracing::warn!(
+                            "[x402] poll: tx={} → API error: {}, retrying...",
+                            tx_hash,
+                            e
+                        );
                     }
                 }
                 tokio::time::sleep(poll_interval).await;

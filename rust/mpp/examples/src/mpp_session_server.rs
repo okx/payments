@@ -25,6 +25,8 @@
 //! cargo run -p mpp-examples --example mpp_session_server
 //! ```
 
+use alloy_primitives::Address;
+use alloy_signer_local::PrivateKeySigner;
 use axum::{
     extract::{Query, State},
     http::{header, HeaderMap, StatusCode},
@@ -38,8 +40,6 @@ use mpp_evm::charge::challenge::{build_session_challenge, session_request_with};
 use mpp_evm::sa_client::SaApiClient;
 use mpp_evm::types::{ChannelStatus, SessionMethodDetails};
 use mpp_evm::{CredentialExt, EvmSessionMethod, OkxSaApiClient};
-use alloy_primitives::Address;
-use alloy_signer_local::PrivateKeySigner;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -141,7 +141,9 @@ fn load_client_and_config() -> (Arc<dyn SaApiClient>, Config, PrivateKeySigner) 
     };
     let pk_hex = std::env::var("MPP_MERCHANT_PRIVATE_KEY").unwrap_or_else(|_| {
         eprintln!("missing env var: MPP_MERCHANT_PRIVATE_KEY");
-        eprintln!("(payee signer for SettleAuthorization/CloseAuthorization, must match MPP_RECIPIENT)");
+        eprintln!(
+            "(payee signer for SettleAuthorization/CloseAuthorization, must match MPP_RECIPIENT)"
+        );
         std::process::exit(1);
     });
     let signer: PrivateKeySigner = pk_hex.parse().unwrap_or_else(|e| {
@@ -195,10 +197,13 @@ async fn manage(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl 
                                     .into_response();
                             }
                         };
-                    match state.session_method.verify_session(&credential, &request).await {
+                    match state
+                        .session_method
+                        .verify_session(&credential, &request)
+                        .await
+                    {
                         Ok(receipt) => {
-                            let respond_body =
-                                state.session_method.respond(&credential, &receipt);
+                            let respond_body = state.session_method.respond(&credential, &receipt);
                             // Management action (open / topUp / close): only respond body.
                             // Voucher: respond body 含 spent/units,需与商户业务负载合并。
                             if action != "voucher" {

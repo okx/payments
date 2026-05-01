@@ -100,10 +100,7 @@ mod tests {
         // The contract accepts any uint256, but this keeps SDK logs
         // readable and makes upper-bound checks easy.
         let provider = UuidNonceProvider;
-        let nonce = provider
-            .allocate(Address::ZERO, B256::ZERO)
-            .await
-            .unwrap();
+        let nonce = provider.allocate(Address::ZERO, B256::ZERO).await.unwrap();
         let upper_bound = U256::from(1u64) << 128;
         assert!(nonce < upper_bound);
     }

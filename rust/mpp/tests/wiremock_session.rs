@@ -10,9 +10,7 @@
 //! body field names (camelCase), response deserialization shape, and
 //! `SaApiError` mapping.
 
-use mpp_evm::{
-    CloseRequestPayload, OkxSaApiClient, SaApiClient, SettleRequestPayload,
-};
+use mpp_evm::{CloseRequestPayload, OkxSaApiClient, SaApiClient, SettleRequestPayload};
 use serde_json::Value;
 use wiremock::matchers::{body_json, header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};

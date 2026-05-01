@@ -57,7 +57,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex as StdMutex};
 
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_signer::Signer;
 use tokio::sync::Mutex as AsyncMutex;
 
@@ -67,9 +67,7 @@ use crate::eip712::{
 use crate::error::SaApiError;
 use crate::nonce::{NonceProvider, UuidNonceProvider};
 use crate::sa_client::SaApiClient;
-use crate::store::{
-    ChannelRecord, ChannelUpdater, InMemorySessionStore, SessionStore,
-};
+use crate::store::{ChannelRecord, ChannelUpdater, InMemorySessionStore, SessionStore};
 use crate::types::{
     ChannelStatus, CloseRequestPayload, SessionMethodDetails, SessionReceipt, SettleRequestPayload,
     DEFAULT_CHAIN_ID,
@@ -312,11 +310,11 @@ impl EvmSessionMethod {
     /// session_method.assert_domain_matches(on_chain)?;
     /// ```
     pub fn assert_domain_matches(&self, on_chain: B256) -> Result<(), SaApiError> {
-        let method_details = crate::session_method::decode::decode_method_details(
-            self.method_details.as_ref(),
-        )?;
+        let method_details =
+            crate::session_method::decode::decode_method_details(self.method_details.as_ref())?;
         let escrow = crate::session_method::decode::parse_address(&method_details.escrow_contract)?;
-        let domain = crate::eip712::build_domain(&self.domain_meta, method_details.chain_id, escrow);
+        let domain =
+            crate::eip712::build_domain(&self.domain_meta, method_details.chain_id, escrow);
         let computed = domain.separator();
         if computed != on_chain {
             return Err(SaApiError::new(
@@ -467,9 +465,7 @@ impl EvmSessionMethod {
             if available < amount {
                 return Err(SaApiError::new(
                     70015,
-                    format!(
-                        "insufficient balance: requested {amount} but available {available}"
-                    ),
+                    format!("insufficient balance: requested {amount} but available {available}"),
                 ));
             }
             c.spent = c
@@ -608,8 +604,8 @@ impl EvmSessionMethod {
         // server accepts waiver on either `cum <= settledOnChain` or
         // `voucherSignature == ""`; the SDK passes through caller intent
         // and does no local judgement.
-        let voucher_sig_bytes = provided_voucher_sig
-            .or_else(|| channel.highest_voucher_signature.clone());
+        let voucher_sig_bytes =
+            provided_voucher_sig.or_else(|| channel.highest_voucher_signature.clone());
 
         let channel_id_b256 = parse_b256(channel_id)?;
 
@@ -653,7 +649,6 @@ impl EvmSessionMethod {
     }
 }
 
-
 // ===================== Tests =====================
 
 #[cfg(test)]
@@ -671,6 +666,8 @@ mod tests {
     use std::sync::Mutex as StdMutex;
 
     fn fixture_signer() -> PrivateKeySigner {
+        // **PUBLICLY KNOWN** fixture key (web3.js docs). Safe ONLY in
+        // tests; NEVER copy into production.
         "0x4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318"
             .parse()
             .unwrap()
@@ -847,9 +844,7 @@ mod tests {
     ///
     /// The transaction fixture also stuffs a fake `signature` (EIP-3009)
     /// field to verify that `strip` doesn't remove it.
-    fn fixture_credential_with_initial_voucher(
-        payload_type: &str,
-    ) -> PaymentCredential {
+    fn fixture_credential_with_initial_voucher(payload_type: &str) -> PaymentCredential {
         let mut payload = serde_json::Map::new();
         payload.insert("action".into(), serde_json::json!("open"));
         payload.insert("type".into(), serde_json::json!(payload_type));
@@ -860,7 +855,10 @@ mod tests {
         let voucher_sig = format!("0x{}", "ab".repeat(65));
         if payload_type == "hash" {
             // hash mode: `signature` IS the voucher sig — SDK-only, must be stripped.
-            payload.insert("hash".into(), serde_json::json!(format!("0x{}", "cd".repeat(32))));
+            payload.insert(
+                "hash".into(),
+                serde_json::json!(format!("0x{}", "cd".repeat(32))),
+            );
             payload.insert("signature".into(), serde_json::json!(voucher_sig));
         } else {
             // transaction mode: `signature` is the EIP-3009 deposit sig — SA must keep it.
@@ -892,18 +890,36 @@ mod tests {
         let cred = fixture_credential_with_initial_voucher("transaction");
         let stripped = strip_sdk_only_open_fields(&cred).unwrap();
         let payload = stripped.get("payload").and_then(|v| v.as_object()).unwrap();
-        assert!(!payload.contains_key("cumulativeAmount"), "cumulativeAmount must be stripped");
-        assert!(!payload.contains_key("voucherSignature"), "voucherSignature must be stripped");
+        assert!(
+            !payload.contains_key("cumulativeAmount"),
+            "cumulativeAmount must be stripped"
+        );
+        assert!(
+            !payload.contains_key("voucherSignature"),
+            "voucherSignature must be stripped"
+        );
         // EIP-3009 signature must be kept.
-        assert!(payload.contains_key("signature"), "transaction signature (EIP-3009) must be kept");
+        assert!(
+            payload.contains_key("signature"),
+            "transaction signature (EIP-3009) must be kept"
+        );
         // Other fields preserved.
         assert_eq!(payload.get("action").and_then(|v| v.as_str()), Some("open"));
-        assert_eq!(payload.get("type").and_then(|v| v.as_str()), Some("transaction"));
-        assert_eq!(payload.get("channelId").and_then(|v| v.as_str()), Some("0xchan"));
+        assert_eq!(
+            payload.get("type").and_then(|v| v.as_str()),
+            Some("transaction")
+        );
+        assert_eq!(
+            payload.get("channelId").and_then(|v| v.as_str()),
+            Some("0xchan")
+        );
         assert_eq!(payload.get("salt").and_then(|v| v.as_str()), Some("0xsalt"));
         // Top-level challenge / source preserved.
         assert!(stripped.get("challenge").is_some());
-        assert_eq!(stripped.get("source").and_then(|v| v.as_str()), Some("did:pkh:eip155:196:0xabc"));
+        assert_eq!(
+            stripped.get("source").and_then(|v| v.as_str()),
+            Some("did:pkh:eip155:196:0xabc")
+        );
     }
 
     #[test]
@@ -911,15 +927,24 @@ mod tests {
         let cred = fixture_credential_with_initial_voucher("hash");
         let stripped = strip_sdk_only_open_fields(&cred).unwrap();
         let payload = stripped.get("payload").and_then(|v| v.as_object()).unwrap();
-        assert!(!payload.contains_key("cumulativeAmount"), "cumulativeAmount must be stripped");
+        assert!(
+            !payload.contains_key("cumulativeAmount"),
+            "cumulativeAmount must be stripped"
+        );
         // hash mode: `signature` is the voucher sig (SDK-only) — must be stripped.
-        assert!(!payload.contains_key("signature"), "hash-mode signature (voucher) must be stripped");
+        assert!(
+            !payload.contains_key("signature"),
+            "hash-mode signature (voucher) must be stripped"
+        );
         // `hash` is required by SA — must be kept.
         assert!(payload.contains_key("hash"), "tx hash must be kept");
         // Other fields preserved.
         assert_eq!(payload.get("action").and_then(|v| v.as_str()), Some("open"));
         assert_eq!(payload.get("type").and_then(|v| v.as_str()), Some("hash"));
-        assert_eq!(payload.get("channelId").and_then(|v| v.as_str()), Some("0xchan"));
+        assert_eq!(
+            payload.get("channelId").and_then(|v| v.as_str()),
+            Some("0xchan")
+        );
     }
 
     #[test]
@@ -953,8 +978,7 @@ mod tests {
     fn fixture_channel_record() -> ChannelRecord {
         let signer = fixture_signer();
         ChannelRecord {
-            channel_id: "0x6d0f4fdf1f2f6a1f6c1b0fbd6a7d5c2c0a8d3d7b1f6a9c1b3e2d4a5b6c7d8e9f"
-                .into(),
+            channel_id: "0x6d0f4fdf1f2f6a1f6c1b0fbd6a7d5c2c0a8d3d7b1f6a9c1b3e2d4a5b6c7d8e9f".into(),
             chain_id: 196,
             escrow_contract: address!("5E550002e64FaF79B41D89fE8439eEb1be66CE3b"),
             payer: signer.address(),
@@ -1047,8 +1071,8 @@ mod tests {
 
     #[tokio::test]
     async fn submit_voucher_round_trip() {
-        let method = EvmSessionMethod::new(Arc::new(StubSa::default()))
-            .with_signer(fixture_signer());
+        let method =
+            EvmSessionMethod::new(Arc::new(StubSa::default())).with_signer(fixture_signer());
 
         // Seed the store with the fixture record first.
         let record = fixture_channel_record();
@@ -1066,8 +1090,8 @@ mod tests {
 
     #[tokio::test]
     async fn submit_voucher_strict_increasing() {
-        let method = EvmSessionMethod::new(Arc::new(StubSa::default()))
-            .with_signer(fixture_signer());
+        let method =
+            EvmSessionMethod::new(Arc::new(StubSa::default())).with_signer(fixture_signer());
 
         let record = fixture_channel_record();
         let cid = record.channel_id.clone();
@@ -1076,10 +1100,16 @@ mod tests {
         let sig100 = fixture_voucher_sig(100);
         let sig50 = fixture_voucher_sig(50);
 
-        method.submit_voucher(&cid, 100, sig100.clone()).await.unwrap();
+        method
+            .submit_voucher(&cid, 100, sig100.clone())
+            .await
+            .unwrap();
 
         // Same cum + same sig → idempotent success.
-        method.submit_voucher(&cid, 100, sig100.clone()).await.unwrap();
+        method
+            .submit_voucher(&cid, 100, sig100.clone())
+            .await
+            .unwrap();
 
         // Lower cum with a valid sig → 70013 (delta <= 0, mapped to voucher_delta_too_small).
         let err = method.submit_voucher(&cid, 50, sig50).await.unwrap_err();
@@ -1088,8 +1118,8 @@ mod tests {
 
     #[tokio::test]
     async fn submit_voucher_amount_exceeds_deposit() {
-        let method = EvmSessionMethod::new(Arc::new(StubSa::default()))
-            .with_signer(fixture_signer());
+        let method =
+            EvmSessionMethod::new(Arc::new(StubSa::default())).with_signer(fixture_signer());
 
         let mut record = fixture_channel_record();
         record.deposit = 1000;
@@ -1103,8 +1133,8 @@ mod tests {
 
     #[tokio::test]
     async fn submit_voucher_missing_record_returns_70010() {
-        let method = EvmSessionMethod::new(Arc::new(StubSa::default()))
-            .with_signer(fixture_signer());
+        let method =
+            EvmSessionMethod::new(Arc::new(StubSa::default())).with_signer(fixture_signer());
 
         let sig = fixture_voucher_sig(1);
         let err = method
@@ -1116,8 +1146,8 @@ mod tests {
 
     #[tokio::test]
     async fn deduct_from_channel_increments_spent_and_units() {
-        let method = EvmSessionMethod::new(Arc::new(StubSa::default()))
-            .with_signer(fixture_signer());
+        let method =
+            EvmSessionMethod::new(Arc::new(StubSa::default())).with_signer(fixture_signer());
 
         let mut record = fixture_channel_record();
         record.highest_voucher_amount = 1000;
@@ -1135,8 +1165,8 @@ mod tests {
 
     #[tokio::test]
     async fn deduct_from_channel_insufficient_balance_returns_70015() {
-        let method = EvmSessionMethod::new(Arc::new(StubSa::default()))
-            .with_signer(fixture_signer());
+        let method =
+            EvmSessionMethod::new(Arc::new(StubSa::default())).with_signer(fixture_signer());
 
         let mut record = fixture_channel_record();
         record.highest_voucher_amount = 100;
@@ -1154,8 +1184,8 @@ mod tests {
 
     #[tokio::test]
     async fn deduct_from_channel_missing_returns_70010() {
-        let method = EvmSessionMethod::new(Arc::new(StubSa::default()))
-            .with_signer(fixture_signer());
+        let method =
+            EvmSessionMethod::new(Arc::new(StubSa::default())).with_signer(fixture_signer());
         let err = method
             .deduct_from_channel("0xnonexistent", 1)
             .await
@@ -1212,8 +1242,8 @@ mod tests {
 
     #[tokio::test]
     async fn settle_with_authorization_uses_local_highest() {
-        let method = EvmSessionMethod::new(Arc::new(StubSa::default()))
-            .with_signer(fixture_signer());
+        let method =
+            EvmSessionMethod::new(Arc::new(StubSa::default())).with_signer(fixture_signer());
 
         let mut record = fixture_channel_record();
         record.highest_voucher_amount = 250;
@@ -1229,17 +1259,14 @@ mod tests {
     async fn settle_without_signer_fails_8000() {
         let method = EvmSessionMethod::new(Arc::new(StubSa::default()));
         // No signer injected.
-        let err = method
-            .settle_with_authorization("0xabc")
-            .await
-            .unwrap_err();
+        let err = method.settle_with_authorization("0xabc").await.unwrap_err();
         assert_eq!(err.code, 8000);
     }
 
     #[tokio::test]
     async fn close_removes_channel_record() {
-        let method = EvmSessionMethod::new(Arc::new(StubSa::default()))
-            .with_signer(fixture_signer());
+        let method =
+            EvmSessionMethod::new(Arc::new(StubSa::default())).with_signer(fixture_signer());
 
         let mut record = fixture_channel_record();
         record.highest_voucher_amount = 300;
@@ -1270,7 +1297,9 @@ mod tests {
         // verify assert_domain_matches accepts it.
         let escrow = address!("5E550002e64FaF79B41D89fE8439eEb1be66CE3b");
         let computed = crate::eip712::build_domain(&DomainMeta::default(), 196, escrow).separator();
-        method.assert_domain_matches(computed).expect("domain match");
+        method
+            .assert_domain_matches(computed)
+            .expect("domain match");
     }
 
     #[tokio::test]
@@ -1293,8 +1322,8 @@ mod tests {
 
     #[tokio::test]
     async fn close_rejects_cum_below_local_highest() {
-        let method = EvmSessionMethod::new(Arc::new(StubSa::default()))
-            .with_signer(fixture_signer());
+        let method =
+            EvmSessionMethod::new(Arc::new(StubSa::default())).with_signer(fixture_signer());
 
         let mut record = fixture_channel_record();
         record.highest_voucher_amount = 300;
@@ -1331,8 +1360,8 @@ mod tests {
 
     #[tokio::test]
     async fn voucher_action_auto_deducts_from_request_amount() {
-        let method = EvmSessionMethod::new(Arc::new(StubSa::default()))
-            .with_signer(fixture_signer());
+        let method =
+            EvmSessionMethod::new(Arc::new(StubSa::default())).with_signer(fixture_signer());
 
         let record = fixture_channel_record();
         let cid = record.channel_id.clone();
@@ -1373,7 +1402,9 @@ mod tests {
         assert_eq!(r.highest_voucher_amount, 200);
 
         // respond() should return spent / units.
-        let body = method.respond(&cred, &receipt).expect("respond body for voucher");
+        let body = method
+            .respond(&cred, &receipt)
+            .expect("respond body for voucher");
         assert_eq!(body.get("spent").and_then(|v| v.as_str()), Some("150"));
         assert_eq!(body.get("units").and_then(|v| v.as_u64()), Some(1));
 
@@ -1388,8 +1419,8 @@ mod tests {
         // fires once spent reaches highest. This lets a client sign one
         // large voucher and replay the same bytes for subsequent requests
         // without re-signing.
-        let method = EvmSessionMethod::new(Arc::new(StubSa::default()))
-            .with_signer(fixture_signer());
+        let method =
+            EvmSessionMethod::new(Arc::new(StubSa::default())).with_signer(fixture_signer());
 
         let record = fixture_channel_record();
         let cid = record.channel_id.clone();
@@ -1432,11 +1463,11 @@ mod tests {
         assert_eq!(body2.get("units").and_then(|v| v.as_u64()), Some(2));
 
         // 3rd call: available = 200 - 160 = 40 < 80 → 70015, no deduction.
-        let err = method
-            .verify_session(&make_cred(), &req)
-            .await
-            .unwrap_err();
-        assert!(err.to_string().contains("insufficient"), "expected insufficient balance, got: {err}");
+        let err = method.verify_session(&make_cred(), &req).await.unwrap_err();
+        assert!(
+            err.to_string().contains("insufficient"),
+            "expected insufficient balance, got: {err}"
+        );
 
         // store stays at spent=160 units=2 (3rd failed call doesn't write).
         let s = method.store.get(&cid).await.unwrap();
@@ -1446,8 +1477,8 @@ mod tests {
 
     #[tokio::test]
     async fn submit_voucher_byte_replay_is_idempotent() {
-        let method = EvmSessionMethod::new(Arc::new(StubSa::default()))
-            .with_signer(fixture_signer());
+        let method =
+            EvmSessionMethod::new(Arc::new(StubSa::default())).with_signer(fixture_signer());
 
         let record = fixture_channel_record();
         let cid = record.channel_id.clone();
@@ -1472,8 +1503,8 @@ mod tests {
 
     #[tokio::test]
     async fn voucher_action_insufficient_balance_after_overspend() {
-        let method = EvmSessionMethod::new(Arc::new(StubSa::default()))
-            .with_signer(fixture_signer());
+        let method =
+            EvmSessionMethod::new(Arc::new(StubSa::default())).with_signer(fixture_signer());
 
         let record = fixture_channel_record();
         let cid = record.channel_id.clone();
@@ -1510,8 +1541,8 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_action_errors() {
-        let method = EvmSessionMethod::new(Arc::new(StubSa::default()))
-            .with_signer(fixture_signer());
+        let method =
+            EvmSessionMethod::new(Arc::new(StubSa::default())).with_signer(fixture_signer());
         let cred = PaymentCredential {
             challenge: ChallengeEcho {
                 id: "ch-1".into(),
@@ -1538,8 +1569,8 @@ mod tests {
         // StubSa::session_top_up is unreachable!(); if the guard fires correctly
         // we never reach SA. If the guard regressed, the test would panic via
         // unreachable!().
-        let method = EvmSessionMethod::new(Arc::new(StubSa::default()))
-            .with_signer(fixture_signer());
+        let method =
+            EvmSessionMethod::new(Arc::new(StubSa::default())).with_signer(fixture_signer());
         let cred = PaymentCredential {
             challenge: ChallengeEcho {
                 id: "ch-1".into(),
@@ -1577,8 +1608,8 @@ mod tests {
     /// reaching it would panic the test.
     #[tokio::test]
     async fn topup_pre_flight_rejects_when_local_record_missing() {
-        let method = EvmSessionMethod::new(Arc::new(StubSa::default()))
-            .with_signer(fixture_signer());
+        let method =
+            EvmSessionMethod::new(Arc::new(StubSa::default())).with_signer(fixture_signer());
         let cred = PaymentCredential {
             challenge: ChallengeEcho {
                 id: "ch-pf".into(),
@@ -1605,8 +1636,7 @@ mod tests {
         // mentions "channel not found" plus our "before SA broadcast" hint.
         let msg = err.to_string();
         assert!(
-            msg.contains("channel not found")
-                && msg.to_lowercase().contains("before sa"),
+            msg.contains("channel not found") && msg.to_lowercase().contains("before sa"),
             "expected pre-flight 70010 message, got: {msg}",
         );
     }

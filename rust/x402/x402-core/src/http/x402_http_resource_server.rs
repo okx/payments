@@ -69,9 +69,9 @@ pub fn resolve_settlement_override_amount(
     // Percent format: "50%" or "33.33%"
     if let Some(pct) = raw_amount.strip_suffix('%') {
         let parts: Vec<&str> = pct.split('.').collect();
-        let int_part: u128 = parts[0]
-            .parse()
-            .map_err(|_| crate::error::X402Error::PriceParse(format!("invalid percent: {}", raw_amount)))?;
+        let int_part: u128 = parts[0].parse().map_err(|_| {
+            crate::error::X402Error::PriceParse(format!("invalid percent: {}", raw_amount))
+        })?;
         let dec_part: u128 = if parts.len() > 1 {
             let d = format!("{:0<2}", &parts[1][..parts[1].len().min(2)]);
             d.parse().unwrap_or(0)
@@ -196,8 +196,7 @@ pub type PaymentResolverFn = Box<
     dyn Fn(
             &RequestContext,
             &AcceptConfig,
-        )
-            -> std::pin::Pin<Box<dyn std::future::Future<Output = ResolvedAccept> + Send>>
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ResolvedAccept> + Send>>
         + Send
         + Sync,
 >;
@@ -252,7 +251,11 @@ pub struct SettlementTimeoutResult {
 /// - `tx_hash` - The transaction hash to verify on-chain
 /// - `network` - The CAIP-2 network identifier (e.g., "eip155:196")
 pub type OnSettlementTimeoutHook = Box<
-    dyn Fn(String, String) -> std::pin::Pin<Box<dyn std::future::Future<Output = SettlementTimeoutResult> + Send>>
+    dyn Fn(
+            String,
+            String,
+        )
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = SettlementTimeoutResult> + Send>>
         + Send
         + Sync,
 >;
@@ -344,7 +347,9 @@ pub struct SettleResultContext {
 ///
 /// Mirrors TS: `onProtectedRequest` from `x402HTTPResourceServer.ts`
 pub type OnProtectedRequestHook = Box<
-    dyn Fn(RequestContext)
+    dyn Fn(
+            RequestContext,
+        )
             -> std::pin::Pin<Box<dyn std::future::Future<Output = ProtectedRequestResult> + Send>>
         + Send
         + Sync,
@@ -355,8 +360,9 @@ pub type OnProtectedRequestHook = Box<
 ///
 /// Mirrors TS: `onBeforeVerify` from `x402ResourceServer.ts`
 pub type OnBeforeVerifyHook = Box<
-    dyn Fn(VerifyContext)
-            -> std::pin::Pin<Box<dyn std::future::Future<Output = BeforeHookResult> + Send>>
+    dyn Fn(
+            VerifyContext,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = BeforeHookResult> + Send>>
         + Send
         + Sync,
 >;
@@ -365,8 +371,7 @@ pub type OnBeforeVerifyHook = Box<
 ///
 /// Mirrors TS: `onAfterVerify` from `x402ResourceServer.ts`
 pub type OnAfterVerifyHook = Box<
-    dyn Fn(VerifyResultContext)
-            -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
+    dyn Fn(VerifyResultContext) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
         + Send
         + Sync,
 >;
@@ -376,8 +381,10 @@ pub type OnAfterVerifyHook = Box<
 ///
 /// Mirrors TS: `onVerifyFailure` from `x402ResourceServer.ts`
 pub type OnVerifyFailureHook = Box<
-    dyn Fn(VerifyContext, String)
-            -> std::pin::Pin<
+    dyn Fn(
+            VerifyContext,
+            String,
+        ) -> std::pin::Pin<
             Box<dyn std::future::Future<Output = Option<VerifyRecoveryResult>> + Send>,
         > + Send
         + Sync,
@@ -388,8 +395,9 @@ pub type OnVerifyFailureHook = Box<
 ///
 /// Mirrors TS: `onBeforeSettle` from `x402ResourceServer.ts`
 pub type OnBeforeSettleHook = Box<
-    dyn Fn(SettleContext)
-            -> std::pin::Pin<Box<dyn std::future::Future<Output = BeforeHookResult> + Send>>
+    dyn Fn(
+            SettleContext,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = BeforeHookResult> + Send>>
         + Send
         + Sync,
 >;
@@ -398,8 +406,7 @@ pub type OnBeforeSettleHook = Box<
 ///
 /// Mirrors TS: `onAfterSettle` from `x402ResourceServer.ts`
 pub type OnAfterSettleHook = Box<
-    dyn Fn(SettleResultContext)
-            -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
+    dyn Fn(SettleResultContext) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
         + Send
         + Sync,
 >;
@@ -409,8 +416,10 @@ pub type OnAfterSettleHook = Box<
 ///
 /// Mirrors TS: `onSettleFailure` from `x402ResourceServer.ts`
 pub type OnSettleFailureHook = Box<
-    dyn Fn(SettleContext, String)
-            -> std::pin::Pin<
+    dyn Fn(
+            SettleContext,
+            String,
+        ) -> std::pin::Pin<
             Box<dyn std::future::Future<Output = Option<SettleRecoveryResult>> + Send>,
         > + Send
         + Sync,

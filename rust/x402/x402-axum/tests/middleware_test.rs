@@ -18,12 +18,10 @@ use std::time::Duration;
 
 use x402_axum::{
     payment_middleware, AcceptConfig, BeforeHookResult, PaymentMiddlewareBuilder,
-    ProtectedRequestResult, RoutePaymentConfig, SettleRecoveryResult,
-    SettlementTimeoutResult, VerifyRecoveryResult,
+    ProtectedRequestResult, RoutePaymentConfig, SettleRecoveryResult, SettlementTimeoutResult,
+    VerifyRecoveryResult,
 };
-use x402_core::http::{
-    encode_payment_signature_header, OkxHttpFacilitatorClient,
-};
+use x402_core::http::{encode_payment_signature_header, OkxHttpFacilitatorClient};
 use x402_core::server::X402ResourceServer;
 use x402_core::types::*;
 use x402_evm::{AggrDeferredEvmScheme, ExactEvmScheme};
@@ -46,11 +44,12 @@ async fn build_test_app(mock_server: &MockServer) -> Router {
     // Ensure /supported is mounted for initialize()
     mount_supported_mock(mock_server).await;
 
-    let facilitator = OkxHttpFacilitatorClient::with_url(&mock_server.uri(), "key", "secret", "pass")
-        .expect("failed to create facilitator client");
+    let facilitator =
+        OkxHttpFacilitatorClient::with_url(&mock_server.uri(), "key", "secret", "pass")
+            .expect("failed to create facilitator client");
 
-    let mut server = X402ResourceServer::new(facilitator)
-        .register("eip155:196", ExactEvmScheme::new());
+    let mut server =
+        X402ResourceServer::new(facilitator).register("eip155:196", ExactEvmScheme::new());
 
     server.initialize().await.expect("initialize failed");
 
@@ -72,7 +71,10 @@ async fn build_test_app(mock_server: &MockServer) -> Router {
     )]);
 
     Router::new()
-        .route("/weather", get(|| async { Json(json!({"weather": "sunny"})) }))
+        .route(
+            "/weather",
+            get(|| async { Json(json!({"weather": "sunny"})) }),
+        )
         .route("/free", get(|| async { Json(json!({"status": "ok"})) }))
         .layer(payment_middleware(routes, server))
 }
@@ -112,7 +114,11 @@ fn test_payment_payload() -> PaymentPayload {
 }
 
 /// Mount standard facilitator mocks for /supported, /verify, /settle.
-async fn mount_facilitator_mocks(mock_server: &MockServer, verify_valid: bool, settle_success: bool) {
+async fn mount_facilitator_mocks(
+    mock_server: &MockServer,
+    verify_valid: bool,
+    settle_success: bool,
+) {
     // /supported
     Mock::given(method("GET"))
         .and(path("/api/v6/pay/x402/supported"))
@@ -160,12 +166,7 @@ async fn test_free_endpoint_no_payment_required() {
     let app = build_test_app(&mock_server).await;
 
     let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/free")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::builder().uri("/free").body(Body::empty()).unwrap())
         .await
         .unwrap();
 
@@ -329,9 +330,11 @@ fn test_routes() -> HashMap<String, RoutePaymentConfig> {
 /// Helper: build an initialized X402ResourceServer for hook tests.
 async fn build_initialized_server(mock_server: &MockServer) -> X402ResourceServer {
     mount_supported_mock(mock_server).await;
-    let facilitator = OkxHttpFacilitatorClient::with_url(&mock_server.uri(), "key", "secret", "pass")
-        .expect("failed to create facilitator client");
-    let mut server = X402ResourceServer::new(facilitator).register("eip155:196", ExactEvmScheme::new());
+    let facilitator =
+        OkxHttpFacilitatorClient::with_url(&mock_server.uri(), "key", "secret", "pass")
+            .expect("failed to create facilitator client");
+    let mut server =
+        X402ResourceServer::new(facilitator).register("eip155:196", ExactEvmScheme::new());
     server.initialize().await.expect("initialize failed");
     server
 }
@@ -352,8 +355,9 @@ async fn build_initialized_server_with_deferred(mock_server: &MockServer) -> X40
         .mount(mock_server)
         .await;
 
-    let facilitator = OkxHttpFacilitatorClient::with_url(&mock_server.uri(), "key", "secret", "pass")
-        .expect("failed to create facilitator client");
+    let facilitator =
+        OkxHttpFacilitatorClient::with_url(&mock_server.uri(), "key", "secret", "pass")
+            .expect("failed to create facilitator client");
     let mut server = X402ResourceServer::new(facilitator)
         .register("eip155:196", ExactEvmScheme::new())
         .register("eip155:196", AggrDeferredEvmScheme::new());
@@ -383,12 +387,20 @@ async fn test_on_protected_request_grant_access() {
         .build();
 
     let app = Router::new()
-        .route("/weather", get(|| async { Json(json!({"weather": "sunny"})) }))
+        .route(
+            "/weather",
+            get(|| async { Json(json!({"weather": "sunny"})) }),
+        )
         .layer(layer);
 
     // No payment header, but hook grants access
     let response = app
-        .oneshot(Request::builder().uri("/weather").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/weather")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
 
@@ -417,7 +429,10 @@ async fn test_on_protected_request_abort() {
         .build();
 
     let app = Router::new()
-        .route("/weather", get(|| async { Json(json!({"weather": "sunny"})) }))
+        .route(
+            "/weather",
+            get(|| async { Json(json!({"weather": "sunny"})) }),
+        )
         .layer(layer);
 
     let payload = test_payment_payload();
@@ -460,7 +475,10 @@ async fn test_on_before_verify_abort() {
         .build();
 
     let app = Router::new()
-        .route("/weather", get(|| async { Json(json!({"weather": "sunny"})) }))
+        .route(
+            "/weather",
+            get(|| async { Json(json!({"weather": "sunny"})) }),
+        )
         .layer(layer);
 
     let payload = test_payment_payload();
@@ -503,7 +521,10 @@ async fn test_on_verify_failure_recovered() {
         .build();
 
     let app = Router::new()
-        .route("/weather", get(|| async { Json(json!({"weather": "sunny"})) }))
+        .route(
+            "/weather",
+            get(|| async { Json(json!({"weather": "sunny"})) }),
+        )
         .layer(layer);
 
     let payload = test_payment_payload();
@@ -547,7 +568,10 @@ async fn test_on_before_settle_abort() {
         .build();
 
     let app = Router::new()
-        .route("/weather", get(|| async { Json(json!({"weather": "sunny"})) }))
+        .route(
+            "/weather",
+            get(|| async { Json(json!({"weather": "sunny"})) }),
+        )
         .layer(layer);
 
     let payload = test_payment_payload();
@@ -600,7 +624,10 @@ async fn test_on_settle_failure_recovered() {
         .build();
 
     let app = Router::new()
-        .route("/weather", get(|| async { Json(json!({"weather": "sunny"})) }))
+        .route(
+            "/weather",
+            get(|| async { Json(json!({"weather": "sunny"})) }),
+        )
         .layer(layer);
 
     let payload = test_payment_payload();
@@ -657,7 +684,10 @@ async fn test_after_hooks_execute() {
         .build();
 
     let app = Router::new()
-        .route("/weather", get(|| async { Json(json!({"weather": "sunny"})) }))
+        .route(
+            "/weather",
+            get(|| async { Json(json!({"weather": "sunny"})) }),
+        )
         .layer(layer);
 
     let payload = test_payment_payload();
@@ -675,8 +705,14 @@ async fn test_after_hooks_execute() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
-    assert!(after_verify_called.load(Ordering::SeqCst), "onAfterVerify should have been called");
-    assert!(after_settle_called.load(Ordering::SeqCst), "onAfterSettle should have been called");
+    assert!(
+        after_verify_called.load(Ordering::SeqCst),
+        "onAfterVerify should have been called"
+    );
+    assert!(
+        after_settle_called.load(Ordering::SeqCst),
+        "onAfterSettle should have been called"
+    );
 }
 
 // ===========================================================================
@@ -782,19 +818,26 @@ async fn send_payment_request(app: Router, payload: &PaymentPayload) -> axum::ht
 #[tokio::test]
 async fn test_exact_async_settle_success() {
     let mock_server = MockServer::start().await;
-    mount_mocks_with_settle(&mock_server, json!({
-        "success": true,
-        "payer": "0xBuyer",
-        "transaction": "0xTxHash",
-        "network": "eip155:196",
-        "status": "pending"
-    })).await;
+    mount_mocks_with_settle(
+        &mock_server,
+        json!({
+            "success": true,
+            "payer": "0xBuyer",
+            "transaction": "0xTxHash",
+            "network": "eip155:196",
+            "status": "pending"
+        }),
+    )
+    .await;
 
     let server = build_initialized_server(&mock_server).await;
     let layer = PaymentMiddlewareBuilder::new(test_routes_with_sync_settle(None), server).build();
 
     let app = Router::new()
-        .route("/weather", get(|| async { Json(json!({"weather": "sunny"})) }))
+        .route(
+            "/weather",
+            get(|| async { Json(json!({"weather": "sunny"})) }),
+        )
         .layer(layer);
 
     let resp = send_payment_request(app, &test_payment_payload()).await;
@@ -809,19 +852,26 @@ async fn test_exact_async_settle_success() {
 #[tokio::test]
 async fn test_exact_async_settle_failure() {
     let mock_server = MockServer::start().await;
-    mount_mocks_with_settle(&mock_server, json!({
-        "success": false,
-        "payer": "0xBuyer",
-        "transaction": "",
-        "network": "eip155:196",
-        "errorReason": "insufficient_funds"
-    })).await;
+    mount_mocks_with_settle(
+        &mock_server,
+        json!({
+            "success": false,
+            "payer": "0xBuyer",
+            "transaction": "",
+            "network": "eip155:196",
+            "errorReason": "insufficient_funds"
+        }),
+    )
+    .await;
 
     let server = build_initialized_server(&mock_server).await;
     let layer = PaymentMiddlewareBuilder::new(test_routes_with_sync_settle(None), server).build();
 
     let app = Router::new()
-        .route("/weather", get(|| async { Json(json!({"weather": "sunny"})) }))
+        .route(
+            "/weather",
+            get(|| async { Json(json!({"weather": "sunny"})) }),
+        )
         .layer(layer);
 
     let resp = send_payment_request(app, &test_payment_payload()).await;
@@ -835,19 +885,27 @@ async fn test_exact_async_settle_failure() {
 #[tokio::test]
 async fn test_exact_sync_settle_success() {
     let mock_server = MockServer::start().await;
-    mount_mocks_with_settle(&mock_server, json!({
-        "success": true,
-        "payer": "0xBuyer",
-        "transaction": "0xTxHash",
-        "network": "eip155:196",
-        "status": "success"
-    })).await;
+    mount_mocks_with_settle(
+        &mock_server,
+        json!({
+            "success": true,
+            "payer": "0xBuyer",
+            "transaction": "0xTxHash",
+            "network": "eip155:196",
+            "status": "success"
+        }),
+    )
+    .await;
 
     let server = build_initialized_server(&mock_server).await;
-    let layer = PaymentMiddlewareBuilder::new(test_routes_with_sync_settle(Some(true)), server).build();
+    let layer =
+        PaymentMiddlewareBuilder::new(test_routes_with_sync_settle(Some(true)), server).build();
 
     let app = Router::new()
-        .route("/weather", get(|| async { Json(json!({"weather": "sunny"})) }))
+        .route(
+            "/weather",
+            get(|| async { Json(json!({"weather": "sunny"})) }),
+        )
         .layer(layer);
 
     let resp = send_payment_request(app, &test_payment_payload()).await;
@@ -862,13 +920,17 @@ async fn test_exact_sync_settle_success() {
 #[tokio::test]
 async fn test_exact_sync_timeout_poll_success() {
     let mock_server = MockServer::start().await;
-    mount_mocks_with_settle(&mock_server, json!({
-        "success": true,
-        "payer": "0xBuyer",
-        "transaction": "0xTxHash",
-        "network": "eip155:196",
-        "status": "timeout"
-    })).await;
+    mount_mocks_with_settle(
+        &mock_server,
+        json!({
+            "success": true,
+            "payer": "0xBuyer",
+            "transaction": "0xTxHash",
+            "network": "eip155:196",
+            "status": "timeout"
+        }),
+    )
+    .await;
 
     // /settle/status returns success on first poll
     Mock::given(method("GET"))
@@ -888,7 +950,10 @@ async fn test_exact_sync_timeout_poll_success() {
         .build();
 
     let app = Router::new()
-        .route("/weather", get(|| async { Json(json!({"weather": "sunny"})) }))
+        .route(
+            "/weather",
+            get(|| async { Json(json!({"weather": "sunny"})) }),
+        )
         .layer(layer);
 
     let resp = send_payment_request(app, &test_payment_payload()).await;
@@ -903,13 +968,17 @@ async fn test_exact_sync_timeout_poll_success() {
 #[tokio::test]
 async fn test_exact_sync_timeout_poll_timeout_hook_confirmed() {
     let mock_server = MockServer::start().await;
-    mount_mocks_with_settle(&mock_server, json!({
-        "success": true,
-        "payer": "0xBuyer",
-        "transaction": "0xTxHash",
-        "network": "eip155:196",
-        "status": "timeout"
-    })).await;
+    mount_mocks_with_settle(
+        &mock_server,
+        json!({
+            "success": true,
+            "payer": "0xBuyer",
+            "transaction": "0xTxHash",
+            "network": "eip155:196",
+            "status": "timeout"
+        }),
+    )
+    .await;
 
     // /settle/status always returns pending (will timeout)
     Mock::given(method("GET"))
@@ -932,7 +1001,10 @@ async fn test_exact_sync_timeout_poll_timeout_hook_confirmed() {
         .build();
 
     let app = Router::new()
-        .route("/weather", get(|| async { Json(json!({"weather": "sunny"})) }))
+        .route(
+            "/weather",
+            get(|| async { Json(json!({"weather": "sunny"})) }),
+        )
         .layer(layer);
 
     let resp = send_payment_request(app, &test_payment_payload()).await;
@@ -946,13 +1018,17 @@ async fn test_exact_sync_timeout_poll_timeout_hook_confirmed() {
 #[tokio::test]
 async fn test_exact_sync_timeout_poll_timeout_hook_not_confirmed() {
     let mock_server = MockServer::start().await;
-    mount_mocks_with_settle(&mock_server, json!({
-        "success": true,
-        "payer": "0xBuyer",
-        "transaction": "0xTxHash",
-        "network": "eip155:196",
-        "status": "timeout"
-    })).await;
+    mount_mocks_with_settle(
+        &mock_server,
+        json!({
+            "success": true,
+            "payer": "0xBuyer",
+            "transaction": "0xTxHash",
+            "network": "eip155:196",
+            "status": "timeout"
+        }),
+    )
+    .await;
 
     // /settle/status always returns pending
     Mock::given(method("GET"))
@@ -975,7 +1051,10 @@ async fn test_exact_sync_timeout_poll_timeout_hook_not_confirmed() {
         .build();
 
     let app = Router::new()
-        .route("/weather", get(|| async { Json(json!({"weather": "sunny"})) }))
+        .route(
+            "/weather",
+            get(|| async { Json(json!({"weather": "sunny"})) }),
+        )
         .layer(layer);
 
     let resp = send_payment_request(app, &test_payment_payload()).await;
@@ -989,13 +1068,17 @@ async fn test_exact_sync_timeout_poll_timeout_hook_not_confirmed() {
 #[tokio::test]
 async fn test_exact_sync_timeout_poll_timeout_no_hook() {
     let mock_server = MockServer::start().await;
-    mount_mocks_with_settle(&mock_server, json!({
-        "success": true,
-        "payer": "0xBuyer",
-        "transaction": "0xTxHash",
-        "network": "eip155:196",
-        "status": "timeout"
-    })).await;
+    mount_mocks_with_settle(
+        &mock_server,
+        json!({
+            "success": true,
+            "payer": "0xBuyer",
+            "transaction": "0xTxHash",
+            "network": "eip155:196",
+            "status": "timeout"
+        }),
+    )
+    .await;
 
     // /settle/status always returns pending
     Mock::given(method("GET"))
@@ -1016,7 +1099,10 @@ async fn test_exact_sync_timeout_poll_timeout_no_hook() {
         .build();
 
     let app = Router::new()
-        .route("/weather", get(|| async { Json(json!({"weather": "sunny"})) }))
+        .route(
+            "/weather",
+            get(|| async { Json(json!({"weather": "sunny"})) }),
+        )
         .layer(layer);
 
     let resp = send_payment_request(app, &test_payment_payload()).await;
@@ -1030,13 +1116,17 @@ async fn test_exact_sync_timeout_poll_timeout_no_hook() {
 #[tokio::test]
 async fn test_exact_sync_timeout_poll_failed_hook_confirmed() {
     let mock_server = MockServer::start().await;
-    mount_mocks_with_settle(&mock_server, json!({
-        "success": true,
-        "payer": "0xBuyer",
-        "transaction": "0xTxHash",
-        "network": "eip155:196",
-        "status": "timeout"
-    })).await;
+    mount_mocks_with_settle(
+        &mock_server,
+        json!({
+            "success": true,
+            "payer": "0xBuyer",
+            "transaction": "0xTxHash",
+            "network": "eip155:196",
+            "status": "timeout"
+        }),
+    )
+    .await;
 
     // /settle/status returns failed immediately
     Mock::given(method("GET"))
@@ -1059,7 +1149,10 @@ async fn test_exact_sync_timeout_poll_failed_hook_confirmed() {
         .build();
 
     let app = Router::new()
-        .route("/weather", get(|| async { Json(json!({"weather": "sunny"})) }))
+        .route(
+            "/weather",
+            get(|| async { Json(json!({"weather": "sunny"})) }),
+        )
         .layer(layer);
 
     let resp = send_payment_request(app, &test_payment_payload()).await;
@@ -1074,19 +1167,27 @@ async fn test_exact_sync_timeout_poll_failed_hook_confirmed() {
 #[tokio::test]
 async fn test_exact_sync_settle_failure() {
     let mock_server = MockServer::start().await;
-    mount_mocks_with_settle(&mock_server, json!({
-        "success": false,
-        "payer": "0xBuyer",
-        "transaction": "",
-        "network": "eip155:196",
-        "errorReason": "insufficient_funds"
-    })).await;
+    mount_mocks_with_settle(
+        &mock_server,
+        json!({
+            "success": false,
+            "payer": "0xBuyer",
+            "transaction": "",
+            "network": "eip155:196",
+            "errorReason": "insufficient_funds"
+        }),
+    )
+    .await;
 
     let server = build_initialized_server(&mock_server).await;
-    let layer = PaymentMiddlewareBuilder::new(test_routes_with_sync_settle(Some(true)), server).build();
+    let layer =
+        PaymentMiddlewareBuilder::new(test_routes_with_sync_settle(Some(true)), server).build();
 
     let app = Router::new()
-        .route("/weather", get(|| async { Json(json!({"weather": "sunny"})) }))
+        .route(
+            "/weather",
+            get(|| async { Json(json!({"weather": "sunny"})) }),
+        )
         .layer(layer);
 
     let resp = send_payment_request(app, &test_payment_payload()).await;
@@ -1100,19 +1201,26 @@ async fn test_exact_sync_settle_failure() {
 #[tokio::test]
 async fn test_aggr_deferred_settle_success() {
     let mock_server = MockServer::start().await;
-    mount_mocks_with_settle(&mock_server, json!({
-        "success": true,
-        "payer": "0xBuyer",
-        "transaction": "",
-        "network": "eip155:196",
-        "status": "success"
-    })).await;
+    mount_mocks_with_settle(
+        &mock_server,
+        json!({
+            "success": true,
+            "payer": "0xBuyer",
+            "transaction": "",
+            "network": "eip155:196",
+            "status": "success"
+        }),
+    )
+    .await;
 
     let server = build_initialized_server_with_deferred(&mock_server).await;
     let layer = PaymentMiddlewareBuilder::new(test_routes_aggr_deferred(), server).build();
 
     let app = Router::new()
-        .route("/weather", get(|| async { Json(json!({"weather": "sunny"})) }))
+        .route(
+            "/weather",
+            get(|| async { Json(json!({"weather": "sunny"})) }),
+        )
         .layer(layer);
 
     let resp = send_payment_request(app, &test_payment_payload_deferred()).await;
@@ -1127,19 +1235,26 @@ async fn test_aggr_deferred_settle_success() {
 #[tokio::test]
 async fn test_aggr_deferred_settle_failure() {
     let mock_server = MockServer::start().await;
-    mount_mocks_with_settle(&mock_server, json!({
-        "success": false,
-        "payer": "0xBuyer",
-        "transaction": "",
-        "network": "eip155:196",
-        "errorReason": "rejected"
-    })).await;
+    mount_mocks_with_settle(
+        &mock_server,
+        json!({
+            "success": false,
+            "payer": "0xBuyer",
+            "transaction": "",
+            "network": "eip155:196",
+            "errorReason": "rejected"
+        }),
+    )
+    .await;
 
     let server = build_initialized_server_with_deferred(&mock_server).await;
     let layer = PaymentMiddlewareBuilder::new(test_routes_aggr_deferred(), server).build();
 
     let app = Router::new()
-        .route("/weather", get(|| async { Json(json!({"weather": "sunny"})) }))
+        .route(
+            "/weather",
+            get(|| async { Json(json!({"weather": "sunny"})) }),
+        )
         .layer(layer);
 
     let resp = send_payment_request(app, &test_payment_payload_deferred()).await;
@@ -1174,34 +1289,52 @@ async fn test_multiple_hooks_coexist() {
             let c = c1.clone();
             Box::pin(async move {
                 c.fetch_add(1, Ordering::SeqCst);
-                ProtectedRequestResult { grant_access: false, abort: false, reason: None }
+                ProtectedRequestResult {
+                    grant_access: false,
+                    abort: false,
+                    reason: None,
+                }
             })
         }))
         .on_before_verify(Box::new(move |_ctx| {
             let c = c2.clone();
             Box::pin(async move {
                 c.fetch_add(1, Ordering::SeqCst);
-                BeforeHookResult { abort: false, reason: None }
+                BeforeHookResult {
+                    abort: false,
+                    reason: None,
+                }
             })
         }))
         .on_after_verify(Box::new(move |_ctx| {
             let c = c3.clone();
-            Box::pin(async move { c.fetch_add(1, Ordering::SeqCst); })
+            Box::pin(async move {
+                c.fetch_add(1, Ordering::SeqCst);
+            })
         }))
         .on_after_settle(Box::new(move |_ctx| {
             let c = c4.clone();
-            Box::pin(async move { c.fetch_add(1, Ordering::SeqCst); })
+            Box::pin(async move {
+                c.fetch_add(1, Ordering::SeqCst);
+            })
         }))
         .build();
 
     let app = Router::new()
-        .route("/weather", get(|| async { Json(json!({"weather": "sunny"})) }))
+        .route(
+            "/weather",
+            get(|| async { Json(json!({"weather": "sunny"})) }),
+        )
         .layer(layer);
 
     let resp = send_payment_request(app, &test_payment_payload()).await;
     assert_eq!(resp.status(), StatusCode::OK);
     // All 4 hooks should have been called exactly once
-    assert_eq!(call_count.load(Ordering::SeqCst), 4, "all 4 hooks should fire");
+    assert_eq!(
+        call_count.load(Ordering::SeqCst),
+        4,
+        "all 4 hooks should fire"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1223,13 +1356,20 @@ async fn test_protected_request_hook_not_called_for_free_route() {
             let flag = hc.clone();
             Box::pin(async move {
                 flag.store(true, Ordering::SeqCst);
-                ProtectedRequestResult { grant_access: false, abort: true, reason: Some("should not reach".into()) }
+                ProtectedRequestResult {
+                    grant_access: false,
+                    abort: true,
+                    reason: Some("should not reach".into()),
+                }
             })
         }))
         .build();
 
     let app = Router::new()
-        .route("/weather", get(|| async { Json(json!({"weather": "sunny"})) }))
+        .route(
+            "/weather",
+            get(|| async { Json(json!({"weather": "sunny"})) }),
+        )
         .route("/free", get(|| async { Json(json!({"status": "ok"})) }))
         .layer(layer);
 
@@ -1240,7 +1380,10 @@ async fn test_protected_request_hook_not_called_for_free_route() {
         .unwrap();
 
     assert_eq!(resp.status(), StatusCode::OK);
-    assert!(!hook_called.load(Ordering::SeqCst), "hook should not fire for free routes");
+    assert!(
+        !hook_called.load(Ordering::SeqCst),
+        "hook should not fire for free routes"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1261,7 +1404,10 @@ async fn test_verify_failure_hook_returns_none() {
         .build();
 
     let app = Router::new()
-        .route("/weather", get(|| async { Json(json!({"weather": "sunny"})) }))
+        .route(
+            "/weather",
+            get(|| async { Json(json!({"weather": "sunny"})) }),
+        )
         .layer(layer);
 
     let resp = send_payment_request(app, &test_payment_payload()).await;
@@ -1282,13 +1428,19 @@ async fn test_verify_failure_hook_recovered_false() {
     let layer = PaymentMiddlewareBuilder::new(test_routes(), server)
         .on_verify_failure(Box::new(|_ctx, _reason| {
             Box::pin(async move {
-                Some(VerifyRecoveryResult { recovered: false, result: None })
+                Some(VerifyRecoveryResult {
+                    recovered: false,
+                    result: None,
+                })
             })
         }))
         .build();
 
     let app = Router::new()
-        .route("/weather", get(|| async { Json(json!({"weather": "sunny"})) }))
+        .route(
+            "/weather",
+            get(|| async { Json(json!({"weather": "sunny"})) }),
+        )
         .layer(layer);
 
     let resp = send_payment_request(app, &test_payment_payload()).await;
@@ -1309,13 +1461,19 @@ async fn test_settle_failure_hook_recovered_false() {
     let layer = PaymentMiddlewareBuilder::new(test_routes(), server)
         .on_settle_failure(Box::new(|_ctx, _reason| {
             Box::pin(async move {
-                Some(SettleRecoveryResult { recovered: false, result: None })
+                Some(SettleRecoveryResult {
+                    recovered: false,
+                    result: None,
+                })
             })
         }))
         .build();
 
     let app = Router::new()
-        .route("/weather", get(|| async { Json(json!({"weather": "sunny"})) }))
+        .route(
+            "/weather",
+            get(|| async { Json(json!({"weather": "sunny"})) }),
+        )
         .layer(layer);
 
     let resp = send_payment_request(app, &test_payment_payload()).await;
@@ -1348,18 +1506,27 @@ async fn test_hook_context_contains_correct_data() {
                     && ctx.payment_requirements.scheme == "exact"
                     && ctx.payment_requirements.pay_to == "0xSeller";
                 flag.store(valid, Ordering::SeqCst);
-                BeforeHookResult { abort: false, reason: None }
+                BeforeHookResult {
+                    abort: false,
+                    reason: None,
+                }
             })
         }))
         .build();
 
     let app = Router::new()
-        .route("/weather", get(|| async { Json(json!({"weather": "sunny"})) }))
+        .route(
+            "/weather",
+            get(|| async { Json(json!({"weather": "sunny"})) }),
+        )
         .layer(layer);
 
     let resp = send_payment_request(app, &test_payment_payload()).await;
     assert_eq!(resp.status(), StatusCode::OK);
-    assert!(context_valid.load(Ordering::SeqCst), "hook context should contain correct payload data");
+    assert!(
+        context_valid.load(Ordering::SeqCst),
+        "hook context should contain correct payload data"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1392,12 +1559,18 @@ async fn test_after_settle_context_contains_settle_response() {
         .build();
 
     let app = Router::new()
-        .route("/weather", get(|| async { Json(json!({"weather": "sunny"})) }))
+        .route(
+            "/weather",
+            get(|| async { Json(json!({"weather": "sunny"})) }),
+        )
         .layer(layer);
 
     let resp = send_payment_request(app, &test_payment_payload()).await;
     assert_eq!(resp.status(), StatusCode::OK);
-    assert!(context_valid.load(Ordering::SeqCst), "onAfterSettle should receive correct settle response");
+    assert!(
+        context_valid.load(Ordering::SeqCst),
+        "onAfterSettle should receive correct settle response"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1419,17 +1592,28 @@ async fn test_handler_error_skips_settle_and_hooks() {
     let layer = PaymentMiddlewareBuilder::new(test_routes(), server)
         .on_after_settle(Box::new(move |_ctx| {
             let flag = shc.clone();
-            Box::pin(async move { flag.store(true, Ordering::SeqCst); })
+            Box::pin(async move {
+                flag.store(true, Ordering::SeqCst);
+            })
         }))
         .build();
 
     let app = Router::new()
-        .route("/weather", get(|| async {
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "boom"})))
-        }))
+        .route(
+            "/weather",
+            get(|| async {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": "boom"})),
+                )
+            }),
+        )
         .layer(layer);
 
     let resp = send_payment_request(app, &test_payment_payload()).await;
     assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    assert!(!settle_hook_called.load(Ordering::SeqCst), "settle hook should NOT fire when handler errors");
+    assert!(
+        !settle_hook_called.load(Ordering::SeqCst),
+        "settle hook should NOT fire when handler errors"
+    );
 }

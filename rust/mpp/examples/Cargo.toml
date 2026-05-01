@@ -1,14 +1,15 @@
 [package]
 name = "mpp-examples"
 description = "Example servers using the MPP Rust Seller SDK"
-version.workspace = true
+# `version` required by manifest schema; irrelevant because `publish = false`.
+version = "0.0.0"
 edition.workspace = true
 license.workspace = true
 publish = false
 
 [dependencies]
 mpp-evm = { path = "..", features = ["handlers"] }
-mpp = { git = "https://github.com/tempoxyz/mpp-rs", features = ["server", "evm", "tower", "axum"] }
+mpp = { version = "0.10", features = ["server", "evm", "tower", "axum"] }
 payment-router-axum = { path = "../../payment-router-axum" }
 x402-axum = { path = "../../x402/x402-axum" }
 x402-core = { path = "../../x402/x402-core" }

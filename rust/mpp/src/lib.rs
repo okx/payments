@@ -38,12 +38,12 @@
 //! [`ChargeMethod`]: mpp::protocol::traits::ChargeMethod
 //! [`SessionMethod`]: mpp::protocol::traits::SessionMethod
 
+#[cfg(feature = "handlers")]
+pub mod axum;
 pub mod charge;
 pub mod credential_ext;
 pub mod eip712;
 pub mod error;
-#[cfg(feature = "handlers")]
-pub mod axum;
 pub mod nonce;
 pub mod sa_client;
 pub mod session_method;
@@ -59,9 +59,9 @@ pub use eip712::{
 };
 pub use error::SaApiError;
 pub use nonce::{NonceProvider, UuidNonceProvider};
-pub use types::{
-    ChargeMethodDetails, ChargeSplit, CloseRequestPayload, SettleRequestPayload, DEFAULT_CHAIN_ID,
-};
 pub use sa_client::{OkxSaApiClient, SaApiClient};
 pub use session_method::EvmSessionMethod;
 pub use store::{ChannelRecord, InMemorySessionStore, SessionStore};
+pub use types::{
+    ChargeMethodDetails, ChargeSplit, CloseRequestPayload, SettleRequestPayload, DEFAULT_CHAIN_ID,
+};

@@ -2,15 +2,15 @@
 //!
 //! Mirrors: `@x402/core/src/types/index.ts`
 
-mod payments;
+mod extensions;
 mod facilitator;
 mod mechanisms;
-mod extensions;
+mod payments;
 
-pub use payments::*;
+pub use extensions::*;
 pub use facilitator::*;
 pub use mechanisms::*;
-pub use extensions::*;
+pub use payments::*;
 
 /// Network identifier in CAIP-2 format (e.g., "eip155:196").
 ///

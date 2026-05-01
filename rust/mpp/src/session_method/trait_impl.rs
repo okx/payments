@@ -8,7 +8,7 @@ use mpp::protocol::intents::SessionRequest;
 use mpp::protocol::traits::{SessionMethod, VerificationError};
 
 use super::decode::{
-    extract_str, ACTION_CLOSE, ACTION_OPEN, ACTION_TOPUP, ACTION_VOUCHER,
+    extract_str_or_empty, ACTION_CLOSE, ACTION_OPEN, ACTION_TOPUP, ACTION_VOUCHER,
 };
 use super::EvmSessionMethod;
 use crate::error::SaApiError;
@@ -33,7 +33,7 @@ impl SessionMethod for EvmSessionMethod {
         let this = self.clone();
 
         async move {
-            let action = extract_str(&credential.payload, "action");
+            let action = extract_str_or_empty(&credential.payload, "action");
 
             let result: Result<Receipt, SaApiError> = match action {
                 ACTION_OPEN => this.handle_open(&credential).await,
@@ -63,8 +63,8 @@ impl SessionMethod for EvmSessionMethod {
         // Management actions (open/topUp/close) return a minimal response.
         // The voucher action returns the deduct snapshot (spent/units).
         // The `reference` field is SA's on-chain tx hash, falling back to channelId.
-        let action = extract_str(&credential.payload, "action");
-        let channel_id = extract_str(&credential.payload, "channelId");
+        let action = extract_str_or_empty(&credential.payload, "action");
+        let channel_id = extract_str_or_empty(&credential.payload, "channelId");
         match action {
             ACTION_OPEN | ACTION_TOPUP | ACTION_CLOSE => Some(serde_json::json!({
                 "action":     action,

@@ -21,7 +21,7 @@
 //! persistent store.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use alloy_primitives::{Address, Bytes};
 use async_trait::async_trait;
@@ -87,8 +87,7 @@ impl ChannelRecord {
 /// Closure type for atomic [`ChannelRecord`] updates. Returning `Err`
 /// fails the whole `update` and the prior value stays in place (database
 /// transaction semantics).
-pub type ChannelUpdater =
-    Box<dyn FnOnce(&mut ChannelRecord) -> Result<(), SaApiError> + Send>;
+pub type ChannelUpdater = Box<dyn FnOnce(&mut ChannelRecord) -> Result<(), SaApiError> + Send>;
 
 /// Pluggable channel-storage trait.
 ///
@@ -134,23 +133,30 @@ impl InMemorySessionStore {
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// Recover from a poisoned mutex by taking the inner data anyway.
+    /// `ChannelRecord` is plain data with no broken-invariant risk: even
+    /// if a previous holder panicked mid-update, the `clone-then-write`
+    /// pattern in [`Self::update`] ensures the stored map is unchanged on
+    /// closure panic. Returning `into_inner()` keeps the SDK alive across
+    /// transient panics instead of taking down every subsequent request.
+    fn lock_inner(&self) -> MutexGuard<'_, HashMap<String, ChannelRecord>> {
+        self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+    }
 }
 
 #[async_trait]
 impl SessionStore for InMemorySessionStore {
     async fn get(&self, channel_id: &str) -> Option<ChannelRecord> {
-        self.inner.lock().unwrap().get(channel_id).cloned()
+        self.lock_inner().get(channel_id).cloned()
     }
 
     async fn put(&self, record: ChannelRecord) {
-        self.inner
-            .lock()
-            .unwrap()
-            .insert(record.channel_id.clone(), record);
+        self.lock_inner().insert(record.channel_id.clone(), record);
     }
 
     async fn remove(&self, channel_id: &str) {
-        self.inner.lock().unwrap().remove(channel_id);
+        self.lock_inner().remove(channel_id);
     }
 
     async fn update(
@@ -158,7 +164,7 @@ impl SessionStore for InMemorySessionStore {
         channel_id: &str,
         updater: ChannelUpdater,
     ) -> Result<ChannelRecord, SaApiError> {
-        let mut map = self.inner.lock().unwrap();
+        let mut map = self.lock_inner();
         let record = map
             .get_mut(channel_id)
             .ok_or_else(|| SaApiError::new(70010, "channel not found"))?;
@@ -255,9 +261,7 @@ mod tests {
     #[tokio::test]
     async fn update_missing_channel_returns_70010() {
         let store = InMemorySessionStore::new();
-        let result = store
-            .update("0xnope", Box::new(|_| Ok(())))
-            .await;
+        let result = store.update("0xnope", Box::new(|_| Ok(()))).await;
         match result {
             Err(e) => assert_eq!(e.code, 70010),
             Ok(_) => panic!("expected error for missing channel"),
@@ -306,5 +310,32 @@ mod tests {
     fn voucher_signer_returns_authorized_signer() {
         let r = fixture_record("0xa", 100, 0);
         assert_eq!(r.voucher_signer(), r.authorized_signer);
+    }
+
+    /// Regression: a panic that poisons the inner mutex must NOT take down
+    /// every subsequent call. We poison via a sync block (Mutex poisons
+    /// only on panic-while-holding), then verify a fresh `get`/`put` still
+    /// works. The data itself is unaffected because `update`'s
+    /// clone-then-write pattern leaves the stored map untouched on closure
+    /// panic.
+    #[tokio::test]
+    async fn poisoned_mutex_does_not_kill_subsequent_calls() {
+        let store = InMemorySessionStore::new();
+        store.put(fixture_record("0xa", 1000, 100)).await;
+
+        // Poison the inner mutex by panicking while holding it.
+        let inner = store.inner.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = inner.lock().unwrap();
+            panic!("poison the mutex");
+        })
+        .join();
+        assert!(store.inner.is_poisoned(), "mutex must be poisoned");
+
+        // Subsequent calls must still succeed.
+        let got = store.get("0xa").await.expect("get post-poison");
+        assert_eq!(got.deposit, 1000);
+        store.put(fixture_record("0xb", 2000, 0)).await;
+        assert_eq!(store.get("0xb").await.unwrap().deposit, 2000);
     }
 }

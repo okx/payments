@@ -38,8 +38,8 @@ async fn main() {
 
     // 2. Create Server and register schemes (mirrors TS: new x402ResourceServer(fc).register(n, s))
     // Register a custom MoneyParser so "$0.003" maps to USDG on X Layer
-    let aggr_deferred = AggrDeferredEvmScheme::new()
-        .register_money_parser(Box::new(|amount, network| {
+    let aggr_deferred =
+        AggrDeferredEvmScheme::new().register_money_parser(Box::new(|amount, network| {
             if network == "eip155:196" {
                 Some(AssetAmount {
                     asset: "0x4ae46a509f6b1d9056937ba4500cb143933d2dc8".into(),
@@ -60,7 +60,10 @@ async fn main() {
 
     // MUST initialize before use (fetches facilitator's supported schemes)
     // Mirrors TS: await server.initialize()
-    server.initialize().await.expect("Failed to initialize: check facilitator connectivity");
+    server
+        .initialize()
+        .await
+        .expect("Failed to initialize: check facilitator connectivity");
 
     // 3. Route-level payment config (mirrors TS: paymentMiddleware({ "GET /weather": {...} }, server))
     let routes = HashMap::from([(
@@ -95,9 +98,7 @@ async fn main() {
         .route("/weather", get(weather_handler))
         .layer(payment_middleware(routes, server));
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:4021")
-        .await
-        .unwrap();
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:4021").await.unwrap();
     println!("Server listening at http://localhost:4021");
     println!("Try: curl http://localhost:4021/weather");
     axum::serve(listener, app).await.unwrap();

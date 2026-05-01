@@ -6,8 +6,10 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 
 use x402_core::error::X402Error;
-use x402_core::types::{AssetAmount, MoneyParser, Network, PaymentRequirements, Price, SupportedKind};
 use x402_core::types::SchemeNetworkServer;
+use x402_core::types::{
+    AssetAmount, MoneyParser, Network, PaymentRequirements, Price, SupportedKind,
+};
 
 use crate::constants::{get_default_asset, DefaultAssetInfo};
 
@@ -51,10 +53,16 @@ impl ExactEvmScheme {
             .parse::<f64>()
             .map_err(|_| X402Error::PriceParse(format!("invalid money format: {}", money)))?;
         if !value.is_finite() {
-            return Err(X402Error::PriceParse(format!("money must be finite: {}", money)));
+            return Err(X402Error::PriceParse(format!(
+                "money must be finite: {}",
+                money
+            )));
         }
         if value < 0.0 {
-            return Err(X402Error::PriceParse(format!("money must be non-negative: {}", money)));
+            return Err(X402Error::PriceParse(format!(
+                "money must be non-negative: {}",
+                money
+            )));
         }
         Ok(clean)
     }
@@ -107,8 +115,7 @@ impl ExactEvmScheme {
             ))
         })?;
 
-        let token_amount =
-            Self::convert_to_token_amount(amount, asset_info.decimals)?;
+        let token_amount = Self::convert_to_token_amount(amount, asset_info.decimals)?;
 
         // EIP-3009 tokens always need name/version for their transferWithAuthorization domain.
         // Permit2 tokens only need them if the token supports EIP-2612.
@@ -156,7 +163,11 @@ impl SchemeNetworkServer for ExactEvmScheme {
     /// Parse a user-friendly price to an AssetAmount.
     ///
     /// Mirrors TS: `async parsePrice(price: Price, network: Network): Promise<AssetAmount>`
-    async fn parse_price(&self, price: &Price, network: &Network) -> Result<AssetAmount, X402Error> {
+    async fn parse_price(
+        &self,
+        price: &Price,
+        network: &Network,
+    ) -> Result<AssetAmount, X402Error> {
         match price {
             // If already an AssetAmount, return it directly
             Price::Asset(asset_amount) => {
@@ -209,20 +220,23 @@ mod tests {
     async fn test_parse_price_dollar_string() {
         let scheme = ExactEvmScheme::new();
         let price = Price::Money("$0.001".to_string());
-        let result = scheme.parse_price(&price, &"eip155:196".to_string()).await.unwrap();
+        let result = scheme
+            .parse_price(&price, &"eip155:196".to_string())
+            .await
+            .unwrap();
 
         assert_eq!(result.amount, "1000");
-        assert_eq!(
-            result.asset,
-            "0x779ded0c9e1022225f8e0630b35a9b54be713736"
-        );
+        assert_eq!(result.asset, "0x779ded0c9e1022225f8e0630b35a9b54be713736");
     }
 
     #[tokio::test]
     async fn test_parse_price_plain_number() {
         let scheme = ExactEvmScheme::new();
         let price = Price::Money("0.01".to_string());
-        let result = scheme.parse_price(&price, &"eip155:196".to_string()).await.unwrap();
+        let result = scheme
+            .parse_price(&price, &"eip155:196".to_string())
+            .await
+            .unwrap();
 
         assert_eq!(result.amount, "10000");
     }
@@ -235,7 +249,10 @@ mod tests {
             asset: "0xCustomToken".to_string(),
             extra: None,
         });
-        let result = scheme.parse_price(&price, &"eip155:196".to_string()).await.unwrap();
+        let result = scheme
+            .parse_price(&price, &"eip155:196".to_string())
+            .await
+            .unwrap();
 
         assert_eq!(result.amount, "5000");
         assert_eq!(result.asset, "0xCustomToken");
@@ -245,7 +262,9 @@ mod tests {
     async fn test_parse_price_unsupported_network() {
         let scheme = ExactEvmScheme::new();
         let price = Price::Money("$1.00".to_string());
-        let result = scheme.parse_price(&price, &"eip155:99999".to_string()).await;
+        let result = scheme
+            .parse_price(&price, &"eip155:99999".to_string())
+            .await;
 
         assert!(result.is_err());
     }

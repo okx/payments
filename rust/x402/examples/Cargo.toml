@@ -1,7 +1,9 @@
 [package]
 name = "x402-examples"
 description = "Example servers using the x402 Rust Seller SDK"
-version.workspace = true
+# `version` is required by Cargo's manifest schema; value is irrelevant
+# because `publish = false` keeps this out of crates.io anyway.
+version = "0.0.0"
 edition.workspace = true
 license.workspace = true
 publish = false

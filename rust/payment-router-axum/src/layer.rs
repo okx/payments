@@ -137,9 +137,7 @@ impl Service<Request<Body>> for PaymentRouterService {
         let adapter_services = self.adapter_services.clone();
         let fallback = self.fallback.clone();
 
-        Box::pin(async move {
-            dispatch(state, adapter_services, fallback, req).await
-        })
+        Box::pin(async move { dispatch(state, adapter_services, fallback, req).await })
     }
 }
 
@@ -221,7 +219,7 @@ mod tests {
     use crate::adapter::{ChallengeFuture, InnerService, ProtocolAdapter};
     use crate::types::UnifiedRouteConfig;
     use axum::body::{to_bytes, Body};
-    use http::{HeaderValue, StatusCode, header::WWW_AUTHENTICATE, request::Parts};
+    use http::{header::WWW_AUTHENTICATE, request::Parts, HeaderValue, StatusCode};
     use serde_json::Value;
     use std::collections::HashMap;
 
@@ -251,13 +249,15 @@ mod tests {
                 WWW_AUTHENTICATE,
                 HeaderValue::from_str(&format!(
                     "{} realm=\"test\"",
-                    if self.name == "mpp" { "Payment" } else { "x402" }
+                    if self.name == "mpp" {
+                        "Payment"
+                    } else {
+                        "x402"
+                    }
                 ))
                 .unwrap(),
             );
-            Box::pin(async move {
-                Ok(Some(crate::adapter::ChallengeResponse::headers_only(map)))
-            })
+            Box::pin(async move { Ok(Some(crate::adapter::ChallengeResponse::headers_only(map))) })
         }
         fn make_service(&self, inner: InnerService) -> InnerService {
             let name = self.name.clone();
@@ -266,10 +266,8 @@ mod tests {
                 let protocol = name.clone();
                 async move {
                     let mut resp = inner.ready().await?.call(req).await?;
-                    resp.headers_mut().insert(
-                        "X-Handled-By",
-                        HeaderValue::from_str(&protocol).unwrap(),
-                    );
+                    resp.headers_mut()
+                        .insert("X-Handled-By", HeaderValue::from_str(&protocol).unwrap());
                     Ok::<_, Infallible>(resp)
                 }
             }))
@@ -327,7 +325,11 @@ mod tests {
         let resp = svc.call(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(
-            resp.headers().get("X-Handled-By").unwrap().to_str().unwrap(),
+            resp.headers()
+                .get("X-Handled-By")
+                .unwrap()
+                .to_str()
+                .unwrap(),
             "mpp"
         );
     }
@@ -344,7 +346,11 @@ mod tests {
         let resp = svc.call(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(
-            resp.headers().get("X-Handled-By").unwrap().to_str().unwrap(),
+            resp.headers()
+                .get("X-Handled-By")
+                .unwrap()
+                .to_str()
+                .unwrap(),
             "x402"
         );
     }
@@ -403,7 +409,11 @@ mod tests {
         let resp = svc.call(req).await.unwrap();
         // MPP has priority 10, x402 has priority 20 → MPP wins.
         assert_eq!(
-            resp.headers().get("X-Handled-By").unwrap().to_str().unwrap(),
+            resp.headers()
+                .get("X-Handled-By")
+                .unwrap()
+                .to_str()
+                .unwrap(),
             "mpp"
         );
     }

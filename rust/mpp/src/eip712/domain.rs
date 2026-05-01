@@ -53,10 +53,7 @@ impl DomainMeta {
     /// Construct a custom `DomainMeta`. `name` / `version` must match the
     /// deployed contract's EIP-712 domain byte-for-byte; otherwise signature
     /// verification will fail.
-    pub fn new(
-        name: impl Into<Cow<'static, str>>,
-        version: impl Into<Cow<'static, str>>,
-    ) -> Self {
+    pub fn new(name: impl Into<Cow<'static, str>>, version: impl Into<Cow<'static, str>>) -> Self {
         Self {
             name: name.into(),
             version: version.into(),
@@ -76,11 +73,7 @@ impl DomainMeta {
 /// [`DomainMeta`] holds a runtime `Cow<'static, str>` (`Cow::Owned(String)`
 /// satisfies `'static` but the macro doesn't accept runtime values).
 /// We therefore construct `Eip712Domain` directly and move the `Cow`s in.
-pub fn build_domain(
-    meta: &DomainMeta,
-    chain_id: u64,
-    escrow_contract: Address,
-) -> Eip712Domain {
+pub fn build_domain(meta: &DomainMeta, chain_id: u64, escrow_contract: Address) -> Eip712Domain {
     Eip712Domain {
         name: Some(meta.name.clone()),
         version: Some(meta.version.clone()),

@@ -152,10 +152,15 @@ mod tests {
     use alloy_primitives::{address, b256};
     use alloy_signer_local::PrivateKeySigner;
 
+    /// **PUBLICLY KNOWN** fixture key from the web3.js documentation —
+    /// safe ONLY in tests. Never copy into production / deployment configs:
+    /// the corresponding address is widely scraped and any funds sent to
+    /// it will be drained immediately. Tests use it for determinism.
+    const PUBLIC_TEST_KEY: &str =
+        "0x4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318";
+
     fn fixture_signer() -> PrivateKeySigner {
-        "0x4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318"
-            .parse()
-            .unwrap()
+        PUBLIC_TEST_KEY.parse().unwrap()
     }
 
     #[tokio::test]

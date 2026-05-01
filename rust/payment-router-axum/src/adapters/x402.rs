@@ -19,7 +19,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use axum::body::Body;
-use http::{Request, Response, StatusCode, request::Parts};
+use http::{request::Parts, Request, Response, StatusCode};
 use serde_json::Value;
 use tower::util::BoxCloneSyncService;
 use tower::{Layer, Service, ServiceExt};
@@ -143,15 +143,10 @@ impl ProtocolAdapter for X402Adapter {
     }
 
     fn detect(&self, parts: &Parts) -> bool {
-        parts.headers.contains_key("x-payment")
-            || parts.headers.contains_key("payment-signature")
+        parts.headers.contains_key("x-payment") || parts.headers.contains_key("payment-signature")
     }
 
-    fn get_challenge<'a>(
-        &'a self,
-        parts: &'a Parts,
-        _route_cfg: &'a Value,
-    ) -> ChallengeFuture<'a> {
+    fn get_challenge<'a>(&'a self, parts: &'a Parts, _route_cfg: &'a Value) -> ChallengeFuture<'a> {
         // Strategy: drive a clone of the real layer against a trivial inner.
         // With no x-payment / payment-signature header, the middleware
         // short-circuits into its own 402 path (middleware.rs:190-200) —
@@ -287,7 +282,6 @@ mod tests {
     }
 
     fn detect_logic(parts: &Parts) -> bool {
-        parts.headers.contains_key("x-payment")
-            || parts.headers.contains_key("payment-signature")
+        parts.headers.contains_key("x-payment") || parts.headers.contains_key("payment-signature")
     }
 }

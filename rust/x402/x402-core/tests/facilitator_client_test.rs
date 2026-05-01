@@ -112,11 +112,9 @@ async fn test_get_supported_hmac_headers_present() {
         .and(header_exists("OK-ACCESS-SIGN"))
         .and(header_exists("OK-ACCESS-TIMESTAMP"))
         .and(header_exists("OK-ACCESS-PASSPHRASE"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "kinds": [], "extensions": [], "signers": {}
-            })),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "kinds": [], "extensions": [], "signers": {}
+        })))
         .mount(&mock_server)
         .await;
 

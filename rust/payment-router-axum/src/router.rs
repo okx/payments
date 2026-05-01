@@ -132,10 +132,7 @@ pub struct RouteMatch<'a> {
 fn parse_route_key(key: &str) -> Result<(String, String), BuildError> {
     let trimmed = key.trim();
     if trimmed.is_empty() {
-        return Err(BuildError::InvalidRouteKey(
-            key.to_string(),
-            "empty".into(),
-        ));
+        return Err(BuildError::InvalidRouteKey(key.to_string(), "empty".into()));
     }
     // Method prefix must be purely alphabetic. Anything else = no method.
     let (head, rest) = match trimmed.find(char::is_whitespace) {
@@ -304,11 +301,8 @@ mod tests {
 
     #[test]
     fn exact_match() {
-        let r = CompiledRouter::new(
-            vec![("GET /photos".into(), cfg_with(&["mpp"]))],
-            &names(),
-        )
-        .unwrap();
+        let r = CompiledRouter::new(vec![("GET /photos".into(), cfg_with(&["mpp"]))], &names())
+            .unwrap();
         assert!(r.match_route("GET", "/photos").is_some());
         assert!(r.match_route("GET", "/videos").is_none());
         assert!(r.match_route("POST", "/photos").is_none());
@@ -316,11 +310,8 @@ mod tests {
 
     #[test]
     fn any_method_prefix() {
-        let r = CompiledRouter::new(
-            vec![("/photos".into(), cfg_with(&["mpp"]))],
-            &names(),
-        )
-        .unwrap();
+        let r =
+            CompiledRouter::new(vec![("/photos".into(), cfg_with(&["mpp"]))], &names()).unwrap();
         assert!(r.match_route("GET", "/photos").is_some());
         assert!(r.match_route("POST", "/photos").is_some());
     }
@@ -338,11 +329,8 @@ mod tests {
 
     #[test]
     fn wildcard_matches_suffix() {
-        let r = CompiledRouter::new(
-            vec![("GET /files/*".into(), cfg_with(&["mpp"]))],
-            &names(),
-        )
-        .unwrap();
+        let r = CompiledRouter::new(vec![("GET /files/*".into(), cfg_with(&["mpp"]))], &names())
+            .unwrap();
         assert!(r.match_route("GET", "/files/a").is_some());
         assert!(r.match_route("GET", "/files/a/b/c").is_some());
     }
@@ -364,11 +352,8 @@ mod tests {
 
     #[test]
     fn unknown_adapter_rejected_at_build() {
-        let err = CompiledRouter::new(
-            vec![("GET /x".into(), cfg_with(&["lightning"]))],
-            &names(),
-        )
-        .unwrap_err();
+        let err = CompiledRouter::new(vec![("GET /x".into(), cfg_with(&["lightning"]))], &names())
+            .unwrap_err();
         match err {
             BuildError::UnknownAdapter { adapter, .. } => assert_eq!(adapter, "lightning"),
             _ => panic!("wrong error: {err:?}"),
@@ -377,11 +362,8 @@ mod tests {
 
     #[test]
     fn trailing_slash_match() {
-        let r = CompiledRouter::new(
-            vec![("GET /photos".into(), cfg_with(&["mpp"]))],
-            &names(),
-        )
-        .unwrap();
+        let r = CompiledRouter::new(vec![("GET /photos".into(), cfg_with(&["mpp"]))], &names())
+            .unwrap();
         assert!(r.match_route("GET", "/photos/").is_some());
         assert!(r.match_route("GET", "/photos?foo=1").is_some());
     }

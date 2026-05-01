@@ -117,8 +117,8 @@ async fn main() {
         },
     ];
 
-    let challenger: Arc<dyn ChargeChallenger> = Arc::new(EvmChargeChallenger::new(
-        EvmChargeChallengerConfig {
+    let challenger: Arc<dyn ChargeChallenger> =
+        Arc::new(EvmChargeChallenger::new(EvmChargeChallengerConfig {
             charge_method: EvmChargeMethod::new(sa_client),
             currency: env.currency.clone(),
             recipient: env.recipient.clone(),
@@ -127,8 +127,7 @@ async fn main() {
             realm: env.realm.clone(),
             secret_key: env.secret_key,
             splits: Some(splits),
-        },
-    ));
+        }));
 
     println!("Realm:        {}", env.realm);
     println!("Currency:     {}", env.currency);

@@ -253,11 +253,15 @@ impl EvmChargeChallengerBuilder {
             charge_method: self.charge_method,
             realm: self.realm,
             secret_key: self.secret_key,
-            currency: self.currency.expect("EvmChargeChallengerBuilder: currency() is required"),
+            currency: self
+                .currency
+                .expect("EvmChargeChallengerBuilder: currency() is required"),
             recipient: self
                 .recipient
                 .expect("EvmChargeChallengerBuilder: recipient() is required"),
-            chain_id: self.chain_id.expect("EvmChargeChallengerBuilder: chain_id() is required"),
+            chain_id: self
+                .chain_id
+                .expect("EvmChargeChallengerBuilder: chain_id() is required"),
             fee_payer: self.fee_payer,
             splits: self.splits,
         })
@@ -284,12 +288,8 @@ impl ChargeChallenger for EvmChargeChallenger {
             memo: None,
             splits: self.inner.splits.clone(),
         };
-        let request = charge_request_with(
-            amount,
-            &self.inner.currency,
-            &self.inner.recipient,
-            details,
-        )?;
+        let request =
+            charge_request_with(amount, &self.inner.currency, &self.inner.recipient, details)?;
         build_charge_challenge(
             &self.inner.secret_key,
             &self.inner.realm,
@@ -318,9 +318,7 @@ impl ChargeChallenger for EvmChargeChallenger {
         let credential = match parse_authorization(credential_str) {
             Ok(c) => c,
             Err(e) => {
-                return Box::pin(std::future::ready(Err(format!(
-                    "parse authorization: {e}"
-                ))));
+                return Box::pin(std::future::ready(Err(format!("parse authorization: {e}"))));
             }
         };
         // Async phase: Mpp::verify_credential runs verify_hmac_and_expiry → method.verify.
@@ -363,7 +361,9 @@ mod tests {
                 .to_string();
             Ok(ChargeReceipt {
                 method: "evm".into(),
-                reference: "0xMOCK_TX_HASH_0000000000000000000000000000000000000000000000000000000000".into(),
+                reference:
+                    "0xMOCK_TX_HASH_0000000000000000000000000000000000000000000000000000000000"
+                        .into(),
                 status: "success".into(),
                 timestamp: "2026-04-29T00:00:00Z".into(),
                 chain_id: 196,
@@ -378,10 +378,7 @@ mod tests {
         ) -> Result<ChargeReceipt, SaApiError> {
             unreachable!()
         }
-        async fn session_open(
-            &self,
-            _: &serde_json::Value,
-        ) -> Result<SessionReceipt, SaApiError> {
+        async fn session_open(&self, _: &serde_json::Value) -> Result<SessionReceipt, SaApiError> {
             unreachable!()
         }
         async fn session_top_up(
@@ -500,7 +497,10 @@ mod tests {
         let splits = details.splits.expect("splits populated");
         assert_eq!(splits.len(), 2);
         assert_eq!(splits[0].amount, "30");
-        assert_eq!(splits[0].recipient, "0x1111111111111111111111111111111111111111");
+        assert_eq!(
+            splits[0].recipient,
+            "0x1111111111111111111111111111111111111111"
+        );
         assert_eq!(splits[0].memo.as_deref(), Some("partner-a"));
         assert_eq!(splits[1].amount, "20");
         assert!(splits[1].memo.is_none());
@@ -538,12 +538,7 @@ mod tests {
         // Use the challenger itself to generate a challenge — the id is
         // signed with our secret_key, so HMAC verification succeeds.
         let ch = c
-            .challenge(
-                "100",
-                ChallengeOptions {
-                    description: None,
-                },
-            )
+            .challenge("100", ChallengeOptions { description: None })
             .unwrap();
 
         // Authorization fields must match the challenge (recipient + amount)

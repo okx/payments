@@ -11,7 +11,9 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+# `version` intentionally NOT shared. Each crate manages its own version
+# so they can release independently (tag format `<crate-name>-v<version>`).
+# See per-crate Cargo.toml for current versions.
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/okx/payments"

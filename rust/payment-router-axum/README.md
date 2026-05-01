@@ -15,6 +15,15 @@ x402 SDK is patched or duplicated).
 See the crate-level docs (`cargo doc --open -p payment-router-axum`) for the
 trait surface and route-matching contract.
 
+## Install
+
+```toml
+[dependencies]
+payment-router-axum = { git = "https://github.com/okx/payments", tag = "payment-router-axum-v0.1.0" }
+```
+
+`mpp-evm`, `x402-axum`, `x402-core`, and `mpp` are pulled in transitively.
+
 ## Runnable example
 
 A complete dual-protocol server is in the MPP examples crate at
@@ -43,5 +52,9 @@ or x402 SDK as dev-dependencies.
 cargo test -p payment-router-axum
 ```
 
-30 unit tests + adapter / detector / router / merger coverage. No external
+Adapter / detector / router / merger / conformance coverage. No external
 services required.
+
+## License
+
+Apache-2.0. See [LICENSE](../LICENSE).

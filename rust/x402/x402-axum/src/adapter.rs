@@ -43,7 +43,8 @@ pub fn route_key<B>(req: &Request<B>) -> String {
 pub fn set_settlement_overrides<B>(res: &mut Response<B>, overrides: &SettlementOverrides) {
     if let Ok(value) = serde_json::to_string(overrides) {
         if let Ok(header_value) = value.parse() {
-            res.headers_mut().insert(SETTLEMENT_OVERRIDES_HEADER, header_value);
+            res.headers_mut()
+                .insert(SETTLEMENT_OVERRIDES_HEADER, header_value);
         }
     }
 }

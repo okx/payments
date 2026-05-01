@@ -23,6 +23,57 @@ pub const INTENT_SESSION: &str = "session";
 /// Default challenge expiry window (5 minutes, matching mpp-rs).
 pub const DEFAULT_EXPIRES_MINUTES: i64 = 5;
 
+/// Shared challenge builder. Both charge and session challenges follow the
+/// same construction (encode request → compute id → assemble); only the
+/// `intent` constant and the request type differ. `T: Serialize` covers
+/// `ChargeRequest` and `SessionRequest` (both are mpp-rs intent types).
+fn build_challenge<T: serde::Serialize>(
+    secret_key: &str,
+    realm: &str,
+    intent: &str,
+    request: &T,
+    expires: Option<&str>,
+    description: Option<&str>,
+) -> Result<PaymentChallenge, String> {
+    let encoded =
+        Base64UrlJson::from_typed(request).map_err(|e| format!("encode {intent} request: {e}"))?;
+
+    let expires_owned;
+    let expires = match expires {
+        Some(e) => Some(e),
+        None => {
+            let t = OffsetDateTime::now_utc() + Duration::minutes(DEFAULT_EXPIRES_MINUTES);
+            expires_owned = t
+                .format(&time::format_description::well_known::Rfc3339)
+                .map_err(|e| format!("format expires: {e}"))?;
+            Some(expires_owned.as_str())
+        }
+    };
+
+    let id = compute_challenge_id(
+        secret_key,
+        realm,
+        METHOD_NAME,
+        intent,
+        encoded.raw(),
+        expires,
+        None,
+        None,
+    );
+
+    Ok(PaymentChallenge {
+        id,
+        realm: realm.to_string(),
+        method: METHOD_NAME.into(),
+        intent: intent.into(),
+        request: encoded,
+        expires: expires.map(|s| s.to_string()),
+        description: description.map(|s| s.to_string()),
+        digest: None,
+        opaque: None,
+    })
+}
+
 /// Build a `method="evm"` charge challenge.
 ///
 /// The caller supplies the fully-populated [`ChargeRequest`] including
@@ -35,43 +86,14 @@ pub fn build_charge_challenge(
     expires: Option<&str>,
     description: Option<&str>,
 ) -> Result<PaymentChallenge, String> {
-    let encoded =
-        Base64UrlJson::from_typed(request).map_err(|e| format!("encode charge request: {}", e))?;
-
-    let expires_owned;
-    let expires = match expires {
-        Some(e) => Some(e),
-        None => {
-            let t = OffsetDateTime::now_utc() + Duration::minutes(DEFAULT_EXPIRES_MINUTES);
-            expires_owned = t
-                .format(&time::format_description::well_known::Rfc3339)
-                .map_err(|e| format!("format expires: {}", e))?;
-            Some(expires_owned.as_str())
-        }
-    };
-
-    let id = compute_challenge_id(
+    build_challenge(
         secret_key,
         realm,
-        METHOD_NAME,
         INTENT_CHARGE,
-        encoded.raw(),
+        request,
         expires,
-        None,
-        None,
-    );
-
-    Ok(PaymentChallenge {
-        id,
-        realm: realm.to_string(),
-        method: METHOD_NAME.into(),
-        intent: INTENT_CHARGE.into(),
-        request: encoded,
-        expires: expires.map(|s| s.to_string()),
-        description: description.map(|s| s.to_string()),
-        digest: None,
-        opaque: None,
-    })
+        description,
+    )
 }
 
 /// Build a `method="evm"` session challenge.
@@ -82,43 +104,14 @@ pub fn build_session_challenge(
     expires: Option<&str>,
     description: Option<&str>,
 ) -> Result<PaymentChallenge, String> {
-    let encoded =
-        Base64UrlJson::from_typed(request).map_err(|e| format!("encode session request: {}", e))?;
-
-    let expires_owned;
-    let expires = match expires {
-        Some(e) => Some(e),
-        None => {
-            let t = OffsetDateTime::now_utc() + Duration::minutes(DEFAULT_EXPIRES_MINUTES);
-            expires_owned = t
-                .format(&time::format_description::well_known::Rfc3339)
-                .map_err(|e| format!("format expires: {}", e))?;
-            Some(expires_owned.as_str())
-        }
-    };
-
-    let id = compute_challenge_id(
+    build_challenge(
         secret_key,
         realm,
-        METHOD_NAME,
         INTENT_SESSION,
-        encoded.raw(),
+        request,
         expires,
-        None,
-        None,
-    );
-
-    Ok(PaymentChallenge {
-        id,
-        realm: realm.to_string(),
-        method: METHOD_NAME.into(),
-        intent: INTENT_SESSION.into(),
-        request: encoded,
-        expires: expires.map(|s| s.to_string()),
-        description: description.map(|s| s.to_string()),
-        digest: None,
-        opaque: None,
-    })
+        description,
+    )
 }
 
 /// Assemble a `ChargeRequest` from base-unit amount + typed method details.

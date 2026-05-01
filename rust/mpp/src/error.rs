@@ -46,6 +46,12 @@ impl SaApiError {
 }
 
 /// SA API code → (namespace, suffix, HTTP status, RFC 9457 title).
+///
+/// **When extending**: highest currently-mapped SA backend code is 70014
+/// (channel-closing). 70015 is reserved as an SDK-local code
+/// (insufficient-balance). New SA codes (70016+) must be added explicitly
+/// here AND covered in `all_documented_codes_are_mapped` below — otherwise
+/// they silently fall through to the generic `verification-failed` mapping.
 fn map(code: u32) -> (Namespace, &'static str, u16, &'static str) {
     use Namespace::*;
     match code {
@@ -200,14 +206,31 @@ mod tests {
     }
 
     #[test]
-    fn all_16_documented_codes_are_mapped() {
-        // 8000 + 70000..=70014 = 16 codes, none should fall through to default.
-        for code in [8000u32].into_iter().chain(70000..=70014) {
+    fn all_documented_codes_are_mapped() {
+        // 8000 + 70000..=70014 (SA backend codes) + 70015 (SDK-local
+        // insufficient-balance) = 17 codes, none should fall through to
+        // the default `verification-failed` mapping. If this test starts
+        // failing after a code addition, update both `map` and this loop.
+        for code in [8000u32].into_iter().chain(70000..=70015) {
             let u = uri(code);
             assert!(
                 !u.ends_with("/verification-failed"),
                 "code {code} fell through to default mapping"
             );
         }
+    }
+
+    #[test]
+    fn sdk_local_70015_maps_to_session_insufficient_balance() {
+        // Explicit guard: 70015 is the SDK-local code emitted by
+        // `deduct_from_channel` when `available < amount`. It must surface
+        // as 402 with the session/insufficient-balance suffix, NOT fall
+        // through to the unknown-code branch.
+        assert_eq!(status(70015), 402);
+        let u = uri(70015);
+        assert!(
+            u.ends_with("/session/insufficient-balance"),
+            "expected session/insufficient-balance, got {u}"
+        );
     }
 }

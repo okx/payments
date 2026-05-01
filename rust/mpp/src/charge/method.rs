@@ -226,9 +226,9 @@ fn bind_authorization_to_request(
                         sp_req.amount
                     )));
                 }
-                let v: u128 = value_str
-                    .parse()
-                    .map_err(|e| invalid(format!("authorization.splits[{i}].value not u128: {e}")))?;
+                let v: u128 = value_str.parse().map_err(|e| {
+                    invalid(format!("authorization.splits[{i}].value not u128: {e}"))
+                })?;
                 total = total
                     .checked_add(v)
                     .ok_or_else(|| invalid("split sum overflow".into()))?;
@@ -248,7 +248,9 @@ fn bind_authorization_to_request(
         use time::format_description::well_known::Rfc3339;
         use time::OffsetDateTime;
         let expires = OffsetDateTime::parse(expires_str, &Rfc3339).map_err(|e| {
-            invalid(format!("challenge.expires not RFC3339: {expires_str:?} ({e})"))
+            invalid(format!(
+                "challenge.expires not RFC3339: {expires_str:?} ({e})"
+            ))
         })?;
         let expires_unix = expires.unix_timestamp();
         if expires_unix < 0 {
@@ -457,24 +459,27 @@ mod tests {
             recipient: Some("0xPayee".into()),
             description: None,
             external_id: None,
-            method_details: Some(serde_json::to_value(crate::types::ChargeMethodDetails {
-                chain_id: 196,
-                fee_payer: None,
-                permit2_address: None,
-                memo: None,
-                splits: Some(vec![
-                    crate::types::ChargeSplit {
-                        amount: "50000".into(),
-                        recipient: "0xsplit1".into(),
-                        memo: None,
-                    },
-                    crate::types::ChargeSplit {
-                        amount: "10000".into(),
-                        recipient: "0xsplit2".into(),
-                        memo: None,
-                    },
-                ]),
-            }).unwrap()),
+            method_details: Some(
+                serde_json::to_value(crate::types::ChargeMethodDetails {
+                    chain_id: 196,
+                    fee_payer: None,
+                    permit2_address: None,
+                    memo: None,
+                    splits: Some(vec![
+                        crate::types::ChargeSplit {
+                            amount: "50000".into(),
+                            recipient: "0xsplit1".into(),
+                            memo: None,
+                        },
+                        crate::types::ChargeSplit {
+                            amount: "10000".into(),
+                            recipient: "0xsplit2".into(),
+                            memo: None,
+                        },
+                    ]),
+                })
+                .unwrap(),
+            ),
         };
         let payload = serde_json::json!({
             "type": "transaction",
@@ -612,24 +617,27 @@ mod tests {
             recipient: Some("0xPayee".into()),
             description: None,
             external_id: None,
-            method_details: Some(serde_json::to_value(crate::types::ChargeMethodDetails {
-                chain_id: 196,
-                fee_payer: None,
-                permit2_address: None,
-                memo: None,
-                splits: Some(vec![
-                    crate::types::ChargeSplit {
-                        amount: "50000".into(),
-                        recipient: "0xsplit1".into(),
-                        memo: None,
-                    },
-                    crate::types::ChargeSplit {
-                        amount: "10000".into(),
-                        recipient: "0xsplit2".into(),
-                        memo: None,
-                    },
-                ]),
-            }).unwrap()),
+            method_details: Some(
+                serde_json::to_value(crate::types::ChargeMethodDetails {
+                    chain_id: 196,
+                    fee_payer: None,
+                    permit2_address: None,
+                    memo: None,
+                    splits: Some(vec![
+                        crate::types::ChargeSplit {
+                            amount: "50000".into(),
+                            recipient: "0xsplit1".into(),
+                            memo: None,
+                        },
+                        crate::types::ChargeSplit {
+                            amount: "10000".into(),
+                            recipient: "0xsplit2".into(),
+                            memo: None,
+                        },
+                    ]),
+                })
+                .unwrap(),
+            ),
         };
         let payload = serde_json::json!({
             "type": "transaction",

@@ -1,6 +1,6 @@
 [package]
 name = "mpp-evm"
-version.workspace = true
+version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -16,8 +16,13 @@ handlers = []
 wiremock = { workspace = true }
 
 [dependencies]
-# MPP protocol (core traits + EVM types, no Tempo)
-mpp = { git = "https://github.com/tempoxyz/mpp-rs", features = ["server", "evm", "tower", "axum"] }
+# MPP protocol (core traits + EVM types, no Tempo). `"0.10"` is Cargo's
+# caret-semver shorthand for `>=0.10.0, <0.11.0` — accepts upstream patch
+# releases (0.10.1 / 0.10.2 / ...) but rejects 0.11+, which mpp-rs treats
+# as breaking in pre-1.0. Cargo.lock pins the exact resolved version so
+# builds stay reproducible. Avoids the "git main HEAD drift" supply-chain
+# risk the previous git dep had (Review L1).
+mpp = { version = "0.10", features = ["server", "evm", "tower", "axum"] }
 
 # Serialization
 serde.workspace = true

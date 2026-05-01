@@ -25,9 +25,7 @@ use std::sync::Arc;
 use axum::{routing::get, Json, Router};
 use mpp::server::axum::{ChargeChallenger, ChargeConfig, MppCharge, WithReceipt};
 use mpp_evm::sa_client::SaApiClient;
-use mpp_evm::{
-    EvmChargeChallenger, EvmChargeChallengerConfig, EvmChargeMethod, OkxSaApiClient,
-};
+use mpp_evm::{EvmChargeChallenger, EvmChargeChallengerConfig, EvmChargeMethod, OkxSaApiClient};
 use serde_json::{json, Value};
 
 // ---------------------------------------------------------------------------
@@ -76,8 +74,8 @@ async fn main() {
 
     let env = load_env();
     let sa_client = env.build_sa_client();
-    let challenger: Arc<dyn ChargeChallenger> = Arc::new(EvmChargeChallenger::new(
-        EvmChargeChallengerConfig {
+    let challenger: Arc<dyn ChargeChallenger> =
+        Arc::new(EvmChargeChallenger::new(EvmChargeChallengerConfig {
             charge_method: EvmChargeMethod::new(sa_client),
             currency: env.currency.clone(),
             recipient: env.recipient.clone(),
@@ -86,8 +84,7 @@ async fn main() {
             realm: env.realm.clone(),
             secret_key: env.secret_key,
             splits: None,
-        },
-    ));
+        }));
 
     println!("Realm:     {}", env.realm);
     println!("Recipient: {}", env.recipient);
@@ -158,4 +155,3 @@ fn load_env() -> Env {
         recipient: required("MPP_RECIPIENT"),
     }
 }
-

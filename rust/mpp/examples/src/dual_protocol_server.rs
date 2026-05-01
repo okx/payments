@@ -29,9 +29,7 @@ use std::sync::Arc;
 use axum::{routing::get, Json, Router};
 use mpp::server::axum::ChargeChallenger;
 use mpp_evm::sa_client::SaApiClient;
-use mpp_evm::{
-    EvmChargeChallenger, EvmChargeChallengerConfig, EvmChargeMethod, OkxSaApiClient,
-};
+use mpp_evm::{EvmChargeChallenger, EvmChargeChallengerConfig, EvmChargeMethod, OkxSaApiClient};
 use payment_router_axum::{
     adapters::{MppAdapter, X402Adapter},
     PaymentRouterConfig, PaymentRouterLayer, ProtocolAdapter, UnifiedRouteConfig,
@@ -51,8 +49,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ------------- MPP side -------------
     let sa_client = mpp_env.build_sa_client();
-    let challenger: Arc<dyn ChargeChallenger> = Arc::new(EvmChargeChallenger::new(
-        EvmChargeChallengerConfig {
+    let challenger: Arc<dyn ChargeChallenger> =
+        Arc::new(EvmChargeChallenger::new(EvmChargeChallengerConfig {
             charge_method: EvmChargeMethod::new(sa_client),
             currency: mpp_env.currency.clone(),
             recipient: mpp_env.recipient.clone(),
@@ -61,8 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             realm: mpp_env.realm.clone(),
             secret_key: mpp_env.secret_key.clone(),
             splits: None,
-        },
-    ));
+        }));
     let mpp_adapter: Arc<dyn ProtocolAdapter> = Arc::new(MppAdapter::new(challenger));
 
     // ------------- x402 side (optional) -------------
@@ -80,21 +77,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &x402.secret_key,
                 &x402.passphrase,
             ),
-            Err(_) => OkxHttpFacilitatorClient::new(
-                &x402.api_key,
-                &x402.secret_key,
-                &x402.passphrase,
-            ),
+            Err(_) => {
+                OkxHttpFacilitatorClient::new(&x402.api_key, &x402.secret_key, &x402.passphrase)
+            }
         }?;
 
-        let mut server = X402ResourceServer::new(facilitator)
-            .register("eip155:196", ExactEvmScheme::new());
+        let mut server =
+            X402ResourceServer::new(facilitator).register("eip155:196", ExactEvmScheme::new());
         server.initialize().await?;
 
         let routes = x402_routes_config(&x402.pay_to);
-        let x402_adapter: Arc<dyn ProtocolAdapter> = Arc::new(
-            X402Adapter::builder(routes, server).build(),
-        );
+        let x402_adapter: Arc<dyn ProtocolAdapter> =
+            Arc::new(X402Adapter::builder(routes, server).build());
         protocols.push(x402_adapter);
         x402_registered = true;
     }
@@ -126,11 +120,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )],
         protocols,
         on_error: Some(Arc::new(|err, ctx| {
-            eprintln!(
-                "[{} {}] err: {err}",
-                ctx.protocol,
-                ctx.phase.as_str(),
-            );
+            eprintln!("[{} {}] err: {err}", ctx.protocol, ctx.phase.as_str(),);
         })),
     })?;
 
@@ -143,8 +133,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "unused".into(),
         "unused".into(),
     ));
-    let dummy_state: Arc<dyn ChargeChallenger> = Arc::new(EvmChargeChallenger::new(
-        EvmChargeChallengerConfig {
+    let dummy_state: Arc<dyn ChargeChallenger> =
+        Arc::new(EvmChargeChallenger::new(EvmChargeChallengerConfig {
             charge_method: EvmChargeMethod::new(dummy_sa),
             currency: "0x0000000000000000000000000000000000000000".into(),
             recipient: "0x0000000000000000000000000000000000000000".into(),
@@ -153,8 +143,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             realm: "state-fallback".into(),
             secret_key: "unused".into(),
             splits: None,
-        },
-    ));
+        }));
     let app = Router::new()
         .route("/health", get(health))
         .route("/photo", get(photo_handler))

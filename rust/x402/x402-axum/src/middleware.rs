@@ -137,19 +137,19 @@ where
         let payment_header = adapter::extract_payment_header(&req);
         let uri_string = req.uri().to_string();
         // Only collect headers when a resolver is configured (avoids per-request allocation)
-        let headers_map: Option<std::collections::HashMap<String, String>> =
-            if state.resolver.is_some() {
-                Some(
-                    req.headers()
-                        .iter()
-                        .map(|(k, v)| {
-                            (k.as_str().to_string(), v.to_str().unwrap_or("").to_string())
-                        })
-                        .collect(),
-                )
-            } else {
-                None
-            };
+        let headers_map: Option<std::collections::HashMap<String, String>> = if state
+            .resolver
+            .is_some()
+        {
+            Some(
+                req.headers()
+                    .iter()
+                    .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or("").to_string()))
+                    .collect(),
+            )
+        } else {
+            None
+        };
 
         Box::pin(async move {
             // 1. Check if route requires payment
@@ -179,7 +179,9 @@ where
                     return inner.call(req).await;
                 }
                 if hook_result.abort {
-                    let reason = hook_result.reason.unwrap_or_else(|| "access denied".to_string());
+                    let reason = hook_result
+                        .reason
+                        .unwrap_or_else(|| "access denied".to_string());
                     return Ok(error_response(StatusCode::FORBIDDEN, &reason));
                 }
             }
@@ -195,8 +197,14 @@ where
                     path: path.clone(),
                     headers: headers_map.unwrap_or_default(),
                 };
-                let response =
-                    build_402_response(&state.server, &route_config, &uri_string, &request_context, &state.resolver).await;
+                let response = build_402_response(
+                    &state.server,
+                    &route_config,
+                    &uri_string,
+                    &request_context,
+                    &state.resolver,
+                )
+                .await;
                 return Ok(response);
             }
 
@@ -233,7 +241,9 @@ where
                 };
                 let hook_result = (hook)(ctx).await;
                 if hook_result.abort {
-                    let reason = hook_result.reason.unwrap_or_else(|| "verification aborted".to_string());
+                    let reason = hook_result
+                        .reason
+                        .unwrap_or_else(|| "verification aborted".to_string());
                     return Ok(error_response(StatusCode::PAYMENT_REQUIRED, &reason));
                 }
             }
@@ -258,7 +268,9 @@ where
                         match recovery {
                             Some(r) if r.recovered => {
                                 // Recovered — call onAfterVerify with recovered result if available
-                                if let (Some(after_hook), Some(recovered_resp)) = (&state.on_after_verify, r.result) {
+                                if let (Some(after_hook), Some(recovered_resp)) =
+                                    (&state.on_after_verify, r.result)
+                                {
                                     let ctx = VerifyResultContext {
                                         payment_payload: payment_payload.clone(),
                                         payment_requirements: payment_requirements.clone(),
@@ -291,7 +303,9 @@ where
                         let recovery = (hook)(ctx, error_msg.clone()).await;
                         match recovery {
                             Some(r) if r.recovered => {
-                                if let (Some(after_hook), Some(recovered_resp)) = (&state.on_after_verify, r.result) {
+                                if let (Some(after_hook), Some(recovered_resp)) =
+                                    (&state.on_after_verify, r.result)
+                                {
                                     let ctx = VerifyResultContext {
                                         payment_payload: payment_payload.clone(),
                                         payment_requirements: payment_requirements.clone(),
@@ -334,7 +348,8 @@ where
             };
 
             // If the route handler returned an error (>= 400), don't settle
-            if inner_response.status().is_client_error() || inner_response.status().is_server_error()
+            if inner_response.status().is_client_error()
+                || inner_response.status().is_server_error()
             {
                 return Ok(inner_response);
             }
@@ -361,7 +376,9 @@ where
                 };
                 let hook_result = (hook)(ctx).await;
                 if hook_result.abort {
-                    let reason = hook_result.reason.unwrap_or_else(|| "settlement aborted".to_string());
+                    let reason = hook_result
+                        .reason
+                        .unwrap_or_else(|| "settlement aborted".to_string());
                     return Ok(error_response(StatusCode::PAYMENT_REQUIRED, &reason));
                 }
             }
@@ -408,7 +425,9 @@ where
                                         (after_hook)(ctx).await;
                                     }
                                     let (mut parts, body) = inner_response.into_parts();
-                                    if let Ok(encoded) = encode_payment_response_header(&recovered_response) {
+                                    if let Ok(encoded) =
+                                        encode_payment_response_header(&recovered_response)
+                                    {
                                         if let Ok(value) = encoded.parse() {
                                             parts.headers.insert(PAYMENT_RESPONSE_HEADER, value);
                                         }
@@ -449,13 +468,10 @@ where
                                     let (mut parts, body) = inner_response.into_parts();
                                     let mut recovered = settle_response.clone();
                                     recovered.status = Some("success".into());
-                                    if let Ok(encoded) =
-                                        encode_payment_response_header(&recovered)
+                                    if let Ok(encoded) = encode_payment_response_header(&recovered)
                                     {
                                         if let Ok(value) = encoded.parse() {
-                                            parts
-                                                .headers
-                                                .insert(PAYMENT_RESPONSE_HEADER, value);
+                                            parts.headers.insert(PAYMENT_RESPONSE_HEADER, value);
                                         }
                                     }
                                     Ok(Response::from_parts(parts, body))
@@ -468,8 +484,7 @@ where
                                         let hook_result = (hook)(tx, network).await;
                                         if hook_result.confirmed {
                                             // Hook confirmed → deliver resource
-                                            let (mut parts, body) =
-                                                inner_response.into_parts();
+                                            let (mut parts, body) = inner_response.into_parts();
                                             let mut recovered = settle_response.clone();
                                             recovered.status = Some("success".into());
                                             if let Ok(encoded) =
@@ -508,9 +523,7 @@ where
                             }
 
                             let (mut parts, body) = inner_response.into_parts();
-                            if let Ok(encoded) =
-                                encode_payment_response_header(&settle_response)
-                            {
+                            if let Ok(encoded) = encode_payment_response_header(&settle_response) {
                                 if let Ok(value) = encoded.parse() {
                                     parts.headers.insert(PAYMENT_RESPONSE_HEADER, value);
                                 }
@@ -540,7 +553,9 @@ where
                                         (after_hook)(ctx).await;
                                     }
                                     let (mut parts, body) = inner_response.into_parts();
-                                    if let Ok(encoded) = encode_payment_response_header(&recovered_response) {
+                                    if let Ok(encoded) =
+                                        encode_payment_response_header(&recovered_response)
+                                    {
                                         if let Ok(value) = encoded.parse() {
                                             parts.headers.insert(PAYMENT_RESPONSE_HEADER, value);
                                         }
@@ -682,7 +697,9 @@ async fn build_402_response(
     // Add PAYMENT-REQUIRED header (base64 encoded)
     if let Ok(encoded) = encode_payment_required_header(&payment_required) {
         if let Ok(value) = encoded.parse() {
-            response.headers_mut().insert(PAYMENT_REQUIRED_HEADER, value);
+            response
+                .headers_mut()
+                .insert(PAYMENT_REQUIRED_HEADER, value);
         }
     }
 
@@ -713,10 +730,7 @@ fn error_response(status: StatusCode, message: &str) -> Response<Body> {
 ///
 /// # Returns
 /// A Tower Layer that can be applied to an Axum Router via `.layer()`
-pub fn payment_middleware(
-    routes: RoutesConfig,
-    server: X402ResourceServer,
-) -> PaymentLayer {
+pub fn payment_middleware(routes: RoutesConfig, server: X402ResourceServer) -> PaymentLayer {
     PaymentLayer::new(server, routes, None, DEFAULT_POLL_DEADLINE, None)
 }
 
@@ -746,7 +760,13 @@ pub fn payment_middleware_with_timeout_hook(
     server: X402ResourceServer,
     timeout_hook: OnSettlementTimeoutHook,
 ) -> PaymentLayer {
-    PaymentLayer::new(server, routes, Some(timeout_hook), DEFAULT_POLL_DEADLINE, None)
+    PaymentLayer::new(
+        server,
+        routes,
+        Some(timeout_hook),
+        DEFAULT_POLL_DEADLINE,
+        None,
+    )
 }
 
 /// Create middleware with timeout hook and custom poll deadline.

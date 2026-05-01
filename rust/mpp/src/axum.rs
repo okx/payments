@@ -64,8 +64,7 @@ pub struct StatusQuery {
 /// build their own response.
 fn error_response(err: crate::error::SaApiError) -> Response {
     let problem = err.to_problem_details(None);
-    let status = StatusCode::from_u16(problem.status)
-        .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let status = StatusCode::from_u16(problem.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     (status, err.to_string()).into_response()
 }
 
@@ -216,8 +215,8 @@ mod tests {
             })
             .await;
 
-        let method = EvmSessionMethod::with_store(sa as Arc<dyn SaApiClient>, store)
-            .with_signer(signer);
+        let method =
+            EvmSessionMethod::with_store(sa as Arc<dyn SaApiClient>, store).with_signer(signer);
         Arc::new(method)
     }
 

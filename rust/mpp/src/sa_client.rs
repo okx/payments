@@ -312,9 +312,15 @@ fn parse_sa_response<T: serde::de::DeserializeOwned>(
         // SA backend occasionally returns a negative code (e.g. -1
         // "unknown error"). `SaApiError.code` is u32, so negative / out-of-range
         // values map to 8000 (service error), preserving the original code in `msg`.
-        let (mapped_code, mapped_msg) = if envelope.code >= 0
-            && envelope.code <= u32::MAX as i64
-        {
+        //
+        // The upper bound `<= u32::MAX as i64` (= 4_294_967_295) is purely
+        // defensive: documented SA codes are 8000 and 70000-70015, all far
+        // below u32::MAX. Anything in (u32::MAX, i64::MAX] is therefore
+        // outside the documented contract and treated as a service error
+        // — better than `as u32` truncation, which would silently turn
+        // (e.g.) `4_294_967_303` into `7` and route through the wrong
+        // mapping.
+        let (mapped_code, mapped_msg) = if envelope.code >= 0 && envelope.code <= u32::MAX as i64 {
             (envelope.code as u32, envelope.msg)
         } else {
             (
@@ -470,8 +476,14 @@ fn build_auth_headers(
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert(HEADER_API_KEY, parse_header_value("api_key", api_key)?);
     headers.insert(HEADER_SIGN, parse_header_value("signature", &signature)?);
-    headers.insert(HEADER_TIMESTAMP, parse_header_value("timestamp", &timestamp)?);
-    headers.insert(HEADER_PASSPHRASE, parse_header_value("passphrase", passphrase)?);
+    headers.insert(
+        HEADER_TIMESTAMP,
+        parse_header_value("timestamp", &timestamp)?,
+    );
+    headers.insert(
+        HEADER_PASSPHRASE,
+        parse_header_value("passphrase", passphrase)?,
+    );
 
     Ok(headers)
 }
@@ -479,10 +491,7 @@ fn build_auth_headers(
 /// Convert a string to a `HeaderValue`. Non-ASCII / control characters are
 /// reported as `SaApiError(8000)` instead of panicking — guards against
 /// misconfigured api_key / passphrase taking the SDK down on every request.
-fn parse_header_value(
-    name: &str,
-    value: &str,
-) -> Result<reqwest::header::HeaderValue, SaApiError> {
+fn parse_header_value(name: &str, value: &str) -> Result<reqwest::header::HeaderValue, SaApiError> {
     value.parse().map_err(|_| {
         SaApiError::new(
             8000,
@@ -594,9 +603,9 @@ mod tests {
         // since validation happens before any HTTP call.
         let client = mk_client("http://unused".into());
         for bad in [
-            "0xabc",                                                                 // too short
-            "abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234",      // missing 0x
-            "0xZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ",    // non-hex
+            "0xabc",                                                                  // too short
+            "abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234",       // missing 0x
+            "0xZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ",     // non-hex
             "0x1111111111111111111111111111111111111111111111111111111111111111&x=1", // injection
             "0x1111111111111111111111111111111111111111111111111111111111111111#x",   // fragment
         ] {
@@ -629,7 +638,11 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code, 70003);
-        assert!(err.msg.contains("authValue=100 expected=50"), "msg was: {}", err.msg);
+        assert!(
+            err.msg.contains("authValue=100 expected=50"),
+            "msg was: {}",
+            err.msg
+        );
     }
 
     #[tokio::test]

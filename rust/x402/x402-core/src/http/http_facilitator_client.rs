@@ -85,11 +85,7 @@ impl OkxHttpFacilitatorClient {
     /// - `api_key` - Seller's OKX API key
     /// - `secret_key` - Seller's OKX secret key
     /// - `passphrase` - Seller's OKX passphrase
-    pub fn new(
-        api_key: &str,
-        secret_key: &str,
-        passphrase: &str,
-    ) -> Result<Self, X402Error> {
+    pub fn new(api_key: &str, secret_key: &str, passphrase: &str) -> Result<Self, X402Error> {
         Self::with_url(DEFAULT_FACILITATOR_URL, api_key, secret_key, passphrase)
     }
 
@@ -169,12 +165,7 @@ impl FacilitatorClient for OkxHttpFacilitatorClient {
             "",
         )?;
 
-        let response = self
-            .http
-            .get(&url)
-            .headers(headers)
-            .send()
-            .await?;
+        let response = self.http.get(&url).headers(headers).send().await?;
 
         let status = response.status();
         let body = response.text().await?;
@@ -287,12 +278,7 @@ impl FacilitatorClient for OkxHttpFacilitatorClient {
             "",
         )?;
 
-        let response = self
-            .http
-            .get(&url)
-            .headers(headers)
-            .send()
-            .await?;
+        let response = self.http.get(&url).headers(headers).send().await?;
 
         let status = response.status();
         let body = response.text().await?;

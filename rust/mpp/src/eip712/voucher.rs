@@ -124,7 +124,10 @@ pub enum VerifyError {
     Recover,
 
     #[error("signer mismatch: recovered {recovered}, expected {expected}")]
-    AddressMismatch { recovered: Address, expected: Address },
+    AddressMismatch {
+        recovered: Address,
+        expected: Address,
+    },
 }
 
 #[cfg(test)]
@@ -162,7 +165,9 @@ mod tests {
     }
 
     fn fixture_signer() -> PrivateKeySigner {
-        // Fixed key — keeps round-trip tests reproducible.
+        // **PUBLICLY KNOWN** fixture key (web3.js docs). Safe ONLY in
+        // tests; NEVER copy into production. Used here for deterministic
+        // round-trip signature comparison.
         "0x4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318"
             .parse()
             .unwrap()
@@ -268,7 +273,10 @@ mod tests {
             wrong_expected,
         );
         match result {
-            Err(VerifyError::AddressMismatch { recovered, expected }) => {
+            Err(VerifyError::AddressMismatch {
+                recovered,
+                expected,
+            }) => {
                 assert_eq!(recovered, signer.address());
                 assert_eq!(expected, wrong_expected);
             }

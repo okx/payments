@@ -21,9 +21,9 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
 use axum::body::Body;
-use http::{HeaderMap, HeaderValue, Request, Response, StatusCode, header, request::Parts};
+use http::{header, request::Parts, HeaderMap, HeaderValue, Request, Response, StatusCode};
 use mpp::protocol::core::headers::{
-    PAYMENT_RECEIPT_HEADER, WWW_AUTHENTICATE_HEADER, format_receipt, format_www_authenticate,
+    format_receipt, format_www_authenticate, PAYMENT_RECEIPT_HEADER, WWW_AUTHENTICATE_HEADER,
 };
 use mpp::server::axum::{ChallengeOptions, ChargeChallenger};
 use serde_json::Value;
@@ -87,11 +87,7 @@ impl ProtocolAdapter for MppAdapter {
             .unwrap_or(false)
     }
 
-    fn get_challenge<'a>(
-        &'a self,
-        _parts: &'a Parts,
-        route_cfg: &'a Value,
-    ) -> ChallengeFuture<'a> {
+    fn get_challenge<'a>(&'a self, _parts: &'a Parts, route_cfg: &'a Value) -> ChallengeFuture<'a> {
         let challenger = self.challenger.clone();
         let route_cfg = route_cfg.clone();
         let description_cache = self.description_cache.clone();
@@ -111,9 +107,9 @@ impl ProtocolAdapter for MppAdapter {
                     // leaks (DoS guard). Cache size is bounded by the number
                     // of distinct descriptions ever observed.
                     let mut guard = description_cache.lock().unwrap();
-                    *guard.entry(s.to_string()).or_insert_with(|| {
-                        Box::leak(s.to_string().into_boxed_str())
-                    })
+                    *guard
+                        .entry(s.to_string())
+                        .or_insert_with(|| Box::leak(s.to_string().into_boxed_str()))
                 });
             let options = ChallengeOptions { description };
             let challenge = challenger
@@ -176,7 +172,10 @@ impl Service<Request<Body>> for MppVerifyService {
                     // Detect already passed, but header disappeared — produce
                     // a generic 401 (not 402, to avoid leaking challenge
                     // re-prompting semantics that the outer merger owns).
-                    return Ok(error_response(StatusCode::UNAUTHORIZED, "missing Authorization header"));
+                    return Ok(error_response(
+                        StatusCode::UNAUTHORIZED,
+                        "missing Authorization header",
+                    ));
                 }
             };
 
@@ -264,7 +263,10 @@ mod tests {
             &self,
             _: &str,
         ) -> Pin<
-            Box<dyn std::future::Future<Output = Result<mpp::protocol::core::Receipt, String>> + Send>,
+            Box<
+                dyn std::future::Future<Output = Result<mpp::protocol::core::Receipt, String>>
+                    + Send,
+            >,
         > {
             Box::pin(async { Err("not implemented".into()) })
         }
@@ -325,14 +327,21 @@ mod tests {
             let req = Base64UrlJson::from_value(&serde_json::json!({"amount": "1"}))
                 .map_err(|e| e.to_string())?;
             Ok(mpp::protocol::core::PaymentChallenge::new(
-                "id-1", "test-realm", "evm", "charge", req,
+                "id-1",
+                "test-realm",
+                "evm",
+                "charge",
+                req,
             ))
         }
         fn verify_payment(
             &self,
             _: &str,
         ) -> Pin<
-            Box<dyn std::future::Future<Output = Result<mpp::protocol::core::Receipt, String>> + Send>,
+            Box<
+                dyn std::future::Future<Output = Result<mpp::protocol::core::Receipt, String>>
+                    + Send,
+            >,
         > {
             Box::pin(async { Err("not implemented".into()) })
         }

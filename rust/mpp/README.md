@@ -19,8 +19,8 @@ Target chain: **X Layer (chainId 196)**. ERC-20 tokens with EIP-3009
 | Charge splits (multi-recipient) | ✅ |
 | Session open / voucher / topUp / close (non-SSE) | ✅ |
 | Session mid-settle + status queries | ✅ |
-| Idle-timeout auto-settle (5 min, configurable) | ✅ |
-| Dual protocol: MPP + x402 on same URL | ❌ (deferred — blocked on upstream `PaymentVerifier` being route-aware) |
+| Idle-timeout auto-settle | ❌ (merchant drives lifecycle — see [Known limitations](#known-limitations)) |
+| Dual protocol: MPP + x402 on same URL | ✅ (via `payment-router-axum`) |
 | Session SSE streaming + `payment-need-voucher` events | ❌ (out of scope this iteration) |
 
 ## Install
@@ -358,7 +358,9 @@ SA API error codes → RFC 9457 Problem Details (`error::SaApiError::to_problem_
 
 - `sa_client` — SA API HTTP client (`OkxSaApiClient`) + pluggable `SaApiClient` trait.
 - `charge_method` — `EvmChargeMethod` (`impl mpp::protocol::traits::ChargeMethod`).
-- `session_method` — `EvmSessionMethod` + idle-timer auto-settle.
+- `session_method` — `EvmSessionMethod` (`impl mpp::protocol::traits::SessionMethod`).
+  Merchant drives settle/close lifecycle explicitly via
+  `settle_with_authorization()` / `close_with_authorization()`; no idle timer.
 - `challenger` — `EvmChargeChallenger` (`impl mpp::server::axum::ChargeChallenger`) for
   use with the upstream `MppCharge<C>` extractor.
 - `store` — `SessionStore` trait + `InMemorySessionStore` default.
@@ -371,6 +373,41 @@ SA API error codes → RFC 9457 Problem Details (`error::SaApiError::to_problem_
   `/session/settle` + `/session/status`.
 - `mock` *(feature = "mock")* — `MockSaApiClient` for local dev. **Never in production.**
 - `error` — `SaApiError` + RFC 9457 mapping.
+
+## Known limitations
+
+### No idle-timer auto-settle
+
+`EvmSessionMethod` does not run a background timer to auto-settle abandoned
+sessions. The merchant calls `settle_with_authorization()` /
+`close_with_authorization()` explicitly. If a payer abandons a session
+without closing, the deposit stays escrowed on-chain until the merchant
+settles or the contract's own timeout fires (typically 12-24h).
+
+### topUp partial-failure leaves stale local deposit
+
+`handle_topup` forwards the credential to SA first (which broadcasts the
+on-chain top-up), then increments the local `deposit` counter. If the
+local update fails (typically because the in-memory record was lost on
+SDK restart and no persistent `SessionStore` is configured), on-chain
+state is updated but the local cap is stale. A pre-flight check rejects
+the topUp before reaching SA when the channel record is missing, so the
+common restart-then-topup path stays consistent — the residual race is
+a `get` succeeding then `update` failing, which is rare.
+
+Mitigations: configure a persistent `SessionStore` impl (SQLite / Redis /
+Postgres / DynamoDB) for production; when stale local state is suspected,
+re-fetch on-chain truth via `session_status` and rebuild the
+`ChannelRecord` manually. A `refresh_from_chain` helper is on the roadmap.
+
+### Voucher signers must be EOAs
+
+`verify_voucher` recovers the signer via secp256k1 ecrecover. Smart-contract
+wallets (EIP-1271, ERC-4337, Safe, Argent, Coinbase Smart Wallet) are not
+supported as voucher signers — the local-only verification path can't
+make on-chain `isValidSignature` calls. Use an EOA delegate via
+`authorizedSigner` at channel-open time if the payer is a smart-contract
+wallet.
 
 ## Testing
 
@@ -387,5 +424,9 @@ Sandbox tests require: `MPP_SA_SANDBOX_URL / _KEY / _SECRET / _PASSPHRASE`.
   https://okg-block.sg.larksuite.com/wiki/HVuEwbo3fiTndzkNAmKlZll5gdg
 - MPP EVM API 方案 —
   https://okg-block.sg.larksuite.com/wiki/OXbOwA4rviD3tQkUKIElaRRpgfe
-- mpp-rs upstream — https://github.com/tempoxyz/mpp-rs (v0.9.3)
+- mpp-rs upstream — https://github.com/tempoxyz/mpp-rs (v0.10)
 - mpp-specs — https://github.com/okx/mpp-specs
+
+## License
+
+Apache-2.0. See [LICENSE](../LICENSE).

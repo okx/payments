@@ -414,8 +414,9 @@ mod tests {
             voucher_signature: "0xvoucher".into(),
             payee_signature: "0xpayee".into(),
             nonce: "17890324512398".into(),
-            deadline: "115792089237316195423570985008687907853269984665640564039457584007913129639935"
-                .into(),
+            deadline:
+                "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+                    .into(),
         };
         let json = serde_json::to_value(&p).unwrap();
         assert_eq!(json["action"], "settle");
@@ -439,7 +440,10 @@ mod tests {
             deadline: "999".into(),
         };
         let json = serde_json::to_value(&p).unwrap();
-        assert!(json.get("action").is_none(), "action must be omitted when None");
+        assert!(
+            json.get("action").is_none(),
+            "action must be omitted when None"
+        );
         assert_eq!(json["channelId"], "0xabc");
     }
 
@@ -473,6 +477,9 @@ mod tests {
         }"#;
         let s: ChannelStatus = serde_json::from_str(json).unwrap();
         assert_eq!(s.session_status, "OPEN");
-        assert!(s.cumulative_amount.is_none(), "cumulativeAmount must not be returned");
+        assert!(
+            s.cumulative_amount.is_none(),
+            "cumulativeAmount must not be returned"
+        );
     }
 }

@@ -12,8 +12,11 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use axum::{routing::{get, post}, Json, Router};
-use http::{HeaderMap, HeaderValue, header::WWW_AUTHENTICATE, request::Parts};
+use axum::{
+    routing::{get, post},
+    Json, Router,
+};
+use http::{header::WWW_AUTHENTICATE, request::Parts, HeaderMap, HeaderValue};
 use payment_router_axum::{
     adapter::{ChallengeFuture, ChallengeResponse, InnerService, ProtocolAdapter},
     PaymentRouterConfig, PaymentRouterLayer, UnifiedRouteConfig,
@@ -77,20 +80,22 @@ impl ProtocolAdapter for FakeAdapter {
     fn make_service(&self, inner: InnerService) -> InnerService {
         let name = self.name.clone();
         let hits = self.hook_hits.clone();
-        BoxCloneSyncService::new(tower::service_fn(move |req: http::Request<axum::body::Body>| {
-            let mut inner = inner.clone();
-            let name = name.clone();
-            let hits = hits.clone();
-            async move {
-                // hook: increment counter (analogous to x402 onAfterSettle)
-                hits.fetch_add(1, Ordering::SeqCst);
-                use tower::ServiceExt;
-                let mut resp = inner.ready().await?.call(req).await?;
-                resp.headers_mut()
-                    .insert("x-handled-by", HeaderValue::from_str(&name).unwrap());
-                Ok::<_, std::convert::Infallible>(resp)
-            }
-        }))
+        BoxCloneSyncService::new(tower::service_fn(
+            move |req: http::Request<axum::body::Body>| {
+                let mut inner = inner.clone();
+                let name = name.clone();
+                let hits = hits.clone();
+                async move {
+                    // hook: increment counter (analogous to x402 onAfterSettle)
+                    hits.fetch_add(1, Ordering::SeqCst);
+                    use tower::ServiceExt;
+                    let mut resp = inner.ready().await?.call(req).await?;
+                    resp.headers_mut()
+                        .insert("x-handled-by", HeaderValue::from_str(&name).unwrap());
+                    Ok::<_, std::convert::Infallible>(resp)
+                }
+            },
+        ))
     }
 }
 
@@ -144,21 +149,23 @@ async fn case01_priority_short_circuit() {
         hook_hits: x402_hits.clone(),
         challenge_err: None,
     });
-    let app = Router::new()
-        .route("/x", get(|| async { "ok" }))
-        .layer(
-            PaymentRouterLayer::new(PaymentRouterConfig {
-                routes: vec![("GET /x".into(), cfg(&["mpp", "x402"]))],
-                protocols: vec![mpp, x402],
-                on_error: None,
-            })
-            .unwrap(),
-        );
+    let app = Router::new().route("/x", get(|| async { "ok" })).layer(
+        PaymentRouterLayer::new(PaymentRouterConfig {
+            routes: vec![("GET /x".into(), cfg(&["mpp", "x402"]))],
+            protocols: vec![mpp, x402],
+            on_error: None,
+        })
+        .unwrap(),
+    );
     let base = serve(app).await;
     let resp = reqwest::get(format!("{base}/x")).await.unwrap();
     assert_eq!(resp.status(), 200);
     assert_eq!(
-        resp.headers().get("x-handled-by").unwrap().to_str().unwrap(),
+        resp.headers()
+            .get("x-handled-by")
+            .unwrap()
+            .to_str()
+            .unwrap(),
         "mpp"
     );
     assert_eq!(mpp_hits.load(Ordering::SeqCst), 1);
@@ -191,16 +198,14 @@ async fn case02_single_challenge_failure_does_not_block() {
         hook_hits: Arc::new(AtomicUsize::new(0)),
         challenge_err: Some("simulated x402 failure".into()),
     });
-    let app = Router::new()
-        .route("/x", get(|| async { "ok" }))
-        .layer(
-            PaymentRouterLayer::new(PaymentRouterConfig {
-                routes: vec![("GET /x".into(), cfg(&["mpp", "x402"]))],
-                protocols: vec![mpp, x402],
-                on_error: None,
-            })
-            .unwrap(),
-        );
+    let app = Router::new().route("/x", get(|| async { "ok" })).layer(
+        PaymentRouterLayer::new(PaymentRouterConfig {
+            routes: vec![("GET /x".into(), cfg(&["mpp", "x402"]))],
+            protocols: vec![mpp, x402],
+            on_error: None,
+        })
+        .unwrap(),
+    );
     let base = serve(app).await;
     let resp = reqwest::get(format!("{base}/x")).await.unwrap();
     assert_eq!(resp.status(), 402);
@@ -241,16 +246,14 @@ async fn case05_multi_row_www_authenticate() {
         hook_hits: Arc::new(AtomicUsize::new(0)),
         challenge_err: None,
     });
-    let app = Router::new()
-        .route("/x", get(|| async { "ok" }))
-        .layer(
-            PaymentRouterLayer::new(PaymentRouterConfig {
-                routes: vec![("GET /x".into(), cfg(&["mpp", "x402"]))],
-                protocols: vec![mpp, x402],
-                on_error: None,
-            })
-            .unwrap(),
-        );
+    let app = Router::new().route("/x", get(|| async { "ok" })).layer(
+        PaymentRouterLayer::new(PaymentRouterConfig {
+            routes: vec![("GET /x".into(), cfg(&["mpp", "x402"]))],
+            protocols: vec![mpp, x402],
+            on_error: None,
+        })
+        .unwrap(),
+    );
     let base = serve(app).await;
     let resp = reqwest::get(format!("{base}/x")).await.unwrap();
     assert_eq!(resp.status(), 402);
@@ -377,7 +380,11 @@ async fn case09_hooks_see_real_handler_response() {
     let resp = reqwest::get(format!("{base}/real")).await.unwrap();
     assert_eq!(resp.status(), 200);
     assert_eq!(
-        resp.headers().get("x-handled-by").unwrap().to_str().unwrap(),
+        resp.headers()
+            .get("x-handled-by")
+            .unwrap()
+            .to_str()
+            .unwrap(),
         "mpp",
         "adapter wrapper injected header after real handler ran"
     );
@@ -409,16 +416,14 @@ async fn case04_adapter_no_config_skipped_in_merge() {
     });
     // route only has "mpp" config — x402 adapter is registered but its
     // get_challenge shouldn't run for this route.
-    let app = Router::new()
-        .route("/x", get(|| async { "ok" }))
-        .layer(
-            PaymentRouterLayer::new(PaymentRouterConfig {
-                routes: vec![("GET /x".into(), cfg(&["mpp"]))],
-                protocols: vec![mpp, x402],
-                on_error: None,
-            })
-            .unwrap(),
-        );
+    let app = Router::new().route("/x", get(|| async { "ok" })).layer(
+        PaymentRouterLayer::new(PaymentRouterConfig {
+            routes: vec![("GET /x".into(), cfg(&["mpp"]))],
+            protocols: vec![mpp, x402],
+            on_error: None,
+        })
+        .unwrap(),
+    );
     let base = serve(app).await;
     let resp = reqwest::get(format!("{base}/x")).await.unwrap();
     assert_eq!(resp.status(), 402);
@@ -470,21 +475,21 @@ async fn case07_on_error_invoked_on_challenge_failure() {
         hook_hits: Arc::new(AtomicUsize::new(0)),
         challenge_err: Some("boom".into()),
     });
-    let app = Router::new()
-        .route("/x", get(|| async { "ok" }))
-        .layer(
-            PaymentRouterLayer::new(PaymentRouterConfig {
-                routes: vec![("GET /x".into(), cfg(&["mpp"]))],
-                protocols: vec![mpp],
-                on_error: Some(Arc::new(move |err, ctx| {
-                    calls_clone
-                        .lock()
-                        .unwrap()
-                        .push(format!("{} {} {}", ctx.phase.as_str(), ctx.protocol, err));
-                })),
-            })
-            .unwrap(),
-        );
+    let app = Router::new().route("/x", get(|| async { "ok" })).layer(
+        PaymentRouterLayer::new(PaymentRouterConfig {
+            routes: vec![("GET /x".into(), cfg(&["mpp"]))],
+            protocols: vec![mpp],
+            on_error: Some(Arc::new(move |err, ctx| {
+                calls_clone.lock().unwrap().push(format!(
+                    "{} {} {}",
+                    ctx.phase.as_str(),
+                    ctx.protocol,
+                    err
+                ));
+            })),
+        })
+        .unwrap(),
+    );
     let base = serve(app).await;
     let _ = reqwest::get(format!("{base}/x")).await.unwrap();
     let calls = calls.lock().unwrap();

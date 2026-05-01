@@ -2,7 +2,7 @@
 //! `session_method` submodules. All items are crate-internal (`pub(super)`)
 //! and only visible inside `session_method/`.
 
-use alloy_primitives::{hex, Address, B256, Bytes};
+use alloy_primitives::{hex, Address, Bytes, B256};
 use mpp::protocol::core::{Base64UrlJson, PaymentCredential};
 
 use crate::error::SaApiError;
@@ -14,8 +14,32 @@ pub(super) const ACTION_VOUCHER: &str = "voucher";
 pub(super) const ACTION_TOPUP: &str = "topUp";
 pub(super) const ACTION_CLOSE: &str = "close";
 
-pub(super) fn extract_str<'a>(value: &'a serde_json::Value, key: &str) -> &'a str {
+/// Read an optional string field. Missing key, non-string value, or
+/// `null` all fold to `""`. Use this only for fields that are genuinely
+/// optional (e.g. `action` as a dispatch key, where `""` is the
+/// no-action default). For any required field, use
+/// [`extract_required_str`] so a missing field surfaces as
+/// `70000 missing field X` instead of being silently parsed downstream as
+/// "cannot parse u128 from empty string".
+pub(super) fn extract_str_or_empty<'a>(value: &'a serde_json::Value, key: &str) -> &'a str {
     value.get(key).and_then(|v| v.as_str()).unwrap_or("")
+}
+
+/// Read a required string field. Returns `70000 missing field X` when the
+/// key is absent, the value is not a string, or the value is `null`.
+/// Empty-string values are accepted (some SA payloads use `""` as a
+/// sentinel — e.g. close-waiver `voucherSignature`).
+pub(super) fn extract_required_str<'a>(
+    value: &'a serde_json::Value,
+    field: &str,
+) -> Result<&'a str, SaApiError> {
+    match value.get(field).and_then(|v| v.as_str()) {
+        Some(s) => Ok(s),
+        None => Err(SaApiError::new(
+            70000,
+            format!("missing required field {field}"),
+        )),
+    }
 }
 
 pub(super) fn parse_b256(s: &str) -> Result<B256, SaApiError> {
@@ -156,10 +180,12 @@ pub(super) fn extract_payer_and_signer(
 ) -> Result<(Address, Address), SaApiError> {
     let payload_type = payload.get("type").and_then(|v| v.as_str()).unwrap_or("");
     let payer = match payload_type {
-        "transaction" => parse_address(extract_str(
-            payload.get("authorization").unwrap_or(&serde_json::Value::Null),
-            "from",
-        ))?,
+        "transaction" => {
+            let authorization = payload
+                .get("authorization")
+                .ok_or_else(|| SaApiError::new(70000, "missing required field authorization"))?;
+            parse_address(extract_required_str(authorization, "from")?)?
+        }
         "hash" => {
             let did = source
                 .filter(|s| !s.is_empty())

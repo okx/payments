@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use axum::body::Bytes;
 use futures::future::join_all;
-use http::{HeaderMap, Response, StatusCode, header::CONTENT_TYPE, request::Parts};
+use http::{header::CONTENT_TYPE, request::Parts, HeaderMap, Response, StatusCode};
 
 use crate::adapter::ProtocolAdapter;
 use crate::types::{ErrorContext, ErrorHandler, ErrorPhase, UnifiedRouteConfig};
@@ -174,7 +174,7 @@ pub(crate) fn build_402_response(merged: MergedChallenge) -> Response<Body> {
 mod tests {
     use super::*;
     use crate::adapter::{ChallengeFuture, ChallengeResponse, InnerService, ProtocolAdapter};
-    use http::{HeaderValue, Request, header::WWW_AUTHENTICATE};
+    use http::{header::WWW_AUTHENTICATE, HeaderValue, Request};
     use serde_json::Value;
 
     struct StubAdapter {
@@ -283,7 +283,10 @@ mod tests {
         let mpp: Arc<dyn ProtocolAdapter> = Arc::new(StubAdapter {
             name: "mpp".into(),
             // Even if this adapter would contribute, spec §3 #4 says skip when no config
-            result: Ok(Some(header_only("WWW-Authenticate", "Payment should-not-appear"))),
+            result: Ok(Some(header_only(
+                "WWW-Authenticate",
+                "Payment should-not-appear",
+            ))),
         });
         let x402: Arc<dyn ProtocolAdapter> = Arc::new(StubAdapter {
             name: "x402".into(),
@@ -317,11 +320,7 @@ mod tests {
             fn detect(&self, _: &Parts) -> bool {
                 false
             }
-            fn get_challenge<'a>(
-                &'a self,
-                _: &'a Parts,
-                _: &'a Value,
-            ) -> ChallengeFuture<'a> {
+            fn get_challenge<'a>(&'a self, _: &'a Parts, _: &'a Value) -> ChallengeFuture<'a> {
                 // Never returns within the per-adapter timeout window.
                 Box::pin(async {
                     tokio::time::sleep(Duration::from_secs(60)).await;
@@ -366,10 +365,7 @@ mod tests {
     async fn x402_body_is_preserved_through_merge() {
         let mpp: Arc<dyn ProtocolAdapter> = Arc::new(StubAdapter {
             name: "mpp".into(),
-            result: Ok(Some(header_only(
-                "WWW-Authenticate",
-                "Payment realm=\"m\"",
-            ))),
+            result: Ok(Some(header_only("WWW-Authenticate", "Payment realm=\"m\""))),
         });
         let x402_body = Bytes::from_static(b"{\"x402Version\":1,\"accepts\":[]}");
         let x402: Arc<dyn ProtocolAdapter> = Arc::new(StubAdapter {
@@ -411,10 +407,7 @@ mod tests {
     async fn no_adapter_body_falls_back_to_rfc_9457() {
         let mpp: Arc<dyn ProtocolAdapter> = Arc::new(StubAdapter {
             name: "mpp".into(),
-            result: Ok(Some(header_only(
-                "WWW-Authenticate",
-                "Payment realm=\"m\"",
-            ))),
+            result: Ok(Some(header_only("WWW-Authenticate", "Payment realm=\"m\""))),
         });
         let merged = merge_challenges(&[mpp], &parts(), &cfg(), "GET /photos", None).await;
         assert!(merged.body.is_none(), "no adapter set a body");

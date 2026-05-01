@@ -11,8 +11,10 @@
 use async_trait::async_trait;
 
 use x402_core::error::X402Error;
-use x402_core::types::{AssetAmount, MoneyParser, Network, PaymentRequirements, Price, SupportedKind};
 use x402_core::types::SchemeNetworkServer;
+use x402_core::types::{
+    AssetAmount, MoneyParser, Network, PaymentRequirements, Price, SupportedKind,
+};
 
 use crate::exact::ExactEvmScheme;
 
@@ -52,7 +54,11 @@ impl SchemeNetworkServer for AggrDeferredEvmScheme {
         "aggr_deferred"
     }
 
-    async fn parse_price(&self, price: &Price, network: &Network) -> Result<AssetAmount, X402Error> {
+    async fn parse_price(
+        &self,
+        price: &Price,
+        network: &Network,
+    ) -> Result<AssetAmount, X402Error> {
         self.exact.parse_price(price, network).await
     }
 
@@ -86,9 +92,6 @@ mod tests {
             .unwrap();
 
         assert_eq!(result.amount, "1000");
-        assert_eq!(
-            result.asset,
-            "0x779ded0c9e1022225f8e0630b35a9b54be713736"
-        );
+        assert_eq!(result.asset, "0x779ded0c9e1022225f8e0630b35a9b54be713736");
     }
 }
