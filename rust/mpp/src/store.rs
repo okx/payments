@@ -6,19 +6,26 @@
 //! throttling params (min_voucher_delta).
 //!
 //! `SessionStore` is a pluggable trait:
-//! - Default [`InMemorySessionStore`]: in-process HashMap, lost on
-//!   restart; suitable for demos / single-process setups.
-//! - Production merchants should implement
-//!   `SqliteSessionStore` / `RedisSessionStore` (the SQLite template in
-//!   §3.5 is a starting point) and inject via
-//!   [`EvmSessionMethod::with_store`].
+//! - Default [`InMemorySessionStore`]: in-process `HashMap`. Fits most
+//!   single-process deployments — operations are short, lock contention
+//!   is negligible. Two caveats apply:
+//!   1. **Process restart loses all channel state.** Merchants that can't
+//!      accept that loss (long-lived channels, multi-instance HA, hot
+//!      reload) should plug in a persistent implementation.
+//!   2. **Abandoned channels accumulate** (payer never closes). This is
+//!      a session-lifecycle concern, NOT specific to in-memory storage —
+//!      a SQL or Redis store fills up the same way. Merchants should
+//!      have a cleanup strategy: poll [`SaApiClient::session_status`] to
+//!      detect finalized channels and call `close_with_authorization`,
+//!      or evict on a merchant-defined TTL.
+//! - Custom: implement [`SessionStore`] (SQLite / Redis / merchant DB) and
+//!   inject via [`EvmSessionMethod::with_store`].
 //!
-//! Persistence is the merchant's responsibility. On `get` miss, the SDK
-//! returns `None` — it does not auto-recover from `/session/status`
-//! because the recoverable subset doesn't include `cumulativeAmount` or
-//! `highest_voucher_signature` (insufficient to reconstruct voucher state).
-//! Merchants needing cross-process durability must implement their own
-//! persistent store.
+//! On `get` miss, the SDK returns `None` and does NOT auto-recover from
+//! `/session/status` — SA's recoverable subset doesn't include
+//! `cumulativeAmount` or `highest_voucher_signature`, which is
+//! insufficient to reconstruct voucher state. Stores that need
+//! cross-process durability must persist these fields themselves.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -132,12 +139,11 @@ pub trait SessionStore: Send + Sync {
     ) -> Result<ChannelRecord, SaApiError>;
 }
 
-/// Default implementation: in-process `HashMap` synchronized with a std
-/// `Mutex` (operations are short and don't `await`).
+/// Default implementation: in-process `HashMap` synchronized with a
+/// std `Mutex` (operations are short and don't `await`).
 ///
-/// **Lost on restart**: a process restart or crash drops all channel
-/// state. Production deployments should provide a persistent
-/// implementation — see the §3.5 warning.
+/// Process restart drops all channel state — see the module-level
+/// caveat.
 #[derive(Debug, Default, Clone)]
 pub struct InMemorySessionStore {
     inner: Arc<Mutex<HashMap<String, ChannelRecord>>>,
