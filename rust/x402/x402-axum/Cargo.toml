@@ -1,0 +1,26 @@
+[package]
+name = "okxweb3-app-x402-axum"
+description = "OKX Agent Payments Protocol: x402 Axum middleware"
+version = "0.2.0"
+edition.workspace = true
+license.workspace = true
+repository = "https://github.com/okx/payments/tree/main/rust/x402/x402-axum"
+rust-version = "1.82"
+keywords = ["payments", "x402", "axum", "middleware", "web3"]
+categories = ["web-programming::http-server", "cryptography::cryptocurrencies"]
+
+[lib]
+name = "x402_axum"
+
+[dependencies]
+x402-core = { package = "okxweb3-app-x402-core", version = "0.2", path = "../x402-core" }
+axum = { workspace = true }
+tower = { workspace = true }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+wiremock = { workspace = true }
+tokio = { workspace = true, features = ["test-util", "macros"] }
+x402-evm = { package = "okxweb3-app-x402-evm", version = "0.2", path = "../x402-evm" }

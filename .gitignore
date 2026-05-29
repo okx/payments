@@ -1,0 +1,22 @@
+.env
+.env.local
+node_modules/
+dist/
+.turbo/
+.next/
+proxy
+.env
+__pycache__/
+**/.DS_Store
+typescript/package-lock.json
+.pnpm-store/
+
+# Agent artifacts
+TASK.md
+.claude/
+skills/
+REVIEW_PROMPT.md
+
+# IDE
+.idea/
+.vscode/

@@ -1,0 +1,22 @@
+[package]
+name = "okxweb3-app-x402-evm"
+description = "OKX Agent Payments Protocol: x402 EVM mechanism"
+version = "0.2.0"
+edition.workspace = true
+license.workspace = true
+repository = "https://github.com/okx/payments/tree/main/rust/x402/x402-evm"
+rust-version = "1.82"
+keywords = ["payments", "x402", "evm", "web3", "ethereum"]
+categories = ["cryptography::cryptocurrencies", "web-programming::http-server"]
+
+[lib]
+name = "x402_evm"
+
+[dependencies]
+x402-core = { package = "okxweb3-app-x402-core", version = "0.2", path = "../x402-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros"] }

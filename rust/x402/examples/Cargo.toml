@@ -1,0 +1,34 @@
+[package]
+name = "x402-examples"
+description = "Example servers using the x402 Rust Seller SDK"
+# `version` is required by Cargo's manifest schema; value is irrelevant
+# because `publish = false` keeps this out of crates.io anyway.
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+x402-core = { package = "okxweb3-app-x402-core", version = "0.2", path = "../x402-core" }
+x402-axum = { package = "okxweb3-app-x402-axum", version = "0.2", path = "../x402-axum" }
+x402-evm = { package = "okxweb3-app-x402-evm", version = "0.2", path = "../x402-evm" }
+axum = { workspace = true }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+tracing-subscriber = "0.3"
+
+[[example]]
+name = "basic_server"
+path = "src/basic_server.rs"
+
+[[example]]
+name = "custom_config"
+path = "src/custom_config.rs"
+
+[[example]]
+name = "exact_permit2_server"
+path = "src/exact_permit2_server.rs"
+
+[[example]]
+name = "upto_server"
+path = "src/upto_server.rs"

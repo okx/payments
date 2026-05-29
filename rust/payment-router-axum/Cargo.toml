@@ -1,0 +1,63 @@
+[package]
+name = "okxweb3-app-payment-router-axum"
+version = "0.2.0"
+edition.workspace = true
+license.workspace = true
+repository = "https://github.com/okx/payments/tree/main/rust/payment-router-axum"
+description = "OKX Agent Payments Protocol: Axum middleware routing MPP + x402 on the same endpoint"
+rust-version = "1.82"
+keywords = ["payments", "axum", "middleware", "router", "web3"]
+categories = ["web-programming::http-server", "cryptography::cryptocurrencies"]
+
+[lib]
+name = "payment_router_axum"
+
+[dependencies]
+# Upstream MPP (format_www_authenticate, format_receipt, parse_authorization,
+# the generic Mpp<M, S> facade used by EvmMpp). Pinned to crates.io 0.10.x —
+# see mpp/Cargo.toml for rationale.
+mpp = { version = "0.10", features = ["server", "evm", "tower", "axum"] }
+
+# OKX MPP EVM SDK (EvmMpp facade + charge/session methods)
+mpp-evm = { package = "okxweb3-app-mpp", version = "0.2", path = "../mpp" }
+
+# x402 SDKs (native PaymentMiddleware + X402ResourceServer per-call API)
+x402-axum = { package = "okxweb3-app-x402-axum", version = "0.2", path = "../x402/x402-axum" }
+x402-core = { package = "okxweb3-app-x402-core", version = "0.2", path = "../x402/x402-core" }
+
+# Tower / axum / http
+axum = { workspace = true }
+tower = { workspace = true }
+http = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+async-trait = { workspace = true }
+futures = "0.3"
+
+# Serialization (for route configs as serde_json::Value)
+serde_json = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+reqwest = { workspace = true }
+# Used by the example servers.
+x402-evm = { package = "okxweb3-app-x402-evm", version = "0.2", path = "../x402/x402-evm" }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Used by `dual_protocol_session_server` to sign EIP-712
+# SettleAuthorization / CloseAuthorization on the payee side.
+alloy-signer-local = "=2.0.1"
+
+[[example]]
+name = "dual_protocol_server"
+path = "examples/dual_protocol_server.rs"
+
+[[example]]
+name = "dual_protocol_session_server"
+path = "examples/dual_protocol_session_server.rs"
