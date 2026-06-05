@@ -7,6 +7,7 @@ Multi-language SDK for [x402](https://x402.org) and [MPP](https://mpp.dev/) paym
 | Language   | Path                           | x402 | MPP |
 | ---------- | ------------------------------ | ---- | --- |
 | Go         | [`go/`](go/)                   | ✅   | ✅  |
+| Python     | [`python/`](python/)           | ✅   | ✅  |
 | Rust       | [`rust/`](rust/)               | ✅   | ✅  |
 | TypeScript | [`typescript/`](typescript/)   | ✅   | ✅  |
 | Java       | [`java/`](java/)               | ✅   |     |

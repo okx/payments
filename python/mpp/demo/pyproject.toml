@@ -1,0 +1,14 @@
+[project]
+name = "okxweb3-app-mpp-demo"
+version = "0.0.0"
+description = "Demo servers for okxweb3-app-mpp"
+requires-python = ">=3.11"
+dependencies = [
+    "okxweb3-app-mpp",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.20.0",
+]
+classifiers = ["Private :: Do Not Upload"]
+
+[tool.uv.sources]
+okxweb3-app-mpp = { path = "..", editable = true }
