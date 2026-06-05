@@ -1,0 +1,13 @@
+[project]
+name = "okxweb3-app-x402-demo"
+version = "0.0.0"
+description = "Demo servers for okxweb3-app-x402"
+requires-python = ">=3.11"
+dependencies = [
+    "okxweb3-app-x402[evm,fastapi,flask]",
+    "uvicorn>=0.20.0",
+]
+classifiers = ["Private :: Do Not Upload"]
+
+[tool.uv.sources]
+okxweb3-app-x402 = { path = "..", editable = true }

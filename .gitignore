@@ -6,7 +6,17 @@ dist/
 .next/
 proxy
 .env
+# Python build artifacts
 __pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+
 **/.DS_Store
 typescript/package-lock.json
 .pnpm-store/
