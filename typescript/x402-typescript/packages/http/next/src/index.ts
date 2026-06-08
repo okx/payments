@@ -9,8 +9,8 @@ import {
   FacilitatorResponseError,
   getFacilitatorResponseError,
   RouteConfig,
-} from "@okxweb3/x402-core/server";
-import { SchemeNetworkServer, Network } from "@okxweb3/x402-core/types";
+} from "@okxweb3/app-x402-core/server";
+import { SchemeNetworkServer, Network } from "@okxweb3/app-x402-core/types";
 import { NextRequest, NextResponse } from "next/server";
 import { NextAdapter } from "./adapter";
 
@@ -184,7 +184,7 @@ async function handleSettlement(
  *
  * @example
  * ```typescript
- * import { paymentProxyFromHTTPServer, x402ResourceServer, x402HTTPResourceServer } from "@okxweb3/x402-next";
+ * import { paymentProxyFromHTTPServer, x402ResourceServer, x402HTTPResourceServer } from "@okxweb3/app-x402-next";
  *
  * const resourceServer = new x402ResourceServer(facilitatorClient)
  *   .register(NETWORK, new ExactEvmScheme());
@@ -265,7 +265,7 @@ export function paymentProxyFromHTTPServer(
  *
  * @example
  * ```typescript
- * import { paymentProxy } from "@okxweb3/x402-next";
+ * import { paymentProxy } from "@okxweb3/app-x402-next";
  *
  * const server = new x402ResourceServer(myFacilitatorClient)
  *   .register(NETWORK, new ExactEvmScheme());
@@ -297,7 +297,7 @@ export function paymentProxy(
  *
  * @example
  * ```typescript
- * import { paymentProxyFromConfig } from "@okxweb3/x402-next";
+ * import { paymentProxyFromConfig } from "@okxweb3/app-x402-next";
  *
  * export const proxy = paymentProxyFromConfig(
  *   routes,
@@ -339,7 +339,7 @@ export function paymentProxyFromConfig(
  * @example
  * ```typescript
  * import { NextRequest, NextResponse } from "next/server";
- * import { withX402FromHTTPServer, x402ResourceServer, x402HTTPResourceServer } from "@okxweb3/x402-next";
+ * import { withX402FromHTTPServer, x402ResourceServer, x402HTTPResourceServer } from "@okxweb3/app-x402-next";
  *
  * const resourceServer = new x402ResourceServer(facilitatorClient)
  *   .register(NETWORK, new ExactEvmScheme());
@@ -410,7 +410,7 @@ export function withX402FromHTTPServer<T = unknown>(
  * @example
  * ```typescript
  * import { NextRequest, NextResponse } from "next/server";
- * import { withX402 } from "@okxweb3/x402-next";
+ * import { withX402 } from "@okxweb3/app-x402-next";
  *
  * const server = new x402ResourceServer(myFacilitatorClient)
  *   .register(NETWORK, new ExactEvmScheme());
@@ -453,7 +453,7 @@ export function withX402<T = unknown>(
   );
 }
 
-export { x402ResourceServer, x402HTTPResourceServer } from "@okxweb3/x402-core/server";
+export { x402ResourceServer, x402HTTPResourceServer } from "@okxweb3/app-x402-core/server";
 
 export type {
   PaymentRequired,
@@ -461,12 +461,12 @@ export type {
   PaymentPayload,
   Network,
   SchemeNetworkServer,
-} from "@okxweb3/x402-core/types";
+} from "@okxweb3/app-x402-core/types";
 
-export type { PaywallProvider, PaywallConfig, RouteConfig } from "@okxweb3/x402-core/server";
+export type { PaywallProvider, PaywallConfig, RouteConfig } from "@okxweb3/app-x402-core/server";
 
-export { RouteConfigurationError } from "@okxweb3/x402-core/server";
+export { RouteConfigurationError } from "@okxweb3/app-x402-core/server";
 
-export type { RouteValidationError } from "@okxweb3/x402-core/server";
+export type { RouteValidationError } from "@okxweb3/app-x402-core/server";
 
 export { NextAdapter } from "./adapter";

@@ -1,11 +1,11 @@
-# @okxweb3/x402-next
+# @okxweb3/app-x402-next
 
 Next.js integration for the x402 Payment Protocol. Adds payment protection to Next.js applications using page-level proxy or API route wrappers.
 
 ## Installation
 
 ```bash
-npm install @okxweb3/x402-next
+npm install @okxweb3/app-x402-next
 ```
 
 ## Quick Start
@@ -16,9 +16,9 @@ Create a `proxy.ts` file in your Next.js project root:
 
 ```typescript
 // proxy.ts
-import { paymentProxy, x402ResourceServer } from "@okxweb3/x402-next";
-import { ExactEvmScheme } from "@okxweb3/x402-evm/exact/server";
-import { OKXFacilitatorClient } from "@okxweb3/x402-core";
+import { paymentProxy, x402ResourceServer } from "@okxweb3/app-x402-next";
+import { ExactEvmScheme } from "@okxweb3/app-x402-evm/exact/server";
+import { OKXFacilitatorClient } from "@okxweb3/app-x402-core";
 
 const facilitatorClient = new OKXFacilitatorClient();
 const resourceServer = new x402ResourceServer(facilitatorClient)
@@ -51,9 +51,9 @@ Use the `withX402` wrapper for API routes. This approach guarantees payment sett
 ```typescript
 // app/api/your-endpoint/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { withX402, x402ResourceServer } from "@okxweb3/x402-next";
-import { ExactEvmScheme } from "@okxweb3/x402-evm/exact/server";
-import { OKXFacilitatorClient } from "@okxweb3/x402-core";
+import { withX402, x402ResourceServer } from "@okxweb3/app-x402-next";
+import { ExactEvmScheme } from "@okxweb3/app-x402-evm/exact/server";
+import { OKXFacilitatorClient } from "@okxweb3/app-x402-core";
 
 const facilitatorClient = new OKXFacilitatorClient();
 const server = new x402ResourceServer(facilitatorClient)
@@ -135,7 +135,7 @@ Wraps an API route handler with payment protection. Settlement occurs only after
 When an unpaid request comes from a web browser (`Accept` header contains `text/html` **and** `User-Agent` contains `Mozilla`), the proxy/wrapper returns an HTML paywall page instead of a JSON 402. API/SDK clients are unaffected — they continue to receive JSON 402 with the `PAYMENT-REQUIRED` header.
 
 ```typescript
-import { paymentProxy, PaywallConfig, PaywallProvider } from "@okxweb3/x402-next";
+import { paymentProxy, PaywallConfig, PaywallProvider } from "@okxweb3/app-x402-next";
 
 // Brand the built-in paywall
 const paywallConfig: PaywallConfig = {

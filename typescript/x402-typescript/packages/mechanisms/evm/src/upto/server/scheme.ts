@@ -5,7 +5,7 @@ import {
   Price,
   SchemeNetworkServer,
   MoneyParser,
-} from "@okxweb3/x402-core/types";
+} from "@okxweb3/app-x402-core/types";
 import { getAddress } from "viem";
 import { getDefaultAsset } from "../../shared/defaultAssets";
 

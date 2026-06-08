@@ -1,5 +1,5 @@
-import { x402Client, x402ClientConfig, x402HTTPClient } from "@okxweb3/x402-core/client";
-import { type PaymentRequired } from "@okxweb3/x402-core/types";
+import { x402Client, x402ClientConfig, x402HTTPClient } from "@okxweb3/app-x402-core/client";
+import { type PaymentRequired } from "@okxweb3/app-x402-core/types";
 import type { AxiosInstance, AxiosError, InternalAxiosRequestConfig } from "axios";
 
 /**
@@ -19,8 +19,8 @@ import type { AxiosInstance, AxiosError, InternalAxiosRequestConfig } from "axio
  * @example
  * ```typescript
  * import axios from 'axios';
- * import { wrapAxiosWithPayment, x402Client } from '@okxweb3/x402-axios';
- * import { ExactEvmScheme } from '@okxweb3/x402-evm';
+ * import { wrapAxiosWithPayment, x402Client } from '@okxweb3/app-x402-axios';
+ * import { ExactEvmScheme } from '@okxweb3/app-x402-evm';
  * import { privateKeyToAccount } from 'viem/accounts';
  *
  * const account = privateKeyToAccount('0x...');
@@ -151,8 +151,8 @@ export function wrapAxiosWithPayment(
  * @example
  * ```typescript
  * import axios from 'axios';
- * import { wrapAxiosWithPaymentFromConfig } from '@okxweb3/x402-axios';
- * import { ExactEvmScheme } from '@okxweb3/x402-evm';
+ * import { wrapAxiosWithPaymentFromConfig } from '@okxweb3/app-x402-axios';
+ * import { ExactEvmScheme } from '@okxweb3/app-x402-evm';
  * import { privateKeyToAccount } from 'viem/accounts';
  *
  * const account = privateKeyToAccount('0x...');
@@ -175,18 +175,18 @@ export function wrapAxiosWithPaymentFromConfig(
 }
 
 // Re-export types and utilities for convenience
-export { x402Client, x402HTTPClient } from "@okxweb3/x402-core/client";
+export { x402Client, x402HTTPClient } from "@okxweb3/app-x402-core/client";
 export type {
   PaymentPolicy,
   SchemeRegistration,
   SelectPaymentRequirements,
   x402ClientConfig,
-} from "@okxweb3/x402-core/client";
-export { decodePaymentResponseHeader } from "@okxweb3/x402-core/http";
+} from "@okxweb3/app-x402-core/client";
+export { decodePaymentResponseHeader } from "@okxweb3/app-x402-core/http";
 export type {
   Network,
   PaymentPayload,
   PaymentRequired,
   PaymentRequirements,
   SchemeNetworkClient,
-} from "@okxweb3/x402-core/types";
+} from "@okxweb3/app-x402-core/types";

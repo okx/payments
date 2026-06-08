@@ -1,4 +1,4 @@
-# @okxweb3/payment-router
+# @okxweb3/app-payment-router
 
 > 统一支付路由 — 让同一个 URL 同时支持 [**MPP**](https://mpp.dev) 与 [**x402**](https://x402.org) 两种 402 支付协议。
 
@@ -7,29 +7,29 @@ API 形态对齐 Rust [`payment-router-axum`](https://github.com/okx/payments)�
 ## 安装
 
 ```bash
-npm install @okxweb3/payment-router @okxweb3/mpp @okxweb3/x402-core @okxweb3/x402-evm
+npm install @okxweb3/app-payment-router @okxweb3/app-mpp @okxweb3/app-x402-core @okxweb3/app-x402-evm
 ```
 
-`@okxweb3/mpp` 与 `@okxweb3/x402-core` 是可选的 peerDependency — 只用其中一个协议时只装一个即可。
+`@okxweb3/app-mpp` 与 `@okxweb3/app-x402-core` 是可选的 peerDependency — 只用其中一个协议时只装一个即可。
 
 ## 快速开始
 
 ```typescript
 import * as http from "node:http";
-import { Mppx } from "@okxweb3/mpp";
-import { charge as mppCharge } from "@okxweb3/mpp/evm/server";
-import { SaApiClient } from "@okxweb3/mpp/evm";
-import { OKXFacilitatorClient } from "@okxweb3/x402-core";
+import { Mppx } from "@okxweb3/app-mpp";
+import { charge as mppCharge } from "@okxweb3/app-mpp/evm/server";
+import { SaApiClient } from "@okxweb3/app-mpp/evm";
+import { OKXFacilitatorClient } from "@okxweb3/app-x402-core";
 import {
   x402HTTPResourceServer,
   x402ResourceServer,
-} from "@okxweb3/x402-core/server";
-import { ExactEvmScheme } from "@okxweb3/x402-evm/exact/server";
+} from "@okxweb3/app-x402-core/server";
+import { ExactEvmScheme } from "@okxweb3/app-x402-evm/exact/server";
 import {
   MppAdapter,
   X402Adapter,
   paymentRouter,
-} from "@okxweb3/payment-router";
+} from "@okxweb3/app-payment-router";
 
 // 1. MPP
 const saClient = new SaApiClient({
@@ -121,7 +121,7 @@ HTTP 请求 → toWebRequest → paymentRouter(handler) → 业务 handler → R
 实现 `ProtocolAdapter` 即可接入新协议：
 
 ```typescript
-import type { ProtocolAdapter, Handler } from "@okxweb3/payment-router";
+import type { ProtocolAdapter, Handler } from "@okxweb3/app-payment-router";
 
 class MyProtocolAdapter implements ProtocolAdapter {
   readonly name = "my-proto";

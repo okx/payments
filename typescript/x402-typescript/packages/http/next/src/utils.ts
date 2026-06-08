@@ -8,8 +8,8 @@ import {
   RoutesConfig,
   FacilitatorResponseError,
   getFacilitatorResponseError as getCoreFacilitatorResponseError,
-} from "@okxweb3/x402-core/server";
-import { PaymentPayload, PaymentRequirements } from "@okxweb3/x402-core/types";
+} from "@okxweb3/app-x402-core/server";
+import { PaymentPayload, PaymentRequirements } from "@okxweb3/app-x402-core/types";
 import { NextAdapter } from "./adapter";
 
 /**

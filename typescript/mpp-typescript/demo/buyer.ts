@@ -23,7 +23,7 @@
  * Port: 3002 (configurable via `BUYER_PORT`).
  */
 import express from 'express'
-import { Challenge, Credential } from '@okxweb3/mpp'
+import { Challenge, Credential } from '@okxweb3/app-mpp'
 import {
   toHex,
   type Address,

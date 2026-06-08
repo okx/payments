@@ -1,9 +1,9 @@
 // Run: node --env-file=.env --experimental-strip-types server.ts
 //      or: npx tsx --env-file=.env server.ts
 import * as http from "node:http";
-import { Mppx } from "@okxweb3/mpp";
-import { charge } from "@okxweb3/mpp/evm/server";
-import { SaApiClient } from "@okxweb3/mpp/evm";
+import { Mppx } from "@okxweb3/app-mpp";
+import { charge } from "@okxweb3/app-mpp/evm/server";
+import { SaApiClient } from "@okxweb3/app-mpp/evm";
 
 // SA-API client (broadcasts EIP-3009 in transaction mode).
 const saClient = new SaApiClient({

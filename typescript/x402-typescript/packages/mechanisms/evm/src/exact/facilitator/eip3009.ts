@@ -3,7 +3,7 @@ import {
   PaymentRequirements,
   SettleResponse,
   VerifyResponse,
-} from "@okxweb3/x402-core/types";
+} from "@okxweb3/app-x402-core/types";
 import { getAddress, Hex, isAddressEqual, parseErc6492Signature } from "viem";
 import { authorizationTypes } from "../../constants";
 import { FacilitatorEvmSigner } from "../../signer";

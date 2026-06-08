@@ -9,13 +9,13 @@ import {
   FacilitatorClient,
   FacilitatorResponseError,
   getFacilitatorResponseError,
-} from "@okxweb3/x402-core/server";
+} from "@okxweb3/app-x402-core/server";
 import {
   SchemeNetworkServer,
   Network,
   PaymentPayload,
   PaymentRequirements,
-} from "@okxweb3/x402-core/types";
+} from "@okxweb3/app-x402-core/types";
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { FastifyAdapter } from "./adapter";
 
@@ -226,7 +226,7 @@ export interface SchemeRegistration {
  *
  * @example
  * ```typescript
- * import { paymentMiddlewareFromHTTPServer, x402ResourceServer, x402HTTPResourceServer } from "@okxweb3/x402-fastify";
+ * import { paymentMiddlewareFromHTTPServer, x402ResourceServer, x402HTTPResourceServer } from "@okxweb3/app-x402-fastify";
  *
  * const resourceServer = new x402ResourceServer(facilitatorClient)
  *   .register(NETWORK, new ExactEvmScheme());
@@ -441,7 +441,7 @@ export function paymentMiddlewareFromHTTPServer(
  *
  * @example
  * ```typescript
- * import { paymentMiddleware } from "@okxweb3/x402-fastify";
+ * import { paymentMiddleware } from "@okxweb3/app-x402-fastify";
  *
  * const server = new x402ResourceServer(myFacilitatorClient)
  *   .register(NETWORK, new ExactEvmScheme());
@@ -478,7 +478,7 @@ export function paymentMiddleware(
  *
  * @example
  * ```typescript
- * import { paymentMiddlewareFromConfig } from "@okxweb3/x402-fastify";
+ * import { paymentMiddlewareFromConfig } from "@okxweb3/app-x402-fastify";
  *
  * paymentMiddlewareFromConfig(
  *   app,
@@ -509,7 +509,7 @@ export function paymentMiddlewareFromConfig(
   paymentMiddleware(app, routes, ResourceServer, paywallConfig, paywall, syncFacilitatorOnStart);
 }
 
-export { x402ResourceServer, x402HTTPResourceServer } from "@okxweb3/x402-core/server";
+export { x402ResourceServer, x402HTTPResourceServer } from "@okxweb3/app-x402-core/server";
 
 export type {
   PaymentRequired,
@@ -517,12 +517,12 @@ export type {
   PaymentPayload,
   Network,
   SchemeNetworkServer,
-} from "@okxweb3/x402-core/types";
+} from "@okxweb3/app-x402-core/types";
 
-export type { PaywallProvider, PaywallConfig } from "@okxweb3/x402-core/server";
+export type { PaywallProvider, PaywallConfig } from "@okxweb3/app-x402-core/server";
 
-export { RouteConfigurationError } from "@okxweb3/x402-core/server";
+export { RouteConfigurationError } from "@okxweb3/app-x402-core/server";
 
-export type { RouteValidationError } from "@okxweb3/x402-core/server";
+export type { RouteValidationError } from "@okxweb3/app-x402-core/server";
 
 export { FastifyAdapter } from "./adapter";

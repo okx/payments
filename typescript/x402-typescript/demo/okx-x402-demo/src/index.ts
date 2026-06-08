@@ -10,12 +10,12 @@
  * the `eip155:1952` network.
  */
 import express from "express";
-import { OKXFacilitatorClient } from "@okxweb3/x402-core";
+import { OKXFacilitatorClient } from "@okxweb3/app-x402-core";
 import {
   paymentMiddleware,
   x402ResourceServer,
-} from "@okxweb3/x402-express";
-import { ExactEvmScheme } from "@okxweb3/x402-evm/exact/server";
+} from "@okxweb3/app-x402-express";
+import { ExactEvmScheme } from "@okxweb3/app-x402-evm/exact/server";
 
 const NETWORK = "eip155:1952"; // X Layer testnet
 const PORT = Number.parseInt(process.env.PORT ?? "3000", 10);

@@ -158,7 +158,7 @@ export interface X402AdapterConfig {
   resourceServer: X402ResourceServerLike;
   /**
    * Constructor for `x402HTTPResourceServer` (from
-   * `@okxweb3/x402-core/server`). Injected explicitly so the adapter does not
+   * `@okxweb3/app-x402-core/server`). Injected explicitly so the adapter does not
    * hard-import x402-core.
    */
   httpResourceServerCtor: X402HTTPResourceServerCtor;

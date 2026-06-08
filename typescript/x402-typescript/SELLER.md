@@ -20,17 +20,17 @@
 ## PACKAGES
 
 ```
-@okxweb3/x402-core       — OKXFacilitatorClient
-@okxweb3/x402-evm        — ExactEvmScheme, DeferredEvmScheme (server-side)
-@okxweb3/x402-express    — Express middleware
-@okxweb3/x402-hono       — Hono middleware
-@okxweb3/x402-fastify    — Fastify middleware (NOTE: different call signature)
-@okxweb3/x402-next       — Next.js proxy + route handler wrapper
+@okxweb3/app-x402-core       — OKXFacilitatorClient
+@okxweb3/app-x402-evm        — ExactEvmScheme, DeferredEvmScheme (server-side)
+@okxweb3/app-x402-express    — Express middleware
+@okxweb3/app-x402-hono       — Hono middleware
+@okxweb3/app-x402-fastify    — Fastify middleware (NOTE: different call signature)
+@okxweb3/app-x402-next       — Next.js proxy + route handler wrapper
 ```
 
 Install core + framework:
 ```bash
-npm install @okxweb3/x402-core @okxweb3/x402-evm @okxweb3/x402-{express|hono|fastify|next}
+npm install @okxweb3/app-x402-core @okxweb3/app-x402-evm @okxweb3/app-x402-{express|hono|fastify|next}
 ```
 
 ---
@@ -39,21 +39,21 @@ npm install @okxweb3/x402-core @okxweb3/x402-evm @okxweb3/x402-{express|hono|fas
 
 ```typescript
 // Core — always needed
-import { OKXFacilitatorClient } from "@okxweb3/x402-core";
+import { OKXFacilitatorClient } from "@okxweb3/app-x402-core";
 
 // Schemes — register on resource server
-import { ExactEvmScheme } from "@okxweb3/x402-evm/exact/server";
-import { DeferredEvmScheme } from "@okxweb3/x402-evm/deferred/server";  // optional
+import { ExactEvmScheme } from "@okxweb3/app-x402-evm/exact/server";
+import { DeferredEvmScheme } from "@okxweb3/app-x402-evm/deferred/server";  // optional
 
 // Framework middleware — pick ONE
 // Express:
-import { x402ResourceServer, x402HTTPResourceServer, paymentMiddlewareFromHTTPServer, paymentMiddleware, paymentMiddlewareFromConfig } from "@okxweb3/x402-express";
+import { x402ResourceServer, x402HTTPResourceServer, paymentMiddlewareFromHTTPServer, paymentMiddleware, paymentMiddlewareFromConfig } from "@okxweb3/app-x402-express";
 // Hono:
-import { x402ResourceServer, x402HTTPResourceServer, paymentMiddlewareFromHTTPServer, paymentMiddleware, paymentMiddlewareFromConfig } from "@okxweb3/x402-hono";
+import { x402ResourceServer, x402HTTPResourceServer, paymentMiddlewareFromHTTPServer, paymentMiddleware, paymentMiddlewareFromConfig } from "@okxweb3/app-x402-hono";
 // Fastify:
-import { x402ResourceServer, x402HTTPResourceServer, paymentMiddlewareFromHTTPServer, paymentMiddleware, paymentMiddlewareFromConfig } from "@okxweb3/x402-fastify";
+import { x402ResourceServer, x402HTTPResourceServer, paymentMiddlewareFromHTTPServer, paymentMiddleware, paymentMiddlewareFromConfig } from "@okxweb3/app-x402-fastify";
 // Next.js:
-import { x402ResourceServer, x402HTTPResourceServer, paymentProxyFromHTTPServer, paymentProxyFromConfig, withX402FromHTTPServer, withX402 } from "@okxweb3/x402-next";
+import { x402ResourceServer, x402HTTPResourceServer, paymentProxyFromHTTPServer, paymentProxyFromConfig, withX402FromHTTPServer, withX402 } from "@okxweb3/app-x402-next";
 ```
 
 ---
@@ -150,9 +150,9 @@ Three middleware functions available. All return `express.RequestHandler`.
 
 ```typescript
 import express from "express";
-import { OKXFacilitatorClient } from "@okxweb3/x402-core";
-import { x402ResourceServer, x402HTTPResourceServer, paymentMiddlewareFromHTTPServer } from "@okxweb3/x402-express";
-import { ExactEvmScheme } from "@okxweb3/x402-evm/exact/server";
+import { OKXFacilitatorClient } from "@okxweb3/app-x402-core";
+import { x402ResourceServer, x402HTTPResourceServer, paymentMiddlewareFromHTTPServer } from "@okxweb3/app-x402-express";
+import { ExactEvmScheme } from "@okxweb3/app-x402-evm/exact/server";
 
 const app = express();
 
@@ -212,9 +212,9 @@ Same three functions, same signatures as Express. Returns Hono `MiddlewareHandle
 
 ```typescript
 import { Hono } from "hono";
-import { OKXFacilitatorClient } from "@okxweb3/x402-core";
-import { x402ResourceServer, x402HTTPResourceServer, paymentMiddlewareFromHTTPServer } from "@okxweb3/x402-hono";
-import { ExactEvmScheme } from "@okxweb3/x402-evm/exact/server";
+import { OKXFacilitatorClient } from "@okxweb3/app-x402-core";
+import { x402ResourceServer, x402HTTPResourceServer, paymentMiddlewareFromHTTPServer } from "@okxweb3/app-x402-hono";
+import { ExactEvmScheme } from "@okxweb3/app-x402-evm/exact/server";
 
 const app = new Hono();
 
@@ -251,9 +251,9 @@ await resourceServer.initialize();
 
 ```typescript
 import Fastify from "fastify";
-import { OKXFacilitatorClient } from "@okxweb3/x402-core";
-import { x402ResourceServer, x402HTTPResourceServer, paymentMiddlewareFromHTTPServer } from "@okxweb3/x402-fastify";
-import { ExactEvmScheme } from "@okxweb3/x402-evm/exact/server";
+import { OKXFacilitatorClient } from "@okxweb3/app-x402-core";
+import { x402ResourceServer, x402HTTPResourceServer, paymentMiddlewareFromHTTPServer } from "@okxweb3/app-x402-fastify";
+import { ExactEvmScheme } from "@okxweb3/app-x402-evm/exact/server";
 
 const app = Fastify();
 
@@ -297,9 +297,9 @@ Two patterns: **Proxy** (middleware.ts) and **Route Handler wrapper**.
 
 ```typescript
 // middleware.ts
-import { OKXFacilitatorClient } from "@okxweb3/x402-core";
-import { x402ResourceServer, x402HTTPResourceServer, paymentProxyFromHTTPServer } from "@okxweb3/x402-next";
-import { ExactEvmScheme } from "@okxweb3/x402-evm/exact/server";
+import { OKXFacilitatorClient } from "@okxweb3/app-x402-core";
+import { x402ResourceServer, x402HTTPResourceServer, paymentProxyFromHTTPServer } from "@okxweb3/app-x402-next";
+import { ExactEvmScheme } from "@okxweb3/app-x402-evm/exact/server";
 import { NextRequest } from "next/server";
 
 const facilitatorClient = new OKXFacilitatorClient({
@@ -332,9 +332,9 @@ export const config = { matcher: ["/api/premium"] };
 
 ```typescript
 // app/api/premium/route.ts
-import { OKXFacilitatorClient } from "@okxweb3/x402-core";
-import { x402ResourceServer, x402HTTPResourceServer, withX402FromHTTPServer } from "@okxweb3/x402-next";
-import { ExactEvmScheme } from "@okxweb3/x402-evm/exact/server";
+import { OKXFacilitatorClient } from "@okxweb3/app-x402-core";
+import { x402ResourceServer, x402HTTPResourceServer, withX402FromHTTPServer } from "@okxweb3/app-x402-next";
+import { ExactEvmScheme } from "@okxweb3/app-x402-evm/exact/server";
 import { NextResponse } from "next/server";
 
 const facilitatorClient = new OKXFacilitatorClient({
@@ -418,8 +418,8 @@ resourceServer.onSettleFailure(async (ctx) => {
 ## MULTIPLE SCHEMES (exact + deferred)
 
 ```typescript
-import { ExactEvmScheme } from "@okxweb3/x402-evm/exact/server";
-import { DeferredEvmScheme } from "@okxweb3/x402-evm/deferred/server";
+import { ExactEvmScheme } from "@okxweb3/app-x402-evm/exact/server";
+import { DeferredEvmScheme } from "@okxweb3/app-x402-evm/deferred/server";
 
 const resourceServer = new x402ResourceServer(facilitatorClient);
 resourceServer.register("eip155:196", new ExactEvmScheme());
@@ -495,10 +495,10 @@ OKX_PASSPHRASE=your-passphrase
 Need to protect an HTTP endpoint with payment?
 │
 ├─ Which framework?
-│  ├─ Express  → @okxweb3/x402-express
-│  ├─ Hono     → @okxweb3/x402-hono
-│  ├─ Fastify  → @okxweb3/x402-fastify  ⚠️ first arg is app instance
-│  └─ Next.js  → @okxweb3/x402-next
+│  ├─ Express  → @okxweb3/app-x402-express
+│  ├─ Hono     → @okxweb3/app-x402-hono
+│  ├─ Fastify  → @okxweb3/app-x402-fastify  ⚠️ first arg is app instance
+│  └─ Next.js  → @okxweb3/app-x402-next
 │
 ├─ Need lifecycle hooks or onSettlementTimeout?
 │  ├─ Yes → use paymentMiddlewareFromHTTPServer / paymentProxyFromHTTPServer

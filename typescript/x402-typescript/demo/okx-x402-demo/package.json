@@ -9,9 +9,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@okxweb3/x402-core": "workspace:*",
-    "@okxweb3/x402-evm": "workspace:*",
-    "@okxweb3/x402-express": "workspace:*",
+    "@okxweb3/app-x402-core": "workspace:*",
+    "@okxweb3/app-x402-evm": "workspace:*",
+    "@okxweb3/app-x402-express": "workspace:*",
     "express": "^4.21.0"
   },
   "devDependencies": {

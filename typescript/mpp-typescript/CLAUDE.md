@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a sub-project within the `payments-sdk` monorepo at `typescript/mpp-typescript/`.
 
-- **`sdk/`** — The `@okxweb3/mpp-evm-sdk` npm package: an EVM payment method for the [MPP protocol](https://mpp.dev), using OKX SA API for on-chain settlement.
+- **`sdk/`** — The `@okxweb3/app-mpp` npm package: an EVM payment method for the [MPP protocol](https://mpp.dev), using OKX SA API for on-chain settlement.
 
 ## Commands
 

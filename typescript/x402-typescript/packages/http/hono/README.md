@@ -1,11 +1,11 @@
-# @okxweb3/x402-hono
+# @okxweb3/app-x402-hono
 
 Hono middleware for the x402 Payment Protocol. Adds x402 payment requirements to Hono applications.
 
 ## Installation
 
 ```bash
-npm install @okxweb3/x402-hono
+npm install @okxweb3/app-x402-hono
 ```
 
 ## Quick Start
@@ -13,9 +13,9 @@ npm install @okxweb3/x402-hono
 ```typescript
 import { Hono } from "hono";
 import { serve } from "@hono/node-server";
-import { paymentMiddleware, x402ResourceServer } from "@okxweb3/x402-hono";
-import { ExactEvmScheme } from "@okxweb3/x402-evm/exact/server";
-import { OKXFacilitatorClient } from "@okxweb3/x402-core";
+import { paymentMiddleware, x402ResourceServer } from "@okxweb3/app-x402-hono";
+import { ExactEvmScheme } from "@okxweb3/app-x402-evm/exact/server";
+import { OKXFacilitatorClient } from "@okxweb3/app-x402-core";
 
 const app = new Hono();
 
@@ -84,7 +84,7 @@ Creates Hono middleware that:
 When an unpaid request comes from a web browser (`Accept` header contains `text/html` **and** `User-Agent` contains `Mozilla`), the middleware returns an HTML paywall page instead of a JSON 402. API/SDK clients are unaffected — they continue to receive JSON 402 with the `PAYMENT-REQUIRED` header.
 
 ```typescript
-import { paymentMiddleware, PaywallConfig, PaywallProvider } from "@okxweb3/x402-hono";
+import { paymentMiddleware, PaywallConfig, PaywallProvider } from "@okxweb3/app-x402-hono";
 
 // Brand the built-in paywall
 const paywallConfig: PaywallConfig = {

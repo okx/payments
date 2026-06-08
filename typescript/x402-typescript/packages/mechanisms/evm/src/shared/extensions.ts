@@ -1,4 +1,4 @@
-import { PaymentRequirements, PaymentPayloadResult, PaymentPayloadContext } from "@okxweb3/x402-core/types";
+import { PaymentRequirements, PaymentPayloadResult, PaymentPayloadContext } from "@okxweb3/app-x402-core/types";
 import { EIP2612_GAS_SPONSORING_KEY, ERC20_APPROVAL_GAS_SPONSORING_KEY } from "../exact/extensions";
 import { getAddress } from "viem";
 import { PERMIT2_ADDRESS, erc20AllowanceAbi } from "../constants";

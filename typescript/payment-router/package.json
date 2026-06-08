@@ -1,5 +1,5 @@
 {
-  "name": "@okxweb3/payment-router",
+  "name": "@okxweb3/app-payment-router",
   "version": "0.1.0",
   "description": "Unified payment router for MPP and x402 protocols (Web Standards, framework-agnostic)",
   "license": "Apache-2.0",
@@ -47,14 +47,14 @@
     "prepublishOnly": "tsup"
   },
   "peerDependencies": {
-    "@okxweb3/mpp": "^0.1.0",
-    "@okxweb3/x402-core": ">=0.1.0"
+    "@okxweb3/app-mpp": "^0.1.0",
+    "@okxweb3/app-x402-core": ">=0.1.0"
   },
   "peerDependenciesMeta": {
-    "@okxweb3/mpp": {
+    "@okxweb3/app-mpp": {
       "optional": true
     },
-    "@okxweb3/x402-core": {
+    "@okxweb3/app-x402-core": {
       "optional": true
     }
   },

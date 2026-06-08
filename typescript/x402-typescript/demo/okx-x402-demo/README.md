@@ -1,6 +1,6 @@
 # okx-x402-demo
 
-x402 seller demo on **X Layer testnet** (`eip155:1952`). Uses USDT0 as the default settlement asset (configured in `@okxweb3/x402-evm` default-asset registry).
+x402 seller demo on **X Layer testnet** (`eip155:1952`). Uses USDT0 as the default settlement asset (configured in `@okxweb3/app-x402-evm` default-asset registry).
 
 ## Setup
 

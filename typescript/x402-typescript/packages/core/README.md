@@ -1,11 +1,11 @@
-# @okxweb3/x402-core
+# @okxweb3/app-x402-core
 
 Core implementation of the x402 payment protocol for TypeScript/JavaScript applications. Provides transport-agnostic client, server, and facilitator components for EVM-based payment flows.
 
 ## Installation
 
 ```bash
-pnpm install @okxweb3/x402-core
+pnpm install @okxweb3/app-x402-core
 ```
 
 ## Quick Start
@@ -13,9 +13,9 @@ pnpm install @okxweb3/x402-core
 ### Client Usage
 
 ```typescript
-import { x402Client } from '@okxweb3/x402-core/client';
-import { x402HTTPClient } from '@okxweb3/x402-core/http';
-import { ExactEvmScheme } from '@okxweb3/x402-evm/exact/client';
+import { x402Client } from '@okxweb3/app-x402-core/client';
+import { x402HTTPClient } from '@okxweb3/app-x402-core/http';
+import { ExactEvmScheme } from '@okxweb3/app-x402-evm/exact/client';
 
 // Create core client and register EVM payment scheme
 const coreClient = new x402Client()
@@ -52,10 +52,10 @@ if (response.status === 402) {
 ### Server Usage
 
 ```typescript
-import { x402ResourceServer } from '@okxweb3/x402-core/server';
-import { x402HTTPResourceServer } from '@okxweb3/x402-core/http';
-import { OKXFacilitatorClient } from '@okxweb3/x402-core';
-import { ExactEvmScheme } from '@okxweb3/x402-evm/exact/server';
+import { x402ResourceServer } from '@okxweb3/app-x402-core/server';
+import { x402HTTPResourceServer } from '@okxweb3/app-x402-core/http';
+import { OKXFacilitatorClient } from '@okxweb3/app-x402-core';
+import { ExactEvmScheme } from '@okxweb3/app-x402-evm/exact/server';
 
 // Connect to OKX facilitator
 const facilitatorClient = new OKXFacilitatorClient({
@@ -94,8 +94,8 @@ const httpServer = new x402HTTPResourceServer(resourceServer, routes);
 The `OKXFacilitatorClient` connects to the OKX facilitator service using HMAC-SHA256 authentication.
 
 ```typescript
-import { OKXFacilitatorClient } from '@okxweb3/x402-core';
-import type { OKXConfig } from '@okxweb3/x402-core';
+import { OKXFacilitatorClient } from '@okxweb3/app-x402-core';
+import type { OKXConfig } from '@okxweb3/app-x402-core';
 
 const config: OKXConfig = {
   apiKey: 'YOUR_API_KEY',
@@ -253,14 +253,14 @@ type PaymentRequired = {
 
 | Path | Description |
 |------|-------------|
-| `@okxweb3/x402-core` | Main entry: `x402Version`, `OKXFacilitatorClient`, `OKXConfig` |
-| `@okxweb3/x402-core/client` | Client: `x402Client`, `x402HTTPClient` |
-| `@okxweb3/x402-core/server` | Server: `x402ResourceServer`, `x402HTTPResourceServer`, `HTTPFacilitatorClient` |
-| `@okxweb3/x402-core/facilitator` | Facilitator: `x402Facilitator`, `OKXFacilitatorClient` |
-| `@okxweb3/x402-core/http` | HTTP utilities: encoding/decoding helpers, `x402HTTPResourceServer`, `x402HTTPClient` |
-| `@okxweb3/x402-core/types` | Shared type definitions |
-| `@okxweb3/x402-core/schemas` | Zod validation schemas |
-| `@okxweb3/x402-core/utils` | Utility functions |
+| `@okxweb3/app-x402-core` | Main entry: `x402Version`, `OKXFacilitatorClient`, `OKXConfig` |
+| `@okxweb3/app-x402-core/client` | Client: `x402Client`, `x402HTTPClient` |
+| `@okxweb3/app-x402-core/server` | Server: `x402ResourceServer`, `x402HTTPResourceServer`, `HTTPFacilitatorClient` |
+| `@okxweb3/app-x402-core/facilitator` | Facilitator: `x402Facilitator`, `OKXFacilitatorClient` |
+| `@okxweb3/app-x402-core/http` | HTTP utilities: encoding/decoding helpers, `x402HTTPResourceServer`, `x402HTTPClient` |
+| `@okxweb3/app-x402-core/types` | Shared type definitions |
+| `@okxweb3/app-x402-core/schemas` | Zod validation schemas |
+| `@okxweb3/app-x402-core/utils` | Utility functions |
 
 ## License
 

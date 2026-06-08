@@ -1,5 +1,5 @@
-import { x402Client, x402ClientConfig, x402HTTPClient } from "@okxweb3/x402-core/client";
-import { type PaymentRequired } from "@okxweb3/x402-core/types";
+import { x402Client, x402ClientConfig, x402HTTPClient } from "@okxweb3/app-x402-core/client";
+import { type PaymentRequired } from "@okxweb3/app-x402-core/types";
 
 /**
  * Enables the payment of APIs using the x402 payment protocol v2.
@@ -17,8 +17,8 @@ import { type PaymentRequired } from "@okxweb3/x402-core/types";
  *
  * @example
  * ```typescript
- * import { wrapFetchWithPayment, x402Client } from '@okxweb3/x402-fetch';
- * import { ExactEvmScheme } from '@okxweb3/x402-evm';
+ * import { wrapFetchWithPayment, x402Client } from '@okxweb3/app-x402-fetch';
+ * import { ExactEvmScheme } from '@okxweb3/app-x402-evm';
  *
  * const client = new x402Client()
  *   .register('eip155:196', new ExactEvmScheme(xLayerSigner))
@@ -123,18 +123,18 @@ export function wrapFetchWithPaymentFromConfig(
 }
 
 // Re-export types and utilities for convenience
-export { x402Client, x402HTTPClient } from "@okxweb3/x402-core/client";
+export { x402Client, x402HTTPClient } from "@okxweb3/app-x402-core/client";
 export type {
   PaymentPolicy,
   SchemeRegistration,
   SelectPaymentRequirements,
   x402ClientConfig,
-} from "@okxweb3/x402-core/client";
-export { decodePaymentResponseHeader } from "@okxweb3/x402-core/http";
+} from "@okxweb3/app-x402-core/client";
+export { decodePaymentResponseHeader } from "@okxweb3/app-x402-core/http";
 export type {
   Network,
   PaymentPayload,
   PaymentRequired,
   PaymentRequirements,
   SchemeNetworkClient,
-} from "@okxweb3/x402-core/types";
+} from "@okxweb3/app-x402-core/types";

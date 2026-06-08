@@ -3,7 +3,7 @@ import {
   PaymentRequirements,
   PaymentPayloadResult,
   PaymentPayloadContext,
-} from "@okxweb3/x402-core/types";
+} from "@okxweb3/app-x402-core/types";
 import { ClientEvmSigner } from "../../signer";
 import { AssetTransferMethod } from "../../types";
 import { createEIP3009Payload } from "./eip3009";

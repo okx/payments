@@ -5,7 +5,7 @@ import {
   recoverTransactionAddress,
   type TransactionSerialized,
 } from "viem";
-import type { VerifyResponse } from "@okxweb3/x402-core/types";
+import type { VerifyResponse } from "@okxweb3/app-x402-core/types";
 import {
   validateErc20ApprovalGasSponsoringInfo,
   type Erc20ApprovalGasSponsoringInfo,

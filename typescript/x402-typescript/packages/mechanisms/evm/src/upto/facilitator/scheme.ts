@@ -5,7 +5,7 @@ import {
   FacilitatorContext,
   SettleResponse,
   VerifyResponse,
-} from "@okxweb3/x402-core/types";
+} from "@okxweb3/app-x402-core/types";
 import { FacilitatorEvmSigner } from "../../signer";
 import { UptoPermit2Payload, isUptoPermit2Payload } from "../../types";
 import { verifyUptoPermit2, settleUptoPermit2 } from "./permit2";

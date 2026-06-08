@@ -15,23 +15,23 @@
 import * as http from "node:http";
 import { privateKeyToAccount } from "viem/accounts";
 
-import { Mppx } from "@okxweb3/mpp";
-import { charge as mppCharge, session as mppSession } from "@okxweb3/mpp/evm/server";
-import { SaApiClient } from "@okxweb3/mpp/evm";
+import { Mppx } from "@okxweb3/app-mpp";
+import { charge as mppCharge, session as mppSession } from "@okxweb3/app-mpp/evm/server";
+import { SaApiClient } from "@okxweb3/app-mpp/evm";
 
-import { OKXFacilitatorClient } from "@okxweb3/x402-core";
+import { OKXFacilitatorClient } from "@okxweb3/app-x402-core";
 import {
   x402HTTPResourceServer,
   x402ResourceServer,
-} from "@okxweb3/x402-core/server";
-import { ExactEvmScheme } from "@okxweb3/x402-evm/exact/server";
-import { AggrDeferredEvmScheme } from "@okxweb3/x402-evm/deferred/server";
+} from "@okxweb3/app-x402-core/server";
+import { ExactEvmScheme } from "@okxweb3/app-x402-evm/exact/server";
+import { AggrDeferredEvmScheme } from "@okxweb3/app-x402-evm/deferred/server";
 
 import {
   MppAdapter,
   X402Adapter,
   paymentRouter,
-} from "@okxweb3/payment-router";
+} from "@okxweb3/app-payment-router";
 
 const PORT = Number.parseInt(process.env.SERVER_PORT ?? "4000", 10);
 

@@ -1,20 +1,20 @@
-# @okxweb3/x402-fastify
+# @okxweb3/app-x402-fastify
 
 Fastify middleware for the x402 Payment Protocol. Adds x402 payment requirements to Fastify applications.
 
 ## Installation
 
 ```bash
-npm install @okxweb3/x402-fastify
+npm install @okxweb3/app-x402-fastify
 ```
 
 ## Quick Start
 
 ```typescript
 import Fastify from "fastify";
-import { paymentMiddleware, x402ResourceServer } from "@okxweb3/x402-fastify";
-import { ExactEvmScheme } from "@okxweb3/x402-evm/exact/server";
-import { OKXFacilitatorClient } from "@okxweb3/x402-core";
+import { paymentMiddleware, x402ResourceServer } from "@okxweb3/app-x402-fastify";
+import { ExactEvmScheme } from "@okxweb3/app-x402-evm/exact/server";
+import { OKXFacilitatorClient } from "@okxweb3/app-x402-core";
 
 const app = Fastify();
 
@@ -84,7 +84,7 @@ Registers Fastify hooks (`onRequest` and `onSend`) that:
 When an unpaid request comes from a web browser (`Accept` header contains `text/html` **and** `User-Agent` contains `Mozilla`), the middleware returns an HTML paywall page instead of a JSON 402. API/SDK clients are unaffected — they continue to receive JSON 402 with the `PAYMENT-REQUIRED` header.
 
 ```typescript
-import { paymentMiddleware, PaywallConfig, PaywallProvider } from "@okxweb3/x402-fastify";
+import { paymentMiddleware, PaywallConfig, PaywallProvider } from "@okxweb3/app-x402-fastify";
 
 // Brand the built-in paywall
 const paywallConfig: PaywallConfig = {

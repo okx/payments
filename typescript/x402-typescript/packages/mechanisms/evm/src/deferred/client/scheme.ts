@@ -3,7 +3,7 @@ import {
   PaymentRequirements,
   PaymentPayloadResult,
   PaymentPayloadContext,
-} from "@okxweb3/x402-core/types";
+} from "@okxweb3/app-x402-core/types";
 import { authorizationTypes } from "../../constants";
 import { createNonce, getEvmChainId } from "../../utils";
 import { getAddress } from "viem";

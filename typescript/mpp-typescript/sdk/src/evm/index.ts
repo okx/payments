@@ -1,5 +1,5 @@
 // EVM payment method shared exports (used by both client and server).
-// Server-side factories (charge / session) live under '@okxweb3/mpp/evm/server'.
+// Server-side factories (charge / session) live under '@okxweb3/app-mpp/evm/server'.
 
 // EIP-712 voucher utilities
 export {

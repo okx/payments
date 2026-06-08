@@ -7,9 +7,9 @@
  * Port: 3000 (configurable via `SERVER_PORT`).
  */
 import * as http from "node:http";
-import { Mppx } from "@okxweb3/mpp";
-import { charge, session } from "@okxweb3/mpp/evm/server";
-import { SaApiClient } from "@okxweb3/mpp/evm";
+import { Mppx } from "@okxweb3/app-mpp";
+import { charge, session } from "@okxweb3/app-mpp/evm/server";
+import { SaApiClient } from "@okxweb3/app-mpp/evm";
 import { privateKeyToAccount } from "viem/accounts";
 
 const PORT = Number.parseInt(process.env.SERVER_PORT ?? "3000", 10);

@@ -8,8 +8,8 @@ import {
   FacilitatorClient,
   FacilitatorResponseError,
   getFacilitatorResponseError,
-} from "@okxweb3/x402-core/server";
-import { SchemeNetworkServer, Network } from "@okxweb3/x402-core/types";
+} from "@okxweb3/app-x402-core/server";
+import { SchemeNetworkServer, Network } from "@okxweb3/app-x402-core/types";
 import type { Context, MiddlewareHandler } from "hono";
 import { HonoAdapter } from "./adapter";
 
@@ -48,7 +48,7 @@ function facilitatorErrorResponse(c: Context, error: FacilitatorResponseError): 
  *
  * @example
  * ```typescript
- * import { paymentMiddlewareFromHTTPServer, x402ResourceServer, x402HTTPResourceServer } from "@okxweb3/x402-hono";
+ * import { paymentMiddlewareFromHTTPServer, x402ResourceServer, x402HTTPResourceServer } from "@okxweb3/app-x402-hono";
  *
  * const resourceServer = new x402ResourceServer(facilitatorClient)
  *   .register(NETWORK, new ExactEvmScheme());
@@ -206,7 +206,7 @@ export function paymentMiddlewareFromHTTPServer(
  *
  * @example
  * ```typescript
- * import { paymentMiddleware } from "@okxweb3/x402-hono";
+ * import { paymentMiddleware } from "@okxweb3/app-x402-hono";
  *
  * const server = new x402ResourceServer(myFacilitatorClient)
  *   .register(NETWORK, new ExactEvmScheme());
@@ -243,7 +243,7 @@ export function paymentMiddleware(
  *
  * @example
  * ```typescript
- * import { paymentMiddlewareFromConfig } from "@okxweb3/x402-hono";
+ * import { paymentMiddlewareFromConfig } from "@okxweb3/app-x402-hono";
  *
  * app.use(paymentMiddlewareFromConfig(
  *   routes,
@@ -272,7 +272,7 @@ export function paymentMiddlewareFromConfig(
   return paymentMiddleware(routes, ResourceServer, paywallConfig, paywall, syncFacilitatorOnStart);
 }
 
-export { x402ResourceServer, x402HTTPResourceServer } from "@okxweb3/x402-core/server";
+export { x402ResourceServer, x402HTTPResourceServer } from "@okxweb3/app-x402-core/server";
 
 export type {
   PaymentRequired,
@@ -280,12 +280,12 @@ export type {
   PaymentPayload,
   Network,
   SchemeNetworkServer,
-} from "@okxweb3/x402-core/types";
+} from "@okxweb3/app-x402-core/types";
 
-export type { PaywallProvider, PaywallConfig } from "@okxweb3/x402-core/server";
+export type { PaywallProvider, PaywallConfig } from "@okxweb3/app-x402-core/server";
 
-export { RouteConfigurationError } from "@okxweb3/x402-core/server";
+export { RouteConfigurationError } from "@okxweb3/app-x402-core/server";
 
-export type { RouteValidationError } from "@okxweb3/x402-core/server";
+export type { RouteValidationError } from "@okxweb3/app-x402-core/server";
 
 export { HonoAdapter } from "./adapter";

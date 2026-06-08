@@ -10,8 +10,8 @@ import {
   getFacilitatorResponseError,
   SETTLEMENT_OVERRIDES_HEADER,
   SettlementOverrides,
-} from "@okxweb3/x402-core/server";
-import { SchemeNetworkServer, Network } from "@okxweb3/x402-core/types";
+} from "@okxweb3/app-x402-core/server";
+import { SchemeNetworkServer, Network } from "@okxweb3/app-x402-core/types";
 import { NextFunction, Request, Response } from "express";
 import { ExpressAdapter } from "./adapter";
 
@@ -64,7 +64,7 @@ function sendFacilitatorError(res: Response, error: FacilitatorResponseError): v
  *
  * @example
  * ```typescript
- * import { paymentMiddlewareFromHTTPServer, x402ResourceServer, x402HTTPResourceServer } from "@okxweb3/x402-express";
+ * import { paymentMiddlewareFromHTTPServer, x402ResourceServer, x402HTTPResourceServer } from "@okxweb3/app-x402-express";
  *
  * const resourceServer = new x402ResourceServer(facilitatorClient)
  *   .register(NETWORK, new ExactEvmScheme())
@@ -349,7 +349,7 @@ export function paymentMiddlewareFromHTTPServer(
  *
  * @example
  * ```typescript
- * import { paymentMiddleware } from "@okxweb3/x402-express";
+ * import { paymentMiddleware } from "@okxweb3/app-x402-express";
  *
  * const server = new x402ResourceServer(myFacilitatorClient)
  *   .register(NETWORK, new ExactEvmScheme());
@@ -391,7 +391,7 @@ export function paymentMiddleware(
  *
  * @example
  * ```typescript
- * import { paymentMiddlewareFromConfig } from "@okxweb3/x402-express";
+ * import { paymentMiddlewareFromConfig } from "@okxweb3/app-x402-express";
  *
  * app.use(paymentMiddlewareFromConfig(
  *   routes,
@@ -420,7 +420,7 @@ export function paymentMiddlewareFromConfig(
   return paymentMiddleware(routes, ResourceServer, paywallConfig, paywall, syncFacilitatorOnStart);
 }
 
-export { x402ResourceServer, x402HTTPResourceServer } from "@okxweb3/x402-core/server";
+export { x402ResourceServer, x402HTTPResourceServer } from "@okxweb3/app-x402-core/server";
 
 export type {
   PaymentRequired,
@@ -428,16 +428,16 @@ export type {
   PaymentPayload,
   Network,
   SchemeNetworkServer,
-} from "@okxweb3/x402-core/types";
+} from "@okxweb3/app-x402-core/types";
 
 export type {
   PaywallProvider,
   PaywallConfig,
   SettlementOverrides,
-} from "@okxweb3/x402-core/server";
+} from "@okxweb3/app-x402-core/server";
 
-export { RouteConfigurationError, SETTLEMENT_OVERRIDES_HEADER } from "@okxweb3/x402-core/server";
+export { RouteConfigurationError, SETTLEMENT_OVERRIDES_HEADER } from "@okxweb3/app-x402-core/server";
 
-export type { RouteValidationError } from "@okxweb3/x402-core/server";
+export type { RouteValidationError } from "@okxweb3/app-x402-core/server";
 
 export { ExpressAdapter } from "./adapter";

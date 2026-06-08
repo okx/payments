@@ -1,19 +1,19 @@
-# @okxweb3/x402-axios
+# @okxweb3/app-x402-axios
 
 Extends Axios to automatically handle HTTP 402 Payment Required responses using the x402 payment protocol. An interceptor parses payment requirements, signs a payment payload via the configured EVM scheme, and retries the request with the payment header attached.
 
 ## Installation
 
 ```bash
-pnpm install @okxweb3/x402-axios @okxweb3/x402-evm @okxweb3/x402-core axios
+pnpm install @okxweb3/app-x402-axios @okxweb3/app-x402-evm @okxweb3/app-x402-core axios
 ```
 
 ## Quick Start
 
 ```typescript
 import axios from "axios";
-import { wrapAxiosWithPaymentFromConfig } from "@okxweb3/x402-axios";
-import { ExactEvmScheme, toClientEvmSigner } from "@okxweb3/x402-evm";
+import { wrapAxiosWithPaymentFromConfig } from "@okxweb3/app-x402-axios";
+import { ExactEvmScheme, toClientEvmSigner } from "@okxweb3/app-x402-evm";
 import { createWalletClient, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { xLayer } from "viem/chains";
@@ -85,8 +85,8 @@ Decodes the `PAYMENT-RESPONSE` header returned by the server after a successful 
 
 ```typescript
 import axios from "axios";
-import { wrapAxiosWithPaymentFromConfig, decodePaymentResponseHeader } from "@okxweb3/x402-axios";
-import { ExactEvmScheme, toClientEvmSigner } from "@okxweb3/x402-evm";
+import { wrapAxiosWithPaymentFromConfig, decodePaymentResponseHeader } from "@okxweb3/app-x402-axios";
+import { ExactEvmScheme, toClientEvmSigner } from "@okxweb3/app-x402-evm";
 import { createWalletClient, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { xLayer } from "viem/chains";
@@ -119,8 +119,8 @@ if (paymentResponse) {
 
 ```typescript
 import axios from "axios";
-import { wrapAxiosWithPayment, x402Client } from "@okxweb3/x402-axios";
-import { ExactEvmScheme, toClientEvmSigner } from "@okxweb3/x402-evm";
+import { wrapAxiosWithPayment, x402Client } from "@okxweb3/app-x402-axios";
+import { ExactEvmScheme, toClientEvmSigner } from "@okxweb3/app-x402-evm";
 import { createWalletClient, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { xLayer } from "viem/chains";

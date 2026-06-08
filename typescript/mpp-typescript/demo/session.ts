@@ -1,9 +1,9 @@
 // Run: npx tsx --env-file=.env server.ts
 import * as http from "node:http";
 import { privateKeyToAccount } from "viem/accounts";
-import { Mppx } from "@okxweb3/mpp";
-import { session } from "@okxweb3/mpp/evm/server";
-import { SaApiClient } from "@okxweb3/mpp/evm";
+import { Mppx } from "@okxweb3/app-mpp";
+import { session } from "@okxweb3/app-mpp/evm/server";
+import { SaApiClient } from "@okxweb3/app-mpp/evm";
 
 const UNIT_PRICE_BASE_UNITS = "100";   // 0.0001 of a 6-decimal token
 const UNIT_TYPE = "request";

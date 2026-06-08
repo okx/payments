@@ -1,4 +1,4 @@
-import { PaymentRequirements, PaymentPayloadResult } from "@okxweb3/x402-core/types";
+import { PaymentRequirements, PaymentPayloadResult } from "@okxweb3/app-x402-core/types";
 import {
   PERMIT2_ADDRESS,
   uptoPermit2WitnessTypes,

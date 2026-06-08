@@ -1,4 +1,4 @@
-import type { PaymentPayload } from "@okxweb3/x402-core/types";
+import type { PaymentPayload } from "@okxweb3/app-x402-core/types";
 import type { FacilitatorEvmSigner } from "../signer";
 
 export const EIP2612_GAS_SPONSORING_KEY = "eip2612GasSponsoring" as const;

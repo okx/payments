@@ -1,11 +1,11 @@
-# @okxweb3/x402-evm
+# @okxweb3/app-x402-evm
 
 EVM implementation of the x402 payment protocol for X Layer. Supports EIP-3009 `transferWithAuthorization`, Permit2-based metered billing (`upto`), and aggregated deferred payment schemes.
 
 ## Installation
 
 ```bash
-npm install @okxweb3/x402-evm
+npm install @okxweb3/app-x402-evm
 ```
 
 ## Supported Chain
@@ -22,7 +22,7 @@ npm install @okxweb3/x402-evm
 
 ## Exports
 
-### Main entry (`@okxweb3/x402-evm`)
+### Main entry (`@okxweb3/app-x402-evm`)
 
 - `ExactEvmScheme` — Client-side Exact scheme (EIP-3009 or Permit2, picked from the seller's `accepts[].extra.assetTransferMethod`)
 - `UptoEvmScheme` — Client-side Upto scheme (Permit2 cap-style billing)
@@ -34,22 +34,22 @@ npm install @okxweb3/x402-evm
 
 | Path | Description |
 | --- | --- |
-| `@okxweb3/x402-evm/exact/client` | Client-side Exact scheme (signs EIP-3009 or Permit2) |
-| `@okxweb3/x402-evm/exact/server` | Server-side Exact scheme (builds payment requirements) |
-| `@okxweb3/x402-evm/exact/facilitator` | Facilitator Exact scheme (verifies & settles payments) |
-| `@okxweb3/x402-evm/upto/client` | Client-side Upto scheme (signs the Permit2 cap) |
-| `@okxweb3/x402-evm/upto/server` | Server-side Upto scheme (builds metered payment requirements) |
-| `@okxweb3/x402-evm/upto/facilitator` | Facilitator Upto scheme (verifies the cap & settles the actual amount) |
-| `@okxweb3/x402-evm/deferred/client` | Deferred payment client scheme |
-| `@okxweb3/x402-evm/deferred/server` | Deferred payment server scheme |
+| `@okxweb3/app-x402-evm/exact/client` | Client-side Exact scheme (signs EIP-3009 or Permit2) |
+| `@okxweb3/app-x402-evm/exact/server` | Server-side Exact scheme (builds payment requirements) |
+| `@okxweb3/app-x402-evm/exact/facilitator` | Facilitator Exact scheme (verifies & settles payments) |
+| `@okxweb3/app-x402-evm/upto/client` | Client-side Upto scheme (signs the Permit2 cap) |
+| `@okxweb3/app-x402-evm/upto/server` | Server-side Upto scheme (builds metered payment requirements) |
+| `@okxweb3/app-x402-evm/upto/facilitator` | Facilitator Upto scheme (verifies the cap & settles the actual amount) |
+| `@okxweb3/app-x402-evm/deferred/client` | Deferred payment client scheme |
+| `@okxweb3/app-x402-evm/deferred/server` | Deferred payment server scheme |
 
 ## Usage
 
 ### Client-side (signing payments)
 
 ```typescript
-import { x402Client } from "@okxweb3/x402-core/client";
-import { ExactEvmScheme, toClientEvmSigner } from "@okxweb3/x402-evm";
+import { x402Client } from "@okxweb3/app-x402-core/client";
+import { ExactEvmScheme, toClientEvmSigner } from "@okxweb3/app-x402-evm";
 import { privateKeyToAccount } from "viem/accounts";
 
 const account = privateKeyToAccount("0x...");
@@ -62,7 +62,7 @@ const client = new x402Client()
 ### Server-side (building payment requirements)
 
 ```typescript
-import { ExactEvmScheme } from "@okxweb3/x402-evm/exact/server";
+import { ExactEvmScheme } from "@okxweb3/app-x402-evm/exact/server";
 
 const evmServer = new ExactEvmScheme();
 ```
@@ -70,8 +70,8 @@ const evmServer = new ExactEvmScheme();
 ### Facilitator (verifying & settling payments)
 
 ```typescript
-import { ExactEvmScheme } from "@okxweb3/x402-evm/exact/facilitator";
-import { toFacilitatorEvmSigner } from "@okxweb3/x402-evm";
+import { ExactEvmScheme } from "@okxweb3/app-x402-evm/exact/facilitator";
+import { toFacilitatorEvmSigner } from "@okxweb3/app-x402-evm";
 
 const facilitator = new ExactEvmScheme(toFacilitatorEvmSigner(walletClient));
 ```
@@ -81,8 +81,8 @@ const facilitator = new ExactEvmScheme(toFacilitatorEvmSigner(walletClient));
 Server registers the upto scheme and decides the actual charge per request via `setSettlementOverrides`:
 
 ```typescript
-import { UptoEvmScheme } from "@okxweb3/x402-evm/upto/server";
-import { paymentMiddleware, setSettlementOverrides, x402ResourceServer } from "@okxweb3/x402-express";
+import { UptoEvmScheme } from "@okxweb3/app-x402-evm/upto/server";
+import { paymentMiddleware, setSettlementOverrides, x402ResourceServer } from "@okxweb3/app-x402-express";
 
 const resourceServer = new x402ResourceServer(facilitatorClient)
   .register("eip155:196", new UptoEvmScheme());
@@ -107,7 +107,7 @@ app.post("/summarize", (req, res) => {
 });
 ```
 
-Client (and facilitator) wire up the same way as Exact, using `UptoEvmScheme` from `@okxweb3/x402-evm/upto/client` and `/upto/facilitator`.
+Client (and facilitator) wire up the same way as Exact, using `UptoEvmScheme` from `@okxweb3/app-x402-evm/upto/client` and `/upto/facilitator`.
 
 ## Asset Transfer Method
 
@@ -125,4 +125,4 @@ The upto witness binds the facilitator address: a leaked cap-signature can only 
 
 ## Related Packages
 
-- `@okxweb3/x402-core` — Core protocol types and client
+- `@okxweb3/app-x402-core` — Core protocol types and client

@@ -1,20 +1,20 @@
-# @okxweb3/x402-express
+# @okxweb3/app-x402-express
 
 Express middleware for the x402 Payment Protocol. Adds x402 payment requirements to Express.js applications.
 
 ## Installation
 
 ```bash
-npm install @okxweb3/x402-express
+npm install @okxweb3/app-x402-express
 ```
 
 ## Quick Start
 
 ```typescript
 import express from "express";
-import { paymentMiddleware, x402ResourceServer } from "@okxweb3/x402-express";
-import { ExactEvmScheme } from "@okxweb3/x402-evm/exact/server";
-import { OKXFacilitatorClient } from "@okxweb3/x402-core";
+import { paymentMiddleware, x402ResourceServer } from "@okxweb3/app-x402-express";
+import { ExactEvmScheme } from "@okxweb3/app-x402-evm/exact/server";
+import { OKXFacilitatorClient } from "@okxweb3/app-x402-core";
 
 const app = express();
 
@@ -85,7 +85,7 @@ When an unpaid request comes from a web browser (`Accept` header contains `text/
 `paywallConfig` lets you brand the built-in paywall:
 
 ```typescript
-import { paymentMiddleware, PaywallConfig } from "@okxweb3/x402-express";
+import { paymentMiddleware, PaywallConfig } from "@okxweb3/app-x402-express";
 
 const paywallConfig: PaywallConfig = {
   appName: "My App",
@@ -100,7 +100,7 @@ app.use(paymentMiddleware(routes, resourceServer, paywallConfig));
 `paywall` lets you fully replace the HTML generator:
 
 ```typescript
-import { paymentMiddleware, PaywallProvider } from "@okxweb3/x402-express";
+import { paymentMiddleware, PaywallProvider } from "@okxweb3/app-x402-express";
 
 const customPaywall: PaywallProvider = {
   generateHtml(paymentRequired, config) {
