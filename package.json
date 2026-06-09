@@ -2,10 +2,10 @@
   "name": "@okxweb3/payments-sdk-monorepo",
   "version": "0.0.0",
   "private": true,
-  "description": "OKX payments SDK — TypeScript monorepo (x402, MPP, payment-router)",
+  "description": "OKX payments SDK — multi-language monorepo (TypeScript workspaces under typescript/)",
   "license": "Apache-2.0",
   "workspaces": [
-    "bu-*/*"
+    "typescript/bu-*/*"
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
