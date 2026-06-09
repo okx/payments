@@ -33,11 +33,7 @@
     }
   },
   "files": [
-    "dist",
-    "src",
-    "README.md",
-    "USAGE.md",
-    "LICENSE"
+    "dist"
   ],
   "scripts": {
     "build": "tsup",
