@@ -1,0 +1,23 @@
+{
+  "name": "okx-x402-demo",
+  "version": "0.1.0",
+  "description": "x402 seller demo on X Layer testnet (eip155:1952)",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx --env-file=.env src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@okxweb3/app-x402-core": "^0.1.0",
+    "@okxweb3/app-x402-evm": "^0.2.1",
+    "@okxweb3/app-x402-express": "^0.1.1",
+    "express": "^4.21.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.13.4",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}

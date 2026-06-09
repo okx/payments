@@ -1,0 +1,29 @@
+{
+  "name": "@okxweb3/payments-sdk-monorepo",
+  "version": "0.0.0",
+  "private": true,
+  "description": "OKX payments SDK — TypeScript monorepo (x402, MPP, payment-router)",
+  "license": "Apache-2.0",
+  "workspaces": [
+    "bu-*/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "lint:check": "npm run lint:check --workspaces --if-present"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "@typescript-eslint/eslint-plugin": "^8.29.1",
+    "@typescript-eslint/parser": "^8.29.1",
+    "eslint": "^8.57.0",
+    "eslint-plugin-import": "^2.31.0",
+    "eslint-plugin-jsdoc": "^50.6.9",
+    "eslint-plugin-prettier": "^5.2.6",
+    "prettier": "3.5.2",
+    "tsup": "^8.4.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.3"
+  }
+}

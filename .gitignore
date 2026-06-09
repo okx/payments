@@ -18,7 +18,6 @@ __pycache__/
 build/
 
 **/.DS_Store
-typescript/package-lock.json
 .pnpm-store/
 
 # Agent artifacts

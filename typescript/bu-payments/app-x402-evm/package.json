@@ -1,0 +1,139 @@
+{
+  "name": "@okxweb3/app-x402-evm",
+  "version": "0.2.1",
+  "main": "./dist/cjs/index.js",
+  "module": "./dist/esm/index.js",
+  "types": "./dist/cjs/index.d.ts",
+  "scripts": {
+    "start": "tsx --env-file=.env index.ts",
+    "build": "tsup",
+    "watch": "tsc --watch",
+    "format": "prettier -c .prettierrc --write \"**/*.{ts,js,cjs,json,md}\"",
+    "format:check": "prettier -c .prettierrc --check \"**/*.{ts,js,cjs,json,md}\"",
+    "lint": "eslint . --ext .ts --fix",
+    "lint:check": "eslint . --ext .ts"
+  },
+  "keywords": [
+    "x402",
+    "payment",
+    "protocol",
+    "evm"
+  ],
+  "license": "Apache-2.0",
+  "author": "okfe",
+  "description": "x402 Payment Protocol EVM Implementation",
+  "devDependencies": {
+    "@eslint/js": "^9.24.0",
+    "@types/node": "^22.13.4",
+    "@typescript-eslint/eslint-plugin": "^8.29.1",
+    "@typescript-eslint/parser": "^8.29.1",
+    "eslint": "^9.24.0",
+    "eslint-plugin-import": "^2.31.0",
+    "eslint-plugin-jsdoc": "^50.6.9",
+    "eslint-plugin-prettier": "^5.2.6",
+    "prettier": "3.5.2",
+    "tsup": "^8.4.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  },
+  "dependencies": {
+    "@okxweb3/app-x402-core": "^0.1.0",
+    "viem": "^2.39.3",
+    "zod": "^3.24.2"
+  },
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/esm/index.d.mts",
+        "default": "./dist/esm/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/index.d.ts",
+        "default": "./dist/cjs/index.js"
+      }
+    },
+    "./exact/client": {
+      "import": {
+        "types": "./dist/esm/exact/client/index.d.mts",
+        "default": "./dist/esm/exact/client/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/exact/client/index.d.ts",
+        "default": "./dist/cjs/exact/client/index.js"
+      }
+    },
+    "./exact/server": {
+      "import": {
+        "types": "./dist/esm/exact/server/index.d.mts",
+        "default": "./dist/esm/exact/server/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/exact/server/index.d.ts",
+        "default": "./dist/cjs/exact/server/index.js"
+      }
+    },
+    "./exact/facilitator": {
+      "import": {
+        "types": "./dist/esm/exact/facilitator/index.d.mts",
+        "default": "./dist/esm/exact/facilitator/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/exact/facilitator/index.d.ts",
+        "default": "./dist/cjs/exact/facilitator/index.js"
+      }
+    },
+    "./deferred/client": {
+      "import": {
+        "types": "./dist/esm/deferred/client/index.d.mts",
+        "default": "./dist/esm/deferred/client/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/deferred/client/index.d.ts",
+        "default": "./dist/cjs/deferred/client/index.js"
+      }
+    },
+    "./deferred/server": {
+      "import": {
+        "types": "./dist/esm/deferred/server/index.d.mts",
+        "default": "./dist/esm/deferred/server/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/deferred/server/index.d.ts",
+        "default": "./dist/cjs/deferred/server/index.js"
+      }
+    },
+    "./upto/client": {
+      "import": {
+        "types": "./dist/esm/upto/client/index.d.mts",
+        "default": "./dist/esm/upto/client/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/upto/client/index.d.ts",
+        "default": "./dist/cjs/upto/client/index.js"
+      }
+    },
+    "./upto/server": {
+      "import": {
+        "types": "./dist/esm/upto/server/index.d.mts",
+        "default": "./dist/esm/upto/server/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/upto/server/index.d.ts",
+        "default": "./dist/cjs/upto/server/index.js"
+      }
+    },
+    "./upto/facilitator": {
+      "import": {
+        "types": "./dist/esm/upto/facilitator/index.d.mts",
+        "default": "./dist/esm/upto/facilitator/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/upto/facilitator/index.d.ts",
+        "default": "./dist/cjs/upto/facilitator/index.js"
+      }
+    }
+  },
+  "files": [
+    "dist"
+  ]
+}
