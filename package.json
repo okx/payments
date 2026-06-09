@@ -2,7 +2,7 @@
   "name": "@okxweb3/payments-sdk-monorepo",
   "version": "0.0.0",
   "private": true,
-  "description": "OKX payments SDK — multi-language monorepo (TypeScript workspaces under typescript/)",
+  "description": "OKX payments SDK \u2014 multi-language monorepo (TypeScript workspaces under typescript/)",
   "license": "Apache-2.0",
   "workspaces": [
     "typescript/bu-*/*"
@@ -19,7 +19,6 @@
     "@typescript-eslint/parser": "^8.29.1",
     "eslint": "^8.57.0",
     "eslint-plugin-import": "^2.31.0",
-    "eslint-plugin-jsdoc": "^50.6.9",
     "eslint-plugin-prettier": "^5.2.6",
     "prettier": "3.5.2",
     "tsup": "^8.4.0",
