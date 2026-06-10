@@ -1,0 +1,7 @@
+{
+  "monorepo": {
+    "level": "workspace"
+  },
+  "types": ["application"],
+  "maintainers": ["siyuan.guo@okg.com", "manjie.chen@okg.com"]
+}
