@@ -30,7 +30,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "mppx": "^0.3.15",
+    "mppx": "^0.4.11",
     "viem": "^2.21.0",
     "zod": "^4.4.3"
   },
