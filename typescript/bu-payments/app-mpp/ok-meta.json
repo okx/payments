@@ -1,6 +1,5 @@
 {
   "monorepo": {
     "level": "app"
-  },
-  "maintainers": ["siyuan.guo@okg.com", "manjie.chen@okg.com"]
+  }
 }
