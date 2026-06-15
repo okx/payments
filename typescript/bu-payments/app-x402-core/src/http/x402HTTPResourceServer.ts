@@ -1099,26 +1099,6 @@ export class x402HTTPResourceServer {
       return this.paywallProvider.generateHtml(paymentRequired, paywallConfig);
     }
 
-    // Try to use @okxweb3/app-x402-paywall if available (optional dependency)
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const paywall = require("@okxweb3/app-x402-paywall");
-      const displayAmount = this.getDisplayAmount(paymentRequired);
-      const resource = paymentRequired.resource;
-
-      return paywall.getPaywallHtml({
-        amount: displayAmount,
-        paymentRequired,
-        currentUrl: resource?.url || paywallConfig?.currentUrl || "",
-        testnet: paywallConfig?.testnet ?? true,
-        appName: paywallConfig?.appName,
-        appLogo: paywallConfig?.appLogo,
-        sessionTokenEndpoint: paywallConfig?.sessionTokenEndpoint,
-      });
-    } catch {
-      // @okxweb3/app-x402-paywall not installed, fall back to basic HTML
-    }
-
     // Fallback: Basic HTML paywall
     const resource = paymentRequired.resource;
     const displayAmount = this.getDisplayAmount(paymentRequired);
