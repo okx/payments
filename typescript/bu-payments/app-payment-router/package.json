@@ -1,6 +1,6 @@
 {
   "name": "@okxweb3/app-payment-router",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Unified payment router for MPP and x402 protocols (Web Standards, framework-agnostic)",
   "license": "Apache-2.0",
   "author": "okfe",
