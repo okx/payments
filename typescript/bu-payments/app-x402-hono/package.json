@@ -1,6 +1,6 @@
 {
   "name": "@okxweb3/app-x402-hono",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/index.d.ts",
@@ -32,7 +32,7 @@
     "typescript": "^5.7.3"
   },
   "dependencies": {
-    "@okxweb3/app-x402-core": "0.1.1",
+    "@okxweb3/app-x402-core": "0.1.2",
     "zod": "^3.24.2"
   },
   "peerDependencies": {
