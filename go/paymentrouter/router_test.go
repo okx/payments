@@ -8,8 +8,8 @@ import (
 
 func TestParseRouteKey_WithMethod(t *testing.T) {
 	method, path := parseRouteKey("GET /api/weather")
-	if method != "get" {
-		t.Errorf("expected method 'get', got %q", method)
+	if method != "GET" {
+		t.Errorf("expected method 'GET', got %q", method)
 	}
 	if path != "/api/weather" {
 		t.Errorf("expected path '/api/weather', got %q", path)
@@ -26,17 +26,17 @@ func TestParseRouteKey_WithoutMethod(t *testing.T) {
 	}
 }
 
-func TestParseRouteKey_LowercaseMethod(t *testing.T) {
+func TestParseRouteKey_UppercaseMethod(t *testing.T) {
 	method, _ := parseRouteKey("POST /foo")
-	if method != "post" {
-		t.Errorf("expected 'post', got %q", method)
+	if method != "POST" {
+		t.Errorf("expected 'POST', got %q", method)
 	}
 }
 
 func TestParseRouteKey_MixedCaseMethod(t *testing.T) {
 	method, path := parseRouteKey("Delete /items/1")
-	if method != "delete" {
-		t.Errorf("expected 'delete', got %q", method)
+	if method != "DELETE" {
+		t.Errorf("expected 'DELETE', got %q", method)
 	}
 	if path != "/items/1" {
 		t.Errorf("expected '/items/1', got %q", path)

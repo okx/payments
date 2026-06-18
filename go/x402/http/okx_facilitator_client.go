@@ -20,8 +20,8 @@ import (
 // OKXFacilitatorConfig configures the OKX facilitator client.
 type OKXFacilitatorConfig struct {
 	Auth       OKXAuthConfig
-	BaseURL    string        // Default: "https://web3.okx.com"
-	SyncSettle *bool         // Default: true
+	BaseURL    string // Default: "https://web3.okx.com"
+	SyncSettle *bool  // Default: true
 	HTTPClient *http.Client
 	Timeout    time.Duration
 }
@@ -218,7 +218,7 @@ func (c *OKXFacilitatorClient) doRequest(ctx context.Context, method, endpoint s
 
 // unwrapEnvelope parses an OKX {code, data, msg} envelope and returns data.
 // Handles both enveloped responses ({code: 0, data: {...}}) and direct responses
-// (no envelope, body IS the data) — mirrors TS logic: `json.data ?? json`.
+// (no envelope, body IS the data): returns body.data if present, else body.
 func unwrapEnvelope(body []byte, endpoint string) (json.RawMessage, error) {
 	var env okxEnvelope
 	if err := json.Unmarshal(body, &env); err != nil {

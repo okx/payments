@@ -110,8 +110,9 @@ func (s *ExactEvmScheme) ParsePrice(price x402.Price, network x402.Network) (x40
 		}
 	}
 
-	// Parse Money to decimal number
-	decimalAmount, err := s.parseMoneyToDecimal(price)
+	// Parse Money — keep the cleaned decimal string for exact atomic conversion
+	// (avoids float64 precision loss) while exposing float64 to custom parsers.
+	amountStr, decimalAmount, err := s.parseMoneyToDecimal(price)
 	if err != nil {
 		return x402.AssetAmount{}, err
 	}
@@ -131,11 +132,14 @@ func (s *ExactEvmScheme) ParsePrice(price x402.Price, network x402.Network) (x40
 	}
 
 	// All custom parsers returned nil, use default conversion
-	return s.defaultMoneyConversion(decimalAmount, network)
+	return s.defaultMoneyConversion(amountStr, decimalAmount, network)
 }
 
-// parseMoneyToDecimal converts Money (string | number) to decimal amount
-func (s *ExactEvmScheme) parseMoneyToDecimal(price x402.Price) (float64, error) {
+// parseMoneyToDecimal converts Money (string | number) to a (string, float64)
+// pair. The string is the cleaned decimal representation used for exact atomic
+// conversion via big.Int; the float64 is exposed to custom money parsers and
+// used only for the "already in smallest unit" heuristic.
+func (s *ExactEvmScheme) parseMoneyToDecimal(price x402.Price) (string, float64, error) {
 	switch v := price.(type) {
 	case string:
 		// Remove currency symbols
@@ -145,29 +149,32 @@ func (s *ExactEvmScheme) parseMoneyToDecimal(price x402.Price) (float64, error) 
 		cleanPrice = strings.TrimSuffix(cleanPrice, " USDC")
 		cleanPrice = strings.TrimSpace(cleanPrice)
 
-		// Parse as float
+		// Parse as float for validation + parser API.
 		amount, err := strconv.ParseFloat(cleanPrice, 64)
 		if err != nil {
-			return 0, fmt.Errorf(ErrFailedToParsePrice+": '%s': %w", v, err)
+			return "", 0, fmt.Errorf(ErrFailedToParsePrice+": '%s': %w", v, err)
 		}
-		return amount, nil
+		return cleanPrice, amount, nil
 
 	case float64:
-		return v, nil
+		// FormatFloat(-1) emits the shortest representation that round-trips.
+		return strconv.FormatFloat(v, 'f', -1, 64), v, nil
 
 	case int:
-		return float64(v), nil
+		return strconv.Itoa(v), float64(v), nil
 
 	case int64:
-		return float64(v), nil
+		return strconv.FormatInt(v, 10), float64(v), nil
 
 	default:
-		return 0, fmt.Errorf(ErrUnsupportedPriceType+": %T", price)
+		return "", 0, fmt.Errorf(ErrUnsupportedPriceType+": %T", price)
 	}
 }
 
-// defaultMoneyConversion converts decimal amount to USDC AssetAmount
-func (s *ExactEvmScheme) defaultMoneyConversion(amount float64, network x402.Network) (x402.AssetAmount, error) {
+// defaultMoneyConversion converts decimal amount to USDC AssetAmount.
+// `amountStr` is the cleaned decimal string used for exact atomic conversion;
+// `amountF64` is only the "already-in-smallest-unit" detection hint.
+func (s *ExactEvmScheme) defaultMoneyConversion(amountStr string, amountF64 float64, network x402.Network) (x402.AssetAmount, error) {
 	networkStr := string(network)
 
 	// Get network config to determine the asset
@@ -201,16 +208,17 @@ func (s *ExactEvmScheme) defaultMoneyConversion(amount float64, network x402.Net
 	}
 
 	// If amount is >= 1 unit AND is a whole number, it's likely already in smallest unit
-	if amount >= oneUnit && amount == float64(int64(amount)) {
+	if amountF64 >= oneUnit && amountF64 == float64(int64(amountF64)) {
 		return x402.AssetAmount{
 			Asset:  config.DefaultAsset.Address,
-			Amount: fmt.Sprintf("%.0f", amount),
+			Amount: fmt.Sprintf("%.0f", amountF64),
 			Extra:  extra,
 		}, nil
 	}
 
-	// Convert decimal to smallest unit (e.g., $1.50 -> 1500000 for USDC with 6 decimals)
-	amountStr := fmt.Sprintf("%.6f", amount)
+	// Convert the cleaned decimal STRING directly to atomic units via big.Int.
+	// Avoids float64 precision loss + the previous hardcoded %.6f rounding,
+	// which silently truncated tokens with > 6 decimals.
 	parsedAmount, err := evm.ParseAmount(amountStr, config.DefaultAsset.Decimals)
 	if err != nil {
 		return x402.AssetAmount{}, fmt.Errorf(ErrFailedToConvertAmount+": %w", err)

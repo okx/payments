@@ -1222,3 +1222,153 @@ func TestOnProtectedRequest_UnmatchedRoute_HookNotCalled(t *testing.T) {
 		t.Error("Hook should not be called for unmatched routes")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Resource binding fail-closed: when a route opts into URL binding via
+// AcceptedDomains, a payment payload that OMITS the resource field must not
+// bypass the binding check. Previously the check was gated on Resource != nil,
+// so a client could skip it by leaving Resource off the payload.
+// ---------------------------------------------------------------------------
+
+func TestProcessHTTPRequest_AcceptedDomains_FailsClosedOnNilResource(t *testing.T) {
+	ctx := context.Background()
+
+	routes := RoutesConfig{
+		"POST /api": {
+			Accepts: PaymentOptions{
+				{
+					Scheme:  "exact",
+					PayTo:   "0xtest",
+					Price:   "$1.00",
+					Network: "eip155:1",
+				},
+			},
+			// Route opts into URL binding.
+			AcceptedDomains: []string{"example.com"},
+		},
+	}
+
+	mockServer := &mockSchemeServer{scheme: "exact"}
+	mockClient := &mockFacilitatorClient{
+		verify: func(ctx context.Context, payloadBytes, requirementsBytes []byte) (*x402.VerifyResponse, error) {
+			return &x402.VerifyResponse{IsValid: true, Payer: "0xpayer"}, nil
+		},
+		supported: func(ctx context.Context) (x402.SupportedResponse, error) {
+			return x402.SupportedResponse{
+				Kinds: []x402.SupportedKind{
+					{X402Version: 2, Scheme: "exact", Network: "eip155:1"},
+				},
+				Extensions: []string{},
+				Signers:    make(map[string][]string),
+			}, nil
+		},
+	}
+
+	server := Newx402HTTPResourceServer(
+		routes,
+		x402.WithFacilitatorClient(mockClient),
+		x402.WithSchemeServer("eip155:1", mockServer),
+	)
+	_ = server.Initialize(ctx)
+
+	// Payload deliberately OMITS the Resource field. With AcceptedDomains set,
+	// this must be rejected (fail-closed), not silently accepted.
+	payload := x402.PaymentPayload{
+		X402Version: 2,
+		Payload:     map[string]interface{}{"sig": "test"},
+		Accepted: x402.PaymentRequirements{
+			Scheme:            "exact",
+			Network:           "eip155:1",
+			Asset:             "USDC",
+			Amount:            "1000000",
+			PayTo:             "0xtest",
+			MaxTimeoutSeconds: 300,
+		},
+		// Resource: nil — the bypass condition.
+	}
+	payloadJSON, _ := json.Marshal(payload)
+	encoded := base64.StdEncoding.EncodeToString(payloadJSON)
+
+	adapter := &mockHTTPAdapter{
+		method:  "POST",
+		path:    "/api",
+		url:     "http://example.com/api",
+		headers: map[string]string{"PAYMENT-SIGNATURE": encoded},
+	}
+	result := server.ProcessHTTPRequest(ctx, HTTPRequestContext{
+		Adapter: adapter, Path: "/api", Method: "POST",
+	}, nil)
+
+	if result.Type != ResultPaymentError {
+		t.Fatalf("expected ResultPaymentError (fail-closed), got %s", result.Type)
+	}
+	if result.Response == nil || result.Response.Status != 402 {
+		t.Fatalf("expected 402 response, got %+v", result.Response)
+	}
+}
+
+// Same route, but payload includes a Resource whose host matches AcceptedDomains
+// and whose path matches the request — must NOT be blocked on resource grounds.
+func TestProcessHTTPRequest_AcceptedDomains_PassesWhenResourceMatchesAllowlist(t *testing.T) {
+	ctx := context.Background()
+
+	routes := RoutesConfig{
+		"POST /api": {
+			Accepts: PaymentOptions{
+				{Scheme: "exact", PayTo: "0xtest", Price: "$1.00", Network: "eip155:1"},
+			},
+			AcceptedDomains: []string{"example.com"},
+		},
+	}
+
+	mockServer := &mockSchemeServer{scheme: "exact"}
+	mockClient := &mockFacilitatorClient{
+		verify: func(ctx context.Context, payloadBytes, requirementsBytes []byte) (*x402.VerifyResponse, error) {
+			return &x402.VerifyResponse{IsValid: true, Payer: "0xpayer"}, nil
+		},
+		supported: func(ctx context.Context) (x402.SupportedResponse, error) {
+			return x402.SupportedResponse{
+				Kinds: []x402.SupportedKind{
+					{X402Version: 2, Scheme: "exact", Network: "eip155:1"},
+				},
+				Extensions: []string{},
+				Signers:    make(map[string][]string),
+			}, nil
+		},
+	}
+
+	server := Newx402HTTPResourceServer(
+		routes,
+		x402.WithFacilitatorClient(mockClient),
+		x402.WithSchemeServer("eip155:1", mockServer),
+	)
+	_ = server.Initialize(ctx)
+
+	// Payload binds to example.com; request arrives via a proxy-rewritten host.
+	payload := x402.PaymentPayload{
+		X402Version: 2,
+		Payload:     map[string]interface{}{"sig": "test"},
+		Resource:    &x402.ResourceInfo{URL: "https://example.com/api"},
+		Accepted: x402.PaymentRequirements{
+			Scheme: "exact", Network: "eip155:1",
+			Asset: "USDC", Amount: "1000000", PayTo: "0xtest", MaxTimeoutSeconds: 300,
+		},
+	}
+	payloadJSON, _ := json.Marshal(payload)
+	encoded := base64.StdEncoding.EncodeToString(payloadJSON)
+
+	adapter := &mockHTTPAdapter{
+		method:  "POST",
+		path:    "/api",
+		url:     "https://internal-proxy.local/api", // host rewritten, path matches
+		headers: map[string]string{"PAYMENT-SIGNATURE": encoded},
+	}
+	result := server.ProcessHTTPRequest(ctx, HTTPRequestContext{
+		Adapter: adapter, Path: "/api", Method: "POST",
+	}, nil)
+
+	if result.Type != ResultPaymentVerified {
+		t.Fatalf("expected ResultPaymentVerified through allowlist, got %s (response=%+v)",
+			result.Type, result.Response)
+	}
+}

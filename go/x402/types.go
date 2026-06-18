@@ -97,6 +97,10 @@ type SettleResponse struct {
 	Transaction  string  `json:"transaction"`
 	Network      Network `json:"network"`
 	Status       string  `json:"status,omitempty"` // OKX extension: "pending", "success", or "timeout"
+	// Amount is the actual amount settled in atomic token units. Present for
+	// schemes like `upto` where the settled amount may be strictly less than
+	// the signed cap. Matches the TS SettleResponse.amount wire field.
+	Amount string `json:"amount,omitempty"`
 }
 
 // SettleStatusResponse is the response from GET /settle/status.

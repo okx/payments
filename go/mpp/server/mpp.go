@@ -78,6 +78,10 @@ func (m *Mpp) Charge(ctx context.Context, cfg ChargeRouteConfig) (string, error)
 		if cfg.Splits != nil {
 			details.Splits = cfg.Splits
 		}
+		if cfg.ResourceURL != "" {
+			ru := cfg.ResourceURL
+			details.ResourceURL = &ru
+		}
 		if m.cfg.ChainID != 0 {
 			chainID := m.cfg.ChainID
 			details.ChainID = &chainID

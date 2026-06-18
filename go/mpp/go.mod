@@ -4,10 +4,9 @@ go 1.24.0
 
 require (
 	github.com/ethereum/go-ethereum v1.16.7
-	github.com/gin-gonic/gin v1.12.0
+	github.com/gin-gonic/gin v1.11.0
 	github.com/google/uuid v1.6.0
 	github.com/labstack/echo/v4 v4.15.1
-	github.com/okx/payments/go/paymentrouter v0.1.0
 )
 
 require (
@@ -47,10 +46,9 @@ require (
 	github.com/ugorji/go/codec v1.3.1 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasttemplate v1.2.2 // indirect
-	go.mongodb.org/mongo-driver/v2 v2.5.0 // indirect
 	golang.org/x/arch v0.22.0 // indirect
 	golang.org/x/crypto v0.48.0 // indirect
-	golang.org/x/net v0.51.0 // indirect
+	golang.org/x/net v0.50.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/text v0.34.0 // indirect

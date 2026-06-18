@@ -1679,11 +1679,8 @@ func extractRequiredFields(t *testing.T, schema bazaar.JSONSchema) []string {
 }
 
 func TestBazaarResourceServerExtension(t *testing.T) {
-	// NOTE: Go's API is different from TypeScript.
-	// In Go, DeclareDiscoveryExtension takes the method as a parameter,
+	// NOTE: DeclareDiscoveryExtension takes the method as a parameter,
 	// so the schema is already narrow at creation time.
-	// In TypeScript, the method is inferred at runtime from the route key,
-	// so declareDiscoveryExtension creates a broad enum and enrichDeclaration narrows it.
 
 	t.Run("should enrich declaration with method from HTTP context", func(t *testing.T) {
 		extension, err := bazaar.DeclareDiscoveryExtension(
@@ -1715,8 +1712,8 @@ func TestBazaarResourceServerExtension(t *testing.T) {
 	})
 
 	t.Run("should create schema with narrow method enum for POST", func(t *testing.T) {
-		// Go-specific: Unlike TypeScript, Go's DeclareDiscoveryExtension takes the method as a parameter.
-		// This means the schema is already narrow at creation time.
+		// DeclareDiscoveryExtension takes the method as a parameter, so the
+		// schema is already narrow at creation time.
 		extension, err := bazaar.DeclareDiscoveryExtension(
 			bazaar.MethodPOST,
 			map[string]interface{}{"data": "test"},

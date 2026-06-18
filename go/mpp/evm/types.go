@@ -59,6 +59,13 @@ type EVMMethodDetails struct {
 	FeePayer *bool   `json:"feePayer,omitempty"`
 	Memo     *string `json:"memo,omitempty"`
 	Splits   []Split `json:"splits,omitempty"`
+	// ResourceURL is the endpoint URL this charge protects (e.g.
+	// "https://api.shop.com/photo"). Forwarded as-is through challenge.request
+	// to the SA API so merchants can aggregate transaction volume / revenue by
+	// URL. Merchant-owned: the SDK does not auto-extract it. Charge mode only —
+	// Session mode does not support this field by design (one session may span
+	// multiple URLs).
+	ResourceURL *string `json:"resourceUrl,omitempty"`
 }
 
 // IsFeePayer reports whether the fee-payer flag is set. Returns false when absent.

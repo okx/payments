@@ -66,11 +66,11 @@ func ValidateErc20ApprovalForPayment(info *erc20approvalgassponsor.Info, payer, 
 	}
 
 	if len(data) < 36 {
-		return ErrErc20ApprovalWrongCalldata, "transaction calldata too short to contain spender parameter"
+		return ErrErc20ApprovalTxInvalidCalldata, "transaction calldata too short to contain spender parameter"
 	}
 	calldataSpender := common.BytesToAddress(data[4:36])
 	if !strings.EqualFold(calldataSpender.Hex(), evm.PERMIT2Address) {
-		return ErrErc20ApprovalWrongCalldata, fmt.Sprintf("approve() spender is %s, expected Permit2 %s", calldataSpender.Hex(), evm.PERMIT2Address)
+		return ErrErc20ApprovalTxWrongSpender, fmt.Sprintf("approve() spender is %s, expected Permit2 %s", calldataSpender.Hex(), evm.PERMIT2Address)
 	}
 
 	chainID := tx.ChainId()

@@ -257,8 +257,8 @@ func TestValidateErc20ApprovalForPayment(t *testing.T) {
 			Version:           "1",
 		}
 		reason, _ := ValidateErc20ApprovalForPayment(info, payer, tokenAddress)
-		if reason != ErrErc20ApprovalWrongCalldata {
-			t.Errorf("expected %s, got: %s", ErrErc20ApprovalWrongCalldata, reason)
+		if reason != ErrErc20ApprovalTxWrongSpender {
+			t.Errorf("expected %s, got: %s", ErrErc20ApprovalTxWrongSpender, reason)
 		}
 	})
 

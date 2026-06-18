@@ -3,6 +3,7 @@
 //	GET /health         — health check
 //	GET /resource/sync  — x402 paid (sync settle)
 //	GET /resource/async — x402 paid (async settle)
+//	GET /resource/upto  — x402 paid (upto scheme, Permit2)
 package main
 
 import (
@@ -11,12 +12,15 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
+	"github.com/okx/payments/go/x402"
 	x402http "github.com/okx/payments/go/x402/http"
 	nethttpmw "github.com/okx/payments/go/x402/http/nethttp"
 	deferred "github.com/okx/payments/go/x402/mechanisms/evm/deferred/server"
 	exact "github.com/okx/payments/go/x402/mechanisms/evm/exact/server"
+	uptoserver "github.com/okx/payments/go/x402/mechanisms/evm/upto/server"
 )
 
 func boolPtr(b bool) *bool { return &b }
@@ -36,6 +40,7 @@ func schemes() []nethttpmw.SchemeConfig {
 	return []nethttpmw.SchemeConfig{
 		{Network: "eip155:196", Server: exact.NewExactEvmScheme()},
 		{Network: "eip155:196", Server: deferred.NewAggrDeferredEvmScheme()},
+		{Network: "eip155:196", Server: uptoserver.NewUptoEvmScheme()},
 	}
 }
 
@@ -123,7 +128,59 @@ func main() {
 		}))
 		mux.Handle("GET /resource/async", asyncHandler)
 
-		fmt.Println("OKX routes enabled: GET /resource/sync, GET /resource/async")
+		// facilitatorAddress auto-injected by middleware Initialize() via /supported.
+		uptoRoute := x402http.RouteConfig{
+			Accepts: x402http.PaymentOptions{
+				{Scheme: "upto", Price: "$0.00001", Network: "eip155:196", PayTo: payTo, MaxTimeoutSeconds: 30},
+			},
+			Description: "x402 upto-scheme paid resource",
+			MimeType:    "application/json",
+		}
+
+		uptoRoutes := x402http.RoutesConfig{
+			"GET /resource/upto": uptoRoute,
+		}
+		// Max settlement for this route in atomic USDC units (matches Price: "$0.00001" @ 6 decimals).
+		const uptoMaxUnits int64 = 10
+		uptoHandler := nethttpmw.X402Payment(nethttpmw.Config{
+			Routes:      uptoRoutes,
+			Facilitator: syncClient,
+			Schemes:     schemes(),
+			Timeout:     300 * time.Second,
+		})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Test hook: ?usage=N drives partial settlement via the settlement-overrides header.
+			// N is the actual amount to settle in atomic USDC units, must be 0 <= N <= uptoMaxUnits.
+			// Without the query param, settles the full signed max (exact-like behavior).
+			settled := ""
+			if usage := r.URL.Query().Get("usage"); usage != "" {
+				n, err := strconv.ParseInt(usage, 10, 64)
+				if err != nil || n < 0 {
+					writeJSON(w, http.StatusBadRequest, map[string]any{"error": "usage must be a non-negative integer"})
+					return
+				}
+				if n > uptoMaxUnits {
+					writeJSON(w, http.StatusBadRequest, map[string]any{
+						"error":    "usage exceeds route maximum",
+						"max":      uptoMaxUnits,
+						"received": n,
+					})
+					return
+				}
+				amount := strconv.FormatInt(n, 10)
+				nethttpmw.SetSettlementOverrides(w, &x402.SettlementOverrides{Amount: amount})
+				settled = amount
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"message":      "Payment successful! Here is your upto-scheme premium data.",
+				"network":      "eip155:196",
+				"scheme":       "upto",
+				"maxUnits":     uptoMaxUnits,
+				"settledUnits": settled,
+			})
+		}))
+		mux.Handle("GET /resource/upto", uptoHandler)
+
+		fmt.Println("OKX routes enabled: GET /resource/sync, GET /resource/async, GET /resource/upto")
 	} else {
 		fmt.Println("OKX routes disabled (OKX_BASE_URL not set)")
 	}

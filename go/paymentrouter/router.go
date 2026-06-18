@@ -11,7 +11,7 @@ import (
 func parseRouteKey(key string) (method, path string) {
 	parts := strings.SplitN(key, " ", 2)
 	if len(parts) == 2 {
-		return strings.ToLower(parts[0]), parts[1]
+		return strings.ToUpper(parts[0]), parts[1]
 	}
 	return "*", key
 }
@@ -100,10 +100,10 @@ func NewCompiledRouter(routes []RouteEntry) *CompiledRouter {
 }
 
 // Match returns the first RouteEntry whose method and path pattern match.
-// method should already be lowercase. path is normalized internally.
+// method should already be uppercase. path is normalized internally.
 func (cr *CompiledRouter) Match(method, path string) *RouteMatch {
 	path = normalizePath(path)
-	method = strings.ToLower(method)
+	method = strings.ToUpper(method)
 	for _, e := range cr.entries {
 		if e.method != "*" && e.method != method {
 			continue

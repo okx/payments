@@ -241,7 +241,7 @@ func TestSolanaGetNetworkConfig(t *testing.T) {
 func TestSolanaMessageVersioning(t *testing.T) {
 	t.Run("SetVersionToV0", func(t *testing.T) {
 		// Test that we can set the message version to V0
-		// This is important for cross-platform compatibility with Python/TypeScript facilitators
+		// Facilitators expect versioned transactions.
 		msg := solana.Message{
 			Header: solana.MessageHeader{
 				NumRequiredSignatures:       1,

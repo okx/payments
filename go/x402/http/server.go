@@ -111,6 +111,13 @@ type RouteConfig struct {
 	CustomPaywallHTML string                 `json:"customPaywallHtml,omitempty"`
 	Extensions        map[string]interface{} `json:"extensions,omitempty"`
 
+	// AcceptedDomains is an optional host allowlist for payload.resource.url validation.
+	// When non-empty, the payload URL host (case-insensitive) must appear in this list
+	// and the URL path must match the request path exactly; the request host is ignored
+	// to tolerate reverse-proxy / CDN Host rewriting. When empty or nil, strict full-URL
+	// equality is enforced (back-compat).
+	AcceptedDomains []string `json:"acceptedDomains,omitempty"`
+
 	// UnpaidResponseBody is an optional callback to generate a custom response for unpaid API requests.
 	// For browser requests (Accept: text/html), the paywall HTML takes precedence.
 	// If not provided, defaults to { ContentType: "application/json", Body: nil }.
@@ -623,6 +630,45 @@ func (s *x402HTTPResourceServer) ProcessHTTPRequest(ctx context.Context, reqCtx 
 		return HTTPProcessResult{
 			Type:     ResultPaymentError,
 			Response: response,
+		}
+	}
+
+	// Validate that the payment payload's resource URL binds to the request URL.
+	// Strict full-URL equality by default; reverse-proxy / CDN host rewriting is tolerated
+	// when the route declares an AcceptedDomains allowlist (WS-1669).
+	//
+	// Fail-closed when the route opted into URL binding via AcceptedDomains:
+	// a missing payload.resource must NOT bypass the check, otherwise a client
+	// could skip resource binding by omitting the field.
+	resourceBindingRequired := typedPayload.Resource != nil || len(routeConfig.AcceptedDomains) > 0
+	if resourceBindingRequired {
+		requestURL := reqCtx.Adapter.GetURL()
+		payloadResourceURL := ""
+		if typedPayload.Resource != nil {
+			payloadResourceURL = typedPayload.Resource.URL
+		}
+		if !x402.ResourceMatches(payloadResourceURL, requestURL, routeConfig.AcceptedDomains) {
+			paymentRequired := s.CreatePaymentRequiredResponse(
+				requirements,
+				resourceInfo,
+				"resource mismatch",
+				extensions,
+			)
+			response, err := s.createHTTPResponseV2(paymentRequired, false, paywallConfig, "", nil)
+			if err != nil {
+				return HTTPProcessResult{
+					Type: ResultPaymentError,
+					Response: &HTTPResponseInstructions{
+						Status:  500,
+						Headers: map[string]string{"Content-Type": "application/json"},
+						Body:    map[string]string{"error": fmt.Sprintf("Failed to create payment response: %v", err)},
+					},
+				}
+			}
+			return HTTPProcessResult{
+				Type:     ResultPaymentError,
+				Response: response,
+			}
 		}
 	}
 

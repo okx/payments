@@ -1,3 +1,9 @@
+// Address values, ABI shapes, and EIP-712 witness type strings declared in
+// this file are part of the on-chain protocol surface. The EIP-712 type-hashes
+// that the on-chain Permit2 proxies expect are derived directly from the
+// witness type strings below — any byte drift results in signatures that fail
+// verification on-chain.
+
 package evm
 
 import (
@@ -6,8 +12,9 @@ import (
 
 const (
 	// Scheme identifier
-	SchemeExact         = "exact"
-	SchemeAggrDeferred  = "aggr_deferred"
+	SchemeExact        = "exact"
+	SchemeUpto         = "upto"
+	SchemeAggrDeferred = "aggr_deferred"
 
 	// Default token decimals for USDC
 	DefaultDecimals = 6
@@ -52,8 +59,10 @@ const (
 	X402ExactPermit2ProxyAddress = "0x402085c248EeA27D92E8b30b2C58ed07f9E20001"
 
 	// X402UptoPermit2ProxyAddress is the x402 upto payment proxy.
-	// Vanity address: 0x4020...0002 for easy recognition.
-	X402UptoPermit2ProxyAddress = "0x402039b3d6E6BEC5A02c2C9fd937ac17A6940002"
+	// Vanity address: 0x4020...0002 for easy recognition. This address is part
+	// of the EIP-712 signed `spender` field — any byte drift makes every upto
+	// signature fail on-chain.
+	X402UptoPermit2ProxyAddress = "0x4020e7393B728A3939659E5732F87fdd8e680002"
 
 	// Permit2DeadlineBuffer is the time buffer (in seconds) added when checking
 	// deadline expiration to account for block propagation time.
@@ -64,17 +73,33 @@ const (
 
 	// DefaultMaxFeePerGas is the fallback max fee per gas (1 gwei) for gas cost estimation.
 	DefaultMaxFeePerGas = 1_000_000_000
+
+	// DefaultMaxPriorityFeePerGas is the fallback max priority fee per gas (0.1 gwei)
+	// used when EIP-1559 fee estimation is unavailable.
+	DefaultMaxPriorityFeePerGas = 100_000_000
+
+	// Permit2ExactWitnessTypeString is the EIP-712 witness sub-type string used by
+	// x402ExactPermit2Proxy. The Permit2 type-hash is derived from this literal
+	// (the on-chain proxy hashes the same string).
+	Permit2ExactWitnessTypeString = "Witness(address to,uint256 validAfter)"
+
+	// Permit2UptoWitnessTypeString is the EIP-712 witness sub-type string used by
+	// x402UptoPermit2Proxy. The upto witness adds `facilitator` between `to` and
+	// `validAfter` so the proxy can enforce that only the authorized facilitator
+	// can call settle.
+	Permit2UptoWitnessTypeString = "Witness(address to,address facilitator,uint256 validAfter)"
 )
 
 var (
 	// Network chain IDs
-	ChainIDBase        = big.NewInt(8453)
-	ChainIDBaseSepolia = big.NewInt(84532)
-	ChainIDMegaETH     = big.NewInt(4326)
-	ChainIDMonad       = big.NewInt(143)
-	ChainIDMezoTestnet = big.NewInt(31611)
-	ChainIDStable      = big.NewInt(988)
-	ChainIDXLayer      = big.NewInt(196)
+	ChainIDBase          = big.NewInt(8453)
+	ChainIDBaseSepolia   = big.NewInt(84532)
+	ChainIDMegaETH       = big.NewInt(4326)
+	ChainIDMonad         = big.NewInt(143)
+	ChainIDMezoTestnet   = big.NewInt(31611)
+	ChainIDStable        = big.NewInt(988)
+	ChainIDXLayer        = big.NewInt(196)
+	ChainIDXLayerTestnet = big.NewInt(1952)
 
 	// Network configurations
 	// See DEFAULT_ASSET.md for guidelines on adding new chains
@@ -147,7 +172,7 @@ var (
 			ChainID: ChainIDXLayer,
 			DefaultAsset: AssetInfo{
 				Address:  "0x779Ded0c9e1022225f8E0630b35a9b54bE713736", // USDT on X Layer
-				Name:     "USD\u20AE0",                                   // USD₮0 (Unicode ₮ = U+20AE)
+				Name:     "USD\u20AE0",                                 // USD₮0 (Unicode ₮ = U+20AE)
 				Version:  "1",
 				Decimals: DefaultDecimals,
 			},
@@ -158,6 +183,16 @@ var (
 			DefaultAsset: AssetInfo{
 				Address:  "0x779Ded0c9e1022225f8E0630b35a9b54bE713736", // USDT0 on Stable
 				Name:     "USDT0",
+				Version:  "1",
+				Decimals: DefaultDecimals,
+			},
+		},
+		// X Layer Testnet (OKX L2 testnet).
+		"eip155:1952": {
+			ChainID: ChainIDXLayerTestnet,
+			DefaultAsset: AssetInfo{
+				Address:  "0x9e29b3aada05bf2d2c827af80bd28dc0b9b4fb0c", // USDT0 on X Layer Testnet
+				Name:     "USD₮0",                                      // USD₮0 (Unicode ₮ = U+20AE)
 				Version:  "1",
 				Decimals: DefaultDecimals,
 			},
@@ -438,6 +473,114 @@ var (
 		}
 	]`)
 
+	// X402UptoPermit2ProxySettleABI for calling settle on x402UptoPermit2Proxy.
+	// Differs from the exact ABI: adds a `uint256 amount` parameter between
+	// `permit` and `owner`, and the witness tuple includes an `address facilitator`
+	// field.
+	X402UptoPermit2ProxySettleABI = []byte(`[
+		{
+			"type": "function",
+			"name": "settle",
+			"inputs": [
+				{
+					"name": "permit",
+					"type": "tuple",
+					"components": [
+						{
+							"name": "permitted",
+							"type": "tuple",
+							"components": [
+								{"name": "token", "type": "address"},
+								{"name": "amount", "type": "uint256"}
+							]
+						},
+						{"name": "nonce", "type": "uint256"},
+						{"name": "deadline", "type": "uint256"}
+					]
+				},
+				{"name": "amount", "type": "uint256"},
+				{"name": "owner", "type": "address"},
+				{
+					"name": "witness",
+					"type": "tuple",
+					"components": [
+						{"name": "to", "type": "address"},
+						{"name": "facilitator", "type": "address"},
+						{"name": "validAfter", "type": "uint256"}
+					]
+				},
+				{"name": "signature", "type": "bytes"}
+			],
+			"outputs": [],
+			"stateMutability": "nonpayable"
+		}
+	]`)
+
+	// X402UptoPermit2ProxySettleWithPermitABI for calling settleWithPermit on
+	// x402UptoPermit2Proxy (EIP-2612 atomic settlement variant).
+	X402UptoPermit2ProxySettleWithPermitABI = []byte(`[
+		{
+			"type": "function",
+			"name": "settleWithPermit",
+			"inputs": [
+				{
+					"name": "permit2612",
+					"type": "tuple",
+					"components": [
+						{"name": "value", "type": "uint256"},
+						{"name": "deadline", "type": "uint256"},
+						{"name": "r", "type": "bytes32"},
+						{"name": "s", "type": "bytes32"},
+						{"name": "v", "type": "uint8"}
+					]
+				},
+				{
+					"name": "permit",
+					"type": "tuple",
+					"components": [
+						{
+							"name": "permitted",
+							"type": "tuple",
+							"components": [
+								{"name": "token", "type": "address"},
+								{"name": "amount", "type": "uint256"}
+							]
+						},
+						{"name": "nonce", "type": "uint256"},
+						{"name": "deadline", "type": "uint256"}
+					]
+				},
+				{"name": "amount", "type": "uint256"},
+				{"name": "owner", "type": "address"},
+				{
+					"name": "witness",
+					"type": "tuple",
+					"components": [
+						{"name": "to", "type": "address"},
+						{"name": "facilitator", "type": "address"},
+						{"name": "validAfter", "type": "uint256"}
+					]
+				},
+				{"name": "signature", "type": "bytes"}
+			],
+			"outputs": [],
+			"stateMutability": "nonpayable"
+		}
+	]`)
+
+	// X402UptoPermit2ProxyPermit2ABI for verifying upto proxy deployment via
+	// the PERMIT2() view selector. Identical shape to the exact proxy's PERMIT2()
+	// view — duplicated for clarity so each proxy has its own ABI handle.
+	X402UptoPermit2ProxyPermit2ABI = []byte(`[
+		{
+			"inputs": [],
+			"name": "PERMIT2",
+			"outputs": [{"name": "", "type": "address"}],
+			"stateMutability": "view",
+			"type": "function"
+		}
+	]`)
+
 	// FunctionSettleWithPermit is the function name for EIP-2612 settlement
 	FunctionSettleWithPermit = "settleWithPermit"
 
@@ -450,7 +593,7 @@ var (
 	}
 
 	// Permit2WitnessTypes defines the EIP-712 types for Permit2 with witness.
-	// Field order MUST match the on-chain Permit2 contract and TypeScript implementation.
+	// Field order MUST match the on-chain Permit2 contract.
 	Permit2WitnessTypes = map[string][]TypedDataField{
 		"PermitWitnessTransferFrom": {
 			{Name: "permitted", Type: "TokenPermissions"},
@@ -468,6 +611,31 @@ var (
 			{Name: "validAfter", Type: "uint256"},
 		},
 	}
+
+	// UptoPermit2WitnessTypes defines the EIP-712 types for the upto Permit2 witness.
+	// The Witness sub-type adds an `address facilitator` field between `to` and
+	// `validAfter` — the on-chain x402UptoPermit2Proxy uses this to enforce that
+	// only the authorized facilitator can call settle. Field order MUST be exactly
+	// to → facilitator → validAfter; any reorder changes the EIP-712 type-hash
+	// and breaks signature verification.
+	UptoPermit2WitnessTypes = map[string][]TypedDataField{
+		"PermitWitnessTransferFrom": {
+			{Name: "permitted", Type: "TokenPermissions"},
+			{Name: "spender", Type: "address"},
+			{Name: "nonce", Type: "uint256"},
+			{Name: "deadline", Type: "uint256"},
+			{Name: "witness", Type: "Witness"},
+		},
+		"TokenPermissions": {
+			{Name: "token", Type: "address"},
+			{Name: "amount", Type: "uint256"},
+		},
+		"Witness": {
+			{Name: "to", Type: "address"},
+			{Name: "facilitator", Type: "address"},
+			{Name: "validAfter", Type: "uint256"},
+		},
+	}
 )
 
 // GetPermit2EIP712Types returns the complete EIP-712 types map for Permit2 signing.
@@ -479,6 +647,19 @@ func GetPermit2EIP712Types() map[string][]TypedDataField {
 		"PermitWitnessTransferFrom": Permit2WitnessTypes["PermitWitnessTransferFrom"],
 		"TokenPermissions":          Permit2WitnessTypes["TokenPermissions"],
 		"Witness":                   Permit2WitnessTypes["Witness"],
+	}
+}
+
+// GetUptoPermit2EIP712Types returns the complete EIP-712 types map for upto Permit2
+// signing. Mirrors GetPermit2EIP712Types but uses UptoPermit2WitnessTypes (which adds
+// the `facilitator` field to the Witness sub-type). Use this when constructing typed
+// data for the x402UptoPermit2Proxy.
+func GetUptoPermit2EIP712Types() map[string][]TypedDataField {
+	return map[string][]TypedDataField{
+		"EIP712Domain":              EIP712DomainTypes,
+		"PermitWitnessTransferFrom": UptoPermit2WitnessTypes["PermitWitnessTransferFrom"],
+		"TokenPermissions":          UptoPermit2WitnessTypes["TokenPermissions"],
+		"Witness":                   UptoPermit2WitnessTypes["Witness"],
 	}
 }
 

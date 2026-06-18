@@ -125,14 +125,20 @@ func (s *ClientSigner) SignTypedData(
 		typedData.Types[typeName] = typedFields
 	}
 
-	// Add EIP712Domain type if not present
+	// Add EIP712Domain type if not present. Include `version` only when the
+	// domain carries one — Permit2's canonical domain is 3-field (no version),
+	// so a fixed 4-field fallback would corrupt the domain separator. EIP-3009 /
+	// EIP-2612 domains set Version and get the 4-field form.
 	if _, exists := typedData.Types["EIP712Domain"]; !exists {
-		typedData.Types["EIP712Domain"] = []apitypes.Type{
-			{Name: "name", Type: "string"},
-			{Name: "version", Type: "string"},
-			{Name: "chainId", Type: "uint256"},
-			{Name: "verifyingContract", Type: "address"},
+		domainType := []apitypes.Type{{Name: "name", Type: "string"}}
+		if domain.Version != "" {
+			domainType = append(domainType, apitypes.Type{Name: "version", Type: "string"})
 		}
+		domainType = append(domainType,
+			apitypes.Type{Name: "chainId", Type: "uint256"},
+			apitypes.Type{Name: "verifyingContract", Type: "address"},
+		)
+		typedData.Types["EIP712Domain"] = domainType
 	}
 
 	// Hash the struct data

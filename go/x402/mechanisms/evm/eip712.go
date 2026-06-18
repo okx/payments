@@ -57,14 +57,22 @@ func HashTypedData(
 		typedData.Types[typeName] = typedFields
 	}
 
-	// Add EIP712Domain type if not present
+	// Add EIP712Domain type if not present. The `version` field is included
+	// only when the domain actually carries a version: Permit2's canonical
+	// domain is 3-field {name, chainId, verifyingContract} with NO version, so
+	// injecting a 4-field domain here would change the domain separator and
+	// break on-chain verification. EIP-3009 / EIP-2612 domains set Version and
+	// get the 4-field form.
 	if _, exists := typedData.Types["EIP712Domain"]; !exists {
-		typedData.Types["EIP712Domain"] = []apitypes.Type{
-			{Name: "name", Type: "string"},
-			{Name: "version", Type: "string"},
-			{Name: "chainId", Type: "uint256"},
-			{Name: "verifyingContract", Type: "address"},
+		domainType := []apitypes.Type{{Name: "name", Type: "string"}}
+		if domain.Version != "" {
+			domainType = append(domainType, apitypes.Type{Name: "version", Type: "string"})
 		}
+		domainType = append(domainType,
+			apitypes.Type{Name: "chainId", Type: "uint256"},
+			apitypes.Type{Name: "verifyingContract", Type: "address"},
+		)
+		typedData.Types["EIP712Domain"] = domainType
 	}
 
 	// Hash the struct data

@@ -866,7 +866,8 @@ func (m *EVMSessionMethod) handleClose(
 
 	cmp := clientAmount.Cmp(storedAmount)
 	if cmp < 0 {
-		return nil, protocol.ErrAmount(
+		// Non-increasing close amount → delta-too-small.
+		return nil, protocol.VerificationErrorDeltaTooSmall(
 			fmt.Sprintf("close cumulativeAmount %s is less than stored %s", clientAmount.String(), storedAmount.String()),
 		)
 	}
