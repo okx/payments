@@ -169,20 +169,24 @@ type SessionStatus struct {
 type SAErrorCode int
 
 const (
+	// Values taken verbatim from the [Pay] MPP EVM API spec error-code table
+	// (last revised 2026-05-06). The earlier table had 70005-70013 shifted and
+	// was missing 70000.
 	SACodeSuccess              SAErrorCode = 0
+	SACodeInvalidParams        SAErrorCode = 70000
 	SACodeUnsupportedChain     SAErrorCode = 70001
 	SACodePayerBlocked         SAErrorCode = 70002
 	SACodeInvalidCredential    SAErrorCode = 70003
 	SACodeInvalidSignature     SAErrorCode = 70004
-	SACodeInsufficientBalance  SAErrorCode = 70005
-	SACodeAmountExceedsDeposit SAErrorCode = 70006
+	SACodeSplitSumExceedsTotal SAErrorCode = 70005
+	SACodeSplitCountExceeded   SAErrorCode = 70006
 	SACodeTxNotConfirmed       SAErrorCode = 70007
-	SACodeChannelNotFound      SAErrorCode = 70008
-	SACodeChannelClosed        SAErrorCode = 70009
-	SACodeDeltaTooSmall        SAErrorCode = 70010
+	SACodeChannelClosed        SAErrorCode = 70008
+	SACodeChallengeInvalid     SAErrorCode = 70009
+	SACodeChannelNotFound      SAErrorCode = 70010
 	SACodeGracePeriodTooShort  SAErrorCode = 70011
-	SACodeSignerMismatch       SAErrorCode = 70012
-	SACodeDeltaBelowMinimum    SAErrorCode = 70013
+	SACodeAmountExceedsDeposit SAErrorCode = 70012
+	SACodeVoucherDeltaTooSmall SAErrorCode = 70013
 	SACodeChannelClosing       SAErrorCode = 70014
 	SACodeInternalError        SAErrorCode = 8000
 )

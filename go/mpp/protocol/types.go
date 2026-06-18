@@ -175,7 +175,7 @@ func Base64URLDecode(input string) ([]byte, error) {
 }
 
 // validateBase64Trailing rejects inputs whose trailing bits are non-zero,
-// matching the Rust base64 crate's strict decoding behavior.
+// enforcing strict base64 decoding.
 func validateBase64Trailing(s string) error {
 	if len(s) == 0 {
 		return nil

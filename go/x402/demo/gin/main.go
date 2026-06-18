@@ -3,6 +3,7 @@
 //	GET /health         — health check
 //	GET /resource/sync  — x402 paid (sync settle)
 //	GET /resource/async — x402 paid (async settle)
+//	GET /resource/upto  — x402 paid (upto scheme, Permit2)
 package main
 
 import (
@@ -10,13 +11,16 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	ginfw "github.com/gin-gonic/gin"
+	"github.com/okx/payments/go/x402"
 	x402http "github.com/okx/payments/go/x402/http"
 	ginmw "github.com/okx/payments/go/x402/http/gin"
 	deferred "github.com/okx/payments/go/x402/mechanisms/evm/deferred/server"
 	exact "github.com/okx/payments/go/x402/mechanisms/evm/exact/server"
+	uptoserver "github.com/okx/payments/go/x402/mechanisms/evm/upto/server"
 )
 
 func boolPtr(b bool) *bool { return &b }
@@ -36,6 +40,7 @@ func schemes() []ginmw.SchemeConfig {
 	return []ginmw.SchemeConfig{
 		{Network: "eip155:196", Server: exact.NewExactEvmScheme()},
 		{Network: "eip155:196", Server: deferred.NewAggrDeferredEvmScheme()},
+		{Network: "eip155:196", Server: uptoserver.NewUptoEvmScheme()},
 	}
 }
 
@@ -120,7 +125,60 @@ func main() {
 			})
 		})
 
-		fmt.Println("OKX routes enabled: GET /resource/sync, GET /resource/async")
+		uptoRoute := x402http.RouteConfig{
+			Accepts: x402http.PaymentOptions{
+				// facilitatorAddress auto-injected by middleware Initialize() via /supported.
+				{Scheme: "upto", Price: "$0.00001", Network: "eip155:196", PayTo: payTo, MaxTimeoutSeconds: 30},
+			},
+			Description: "x402 upto-scheme paid resource",
+			MimeType:    "application/json",
+		}
+
+		uptoRoutes := x402http.RoutesConfig{
+			"GET /resource/upto": uptoRoute,
+		}
+		uptoGroup := r.Group("/")
+		uptoGroup.Use(ginmw.X402Payment(ginmw.Config{
+			Routes:      uptoRoutes,
+			Facilitator: syncClient,
+			Schemes:     schemes(),
+			Timeout:     300 * time.Second,
+		}))
+		// Max settlement for this route in atomic USDC units (matches Price: "$0.00001" @ 6 decimals).
+		const uptoMaxUnits int64 = 10
+		uptoGroup.GET("/resource/upto", func(c *ginfw.Context) {
+			// Test hook: ?usage=N drives partial settlement via x-settlement-overrides.
+			// N is the actual amount to settle in atomic USDC units, must be 0 <= N <= uptoMaxUnits.
+			// Without the query param, settles the full signed max (exact-like behavior).
+			settled := ""
+			if usage := c.Query("usage"); usage != "" {
+				n, err := strconv.ParseInt(usage, 10, 64)
+				if err != nil || n < 0 {
+					c.JSON(http.StatusBadRequest, ginfw.H{"error": "usage must be a non-negative integer"})
+					return
+				}
+				if n > uptoMaxUnits {
+					c.JSON(http.StatusBadRequest, ginfw.H{
+						"error":    "usage exceeds route maximum",
+						"max":      uptoMaxUnits,
+						"received": n,
+					})
+					return
+				}
+				amount := strconv.FormatInt(n, 10)
+				ginmw.SetSettlementOverrides(c, &x402.SettlementOverrides{Amount: amount})
+				settled = amount
+			}
+			c.JSON(http.StatusOK, ginfw.H{
+				"message":      "Payment successful! Here is your upto-scheme premium data.",
+				"network":      "eip155:196",
+				"scheme":       "upto",
+				"maxUnits":     uptoMaxUnits,
+				"settledUnits": settled,
+			})
+		})
+
+		fmt.Println("OKX routes enabled: GET /resource/sync, GET /resource/async, GET /resource/upto")
 	} else {
 		fmt.Println("OKX routes disabled (OKX_BASE_URL not set)")
 	}

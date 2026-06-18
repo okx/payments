@@ -4,11 +4,39 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/okx/payments/go/x402/types"
 )
+
+// ResourceMatches reports whether a payload resource URL matches a request URL,
+// optionally tolerating reverse-proxy / CDN host rewriting via an allowlist.
+//
+// Behavior:
+//   - If acceptedDomains is empty, falls back to strict full-URL equality (back-compat).
+//   - Otherwise, the payload URL host (case-insensitive) must appear in acceptedDomains
+//     and the URL paths must match exactly. Scheme, port, query, and fragment are ignored.
+//   - Malformed URLs return false (never panics).
+func ResourceMatches(payloadURL, requestURL string, acceptedDomains []string) bool {
+	if len(acceptedDomains) == 0 {
+		return payloadURL == requestURL // back-compat strict equality
+	}
+	p, err1 := url.Parse(payloadURL)
+	r, err2 := url.Parse(requestURL)
+	if err1 != nil || err2 != nil || p == nil || r == nil {
+		return false
+	}
+	payloadHost := strings.ToLower(p.Host)
+	for _, d := range acceptedDomains {
+		if strings.ToLower(d) == payloadHost {
+			return p.Path == r.Path
+		}
+	}
+	return false
+}
 
 // x402ResourceServer manages payment requirements and verification for protected resources
 // V2 ONLY - This server only produces and accepts V2 payments

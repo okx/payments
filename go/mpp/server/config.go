@@ -86,6 +86,12 @@ type ChargeRouteConfig struct {
 	// Splits specifies secondary recipients. The primary recipient receives
 	// totalAmount minus the sum of all splits. Max 10 entries.
 	Splits []evm.Split
+
+	// ResourceURL optionally tags this charge with the endpoint URL it protects
+	// (e.g. "https://api.shop.com/photo"), forwarded through challenge.request so
+	// the SA API can aggregate transaction volume / revenue per endpoint. Charge
+	// mode only. Leave empty to omit.
+	ResourceURL string
 }
 
 // SessionRouteConfig holds per-route parameters for a session challenge.

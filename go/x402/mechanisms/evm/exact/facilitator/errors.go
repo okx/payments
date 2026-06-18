@@ -66,15 +66,20 @@ const (
 	ErrErc20ApprovalTxFailed        = "erc20_approval_tx_failed"
 
 	// ERC-20 approval gas sponsoring errors
-	ErrErc20ApprovalInvalidFormat   = "invalid_erc20_approval_extension_format"
-	ErrErc20ApprovalFromMismatch    = "erc20_approval_from_mismatch"
-	ErrErc20ApprovalAssetMismatch   = "erc20_approval_asset_mismatch"
-	ErrErc20ApprovalWrongSpender    = "erc20_approval_spender_not_permit2"
-	ErrErc20ApprovalTxParseFailed   = "erc20_approval_tx_parse_failed"
-	ErrErc20ApprovalWrongTarget     = "erc20_approval_tx_wrong_target"
-	ErrErc20ApprovalWrongSelector   = "erc20_approval_tx_wrong_selector"
-	ErrErc20ApprovalWrongCalldata   = "erc20_approval_tx_wrong_spender"
-	ErrErc20ApprovalSignerMismatch  = "erc20_approval_tx_signer_mismatch"
-	ErrErc20ApprovalInvalidSig      = "erc20_approval_tx_invalid_signature"
-	ErrErc20ApprovalBroadcastFailed = "erc20_approval_broadcast_failed"
+	ErrErc20ApprovalInvalidFormat = "invalid_erc20_approval_extension_format"
+	ErrErc20ApprovalFromMismatch  = "erc20_approval_from_mismatch"
+	ErrErc20ApprovalAssetMismatch = "erc20_approval_asset_mismatch"
+	ErrErc20ApprovalWrongSpender  = "erc20_approval_spender_not_permit2"
+	ErrErc20ApprovalTxParseFailed = "erc20_approval_tx_parse_failed"
+	ErrErc20ApprovalWrongTarget   = "erc20_approval_tx_wrong_target"
+	ErrErc20ApprovalWrongSelector = "erc20_approval_tx_wrong_selector"
+	// ErrErc20ApprovalTxWrongSpender — well-formed approve() calldata whose
+	// spender argument is not Permit2.
+	ErrErc20ApprovalTxWrongSpender = "erc20_approval_tx_wrong_spender"
+	// ErrErc20ApprovalTxInvalidCalldata — approve() calldata is too short to
+	// carry a spender argument.
+	ErrErc20ApprovalTxInvalidCalldata = "erc20_approval_tx_invalid_calldata"
+	ErrErc20ApprovalSignerMismatch    = "erc20_approval_tx_signer_mismatch"
+	ErrErc20ApprovalInvalidSig        = "erc20_approval_tx_invalid_signature"
+	ErrErc20ApprovalBroadcastFailed   = "erc20_approval_broadcast_failed"
 )

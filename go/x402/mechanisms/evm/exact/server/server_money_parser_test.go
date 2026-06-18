@@ -287,3 +287,39 @@ func TestRegisterMoneyParser_NoCustomParsers(t *testing.T) {
 		t.Errorf("Expected amount %s, got %s", expectedAmount, result.Amount)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Precision: ParsePrice on an 18-decimal token (MegaETH USDM) must NOT lose
+// sub-microcent digits via the old %.6f round-trip. A 12-decimal input value
+// would previously have been truncated to "0.000000" → atomic 0.
+// ---------------------------------------------------------------------------
+
+func TestExactEvmScheme_ParsePrice_PreservesPrecisionOn18DecimalToken(t *testing.T) {
+	server := NewExactEvmScheme()
+	network := x402.Network("eip155:4326") // MegaETH USDM, 18 decimals
+
+	// 0.000000000001 USDM = 10^-12 * 10^18 = 1_000_000 atomic units.
+	result, err := server.ParsePrice("0.000000000001", network)
+	if err != nil {
+		t.Fatalf("ParsePrice: %v", err)
+	}
+	if result.Amount != "1000000" {
+		t.Fatalf("amount = %q, want %q (old %%.6f path would yield %q)",
+			result.Amount, "1000000", "0")
+	}
+}
+
+func TestExactEvmScheme_ParsePrice_PreservesNonRoundDecimalOn18DecimalToken(t *testing.T) {
+	server := NewExactEvmScheme()
+	network := x402.Network("eip155:4326")
+
+	// 1.234567890123456789 USDM = 1234567890123456789 atomic units.
+	// Old %.6f path: "1.234568" → 1234568000000000000.
+	result, err := server.ParsePrice("1.234567890123456789", network)
+	if err != nil {
+		t.Fatalf("ParsePrice: %v", err)
+	}
+	if result.Amount != "1234567890123456789" {
+		t.Fatalf("amount = %q, want %q", result.Amount, "1234567890123456789")
+	}
+}

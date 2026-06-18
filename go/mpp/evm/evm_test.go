@@ -306,6 +306,37 @@ func TestEVMMethodDetailsJSON(t *testing.T) {
 	}
 }
 
+func TestEVMMethodDetailsResourceURL(t *testing.T) {
+	t.Run("serializes as resourceUrl when set", func(t *testing.T) {
+		url := "https://api.shop.com/photo?id=42"
+		data, err := json.Marshal(&EVMMethodDetails{ResourceURL: &url})
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+		if !strings.Contains(string(data), `"resourceUrl":"https://api.shop.com/photo?id=42"`) {
+			t.Errorf("expected resourceUrl in JSON, got %s", data)
+		}
+
+		var got EVMMethodDetails
+		if err := json.Unmarshal(data, &got); err != nil {
+			t.Fatalf("Unmarshal: %v", err)
+		}
+		if got.ResourceURL == nil || *got.ResourceURL != url {
+			t.Errorf("ResourceURL = %v, want %q", got.ResourceURL, url)
+		}
+	})
+
+	t.Run("omitted when nil", func(t *testing.T) {
+		data, err := json.Marshal(&EVMMethodDetails{})
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+		if strings.Contains(string(data), "resourceUrl") {
+			t.Errorf("expected resourceUrl omitted, got %s", data)
+		}
+	})
+}
+
 func TestEVMMethodDetailsIsFeePayer(t *testing.T) {
 	tests := []struct {
 		name    string

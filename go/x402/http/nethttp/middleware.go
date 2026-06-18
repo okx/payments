@@ -14,6 +14,14 @@ import (
 	x402http "github.com/okx/payments/go/x402/http"
 )
 
+// SetSettlementOverrides sets settlement overrides on the response for partial
+// settlement (upto scheme). The middleware extracts these before settlement and
+// strips the header from the client response.
+func SetSettlementOverrides(w http.ResponseWriter, overrides *x402.SettlementOverrides) {
+	data, _ := json.Marshal(overrides)
+	w.Header().Set(x402http.SettlementOverridesHeader, string(data))
+}
+
 // ============================================================================
 // Middleware Configuration
 // ============================================================================
@@ -293,12 +301,22 @@ func handlePaymentVerified(w http.ResponseWriter, r *http.Request, next http.Han
 		return
 	}
 
+	// Extract settlement overrides from response header (set by route handler, upto scheme)
+	var settlementOverrides *x402.SettlementOverrides
+	if overridesHeader := w.Header().Get(x402http.SettlementOverridesHeader); overridesHeader != "" {
+		var overrides x402.SettlementOverrides
+		if err := json.Unmarshal([]byte(overridesHeader), &overrides); err == nil {
+			settlementOverrides = &overrides
+		}
+		w.Header().Del(x402http.SettlementOverridesHeader)
+	}
+
 	// Process settlement
 	settleResult := server.ProcessSettlement(
 		ctx,
 		*result.PaymentPayload,
 		*result.PaymentRequirements,
-		nil,
+		settlementOverrides,
 	)
 
 	if !settleResult.Success {

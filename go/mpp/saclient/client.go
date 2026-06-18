@@ -191,6 +191,8 @@ func (c *OKXSAClient) execute(req *http.Request) (*SAResponse, error) {
 func (c *OKXSAClient) mapSAError(code SAErrorCode, msg string) error {
 	var mppCode mpperrors.MppErrorCode
 	switch code {
+	case SACodeInvalidParams:
+		mppCode = mpperrors.CodeBadRequest
 	case SACodeUnsupportedChain:
 		mppCode = mpperrors.CodeInternal
 	case SACodePayerBlocked:
@@ -199,23 +201,23 @@ func (c *OKXSAClient) mapSAError(code SAErrorCode, msg string) error {
 		mppCode = mpperrors.CodeMalformedCredential
 	case SACodeInvalidSignature:
 		mppCode = mpperrors.CodeInvalidSignature
-	case SACodeInsufficientBalance:
-		mppCode = mpperrors.CodeInsufficientBalance
-	case SACodeAmountExceedsDeposit:
-		mppCode = mpperrors.CodeAmountExceedsDeposit
+	case SACodeSplitSumExceedsTotal:
+		mppCode = mpperrors.CodeInvalidSplit
+	case SACodeSplitCountExceeded:
+		mppCode = mpperrors.CodeInvalidSplit
 	case SACodeTxNotConfirmed:
 		mppCode = mpperrors.CodeInternal
-	case SACodeChannelNotFound:
-		mppCode = mpperrors.CodeChannelNotFound
 	case SACodeChannelClosed:
 		mppCode = mpperrors.CodeChannelClosed
-	case SACodeDeltaTooSmall:
-		mppCode = mpperrors.CodeDeltaTooSmall
+	case SACodeChallengeInvalid:
+		mppCode = mpperrors.CodeInvalidChallenge
+	case SACodeChannelNotFound:
+		mppCode = mpperrors.CodeChannelNotFound
 	case SACodeGracePeriodTooShort:
 		mppCode = mpperrors.CodeInternal
-	case SACodeSignerMismatch:
-		mppCode = mpperrors.CodeSignerMismatch
-	case SACodeDeltaBelowMinimum:
+	case SACodeAmountExceedsDeposit:
+		mppCode = mpperrors.CodeAmountExceedsDeposit
+	case SACodeVoucherDeltaTooSmall:
 		mppCode = mpperrors.CodeDeltaTooSmall
 	case SACodeChannelClosing:
 		mppCode = mpperrors.CodeChannelClosed

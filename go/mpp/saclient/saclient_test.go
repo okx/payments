@@ -549,11 +549,35 @@ func TestMapSAError_InvalidSignature(t *testing.T) {
 	}
 }
 
-func TestMapSAError_InsufficientBalance(t *testing.T) {
-	c := newClientFor(saErrServer(t, int(SACodeInsufficientBalance)))
+func TestMapSAError_SplitSumExceedsTotal(t *testing.T) {
+	c := newClientFor(saErrServer(t, int(SACodeSplitSumExceedsTotal)))
 	_, err := c.Settle(context.Background(), &ChargeSettleRequest{Payload: ChargeTransactionPayload{Type: "transaction"}})
-	if mppCode(t, err) != mpperrors.CodeInsufficientBalance {
-		t.Errorf("expected CodeInsufficientBalance, got %v", err)
+	if mppCode(t, err) != mpperrors.CodeInvalidSplit {
+		t.Errorf("expected CodeInvalidSplit for SACodeSplitSumExceedsTotal, got %v", err)
+	}
+}
+
+func TestMapSAError_SplitCountExceeded(t *testing.T) {
+	c := newClientFor(saErrServer(t, int(SACodeSplitCountExceeded)))
+	_, err := c.Settle(context.Background(), &ChargeSettleRequest{Payload: ChargeTransactionPayload{Type: "transaction"}})
+	if mppCode(t, err) != mpperrors.CodeInvalidSplit {
+		t.Errorf("expected CodeInvalidSplit for SACodeSplitCountExceeded, got %v", err)
+	}
+}
+
+func TestMapSAError_InvalidParams(t *testing.T) {
+	c := newClientFor(saErrServer(t, int(SACodeInvalidParams)))
+	_, err := c.Settle(context.Background(), &ChargeSettleRequest{Payload: ChargeTransactionPayload{Type: "transaction"}})
+	if mppCode(t, err) != mpperrors.CodeBadRequest {
+		t.Errorf("expected CodeBadRequest for SACodeInvalidParams, got %v", err)
+	}
+}
+
+func TestMapSAError_ChallengeInvalid(t *testing.T) {
+	c := newClientFor(saErrServer(t, int(SACodeChallengeInvalid)))
+	_, err := c.Settle(context.Background(), &ChargeSettleRequest{Payload: ChargeTransactionPayload{Type: "transaction"}})
+	if mppCode(t, err) != mpperrors.CodeInvalidChallenge {
+		t.Errorf("expected CodeInvalidChallenge for SACodeChallengeInvalid, got %v", err)
 	}
 }
 
@@ -589,27 +613,11 @@ func TestMapSAError_ChannelClosing(t *testing.T) {
 	}
 }
 
-func TestMapSAError_DeltaTooSmall(t *testing.T) {
-	c := newClientFor(saErrServer(t, int(SACodeDeltaTooSmall)))
+func TestMapSAError_VoucherDeltaTooSmall(t *testing.T) {
+	c := newClientFor(saErrServer(t, int(SACodeVoucherDeltaTooSmall)))
 	_, err := c.Settle(context.Background(), &ChargeSettleRequest{Payload: ChargeTransactionPayload{Type: "transaction"}})
 	if mppCode(t, err) != mpperrors.CodeDeltaTooSmall {
-		t.Errorf("expected CodeDeltaTooSmall, got %v", err)
-	}
-}
-
-func TestMapSAError_DeltaBelowMinimum(t *testing.T) {
-	c := newClientFor(saErrServer(t, int(SACodeDeltaBelowMinimum)))
-	_, err := c.Settle(context.Background(), &ChargeSettleRequest{Payload: ChargeTransactionPayload{Type: "transaction"}})
-	if mppCode(t, err) != mpperrors.CodeDeltaTooSmall {
-		t.Errorf("expected CodeDeltaTooSmall for SACodeDeltaBelowMinimum, got %v", err)
-	}
-}
-
-func TestMapSAError_SignerMismatch(t *testing.T) {
-	c := newClientFor(saErrServer(t, int(SACodeSignerMismatch)))
-	_, err := c.Settle(context.Background(), &ChargeSettleRequest{Payload: ChargeTransactionPayload{Type: "transaction"}})
-	if mppCode(t, err) != mpperrors.CodeSignerMismatch {
-		t.Errorf("expected CodeSignerMismatch, got %v", err)
+		t.Errorf("expected CodeDeltaTooSmall for SACodeVoucherDeltaTooSmall, got %v", err)
 	}
 }
 

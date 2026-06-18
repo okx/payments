@@ -8,11 +8,11 @@ package errors
 
 import "fmt"
 
-// CoreProblemTypeBase is the base URI for core payment-auth problem types.
-const CoreProblemTypeBase = "https://payment-auth.org/problems/"
+// CoreProblemTypeBase is the base URI for core problem types.
+const CoreProblemTypeBase = "https://paymentauth.org/problems/"
 
 // SessionProblemTypeBase is the base URI for session/channel problem types.
-const SessionProblemTypeBase = "https://payment-auth.org/problems/session/"
+const SessionProblemTypeBase = "https://paymentauth.org/problems/session/"
 
 // MppErrorCode is a string type representing a specific MPP error code.
 type MppErrorCode string
@@ -36,6 +36,7 @@ const (
 	CodePaymentRequired         MppErrorCode = "PaymentRequired"
 	CodeInvalidPayload          MppErrorCode = "InvalidPayload"
 	CodeBadRequest              MppErrorCode = "BadRequest"
+	CodeInvalidSplit            MppErrorCode = "InvalidSplit"
 	CodeInsufficientBalance     MppErrorCode = "InsufficientBalance"
 	CodeInvalidSignature        MppErrorCode = "InvalidSignature"
 	CodeSignerMismatch          MppErrorCode = "SignerMismatch"
@@ -67,7 +68,7 @@ func (e *MppError) Error() string {
 // ProblemTypeSuffix returns the RFC 9457 problem type suffix for payment problems.
 // Returns an empty string if this error is not a payment problem.
 // For session/channel errors the suffix is relative to SessionProblemTypeBase.
-// For core payment-auth errors the suffix is relative to CoreProblemTypeBase.
+// For core errors the suffix is relative to CoreProblemTypeBase.
 func (e *MppError) ProblemTypeSuffix() string {
 	switch e.Code {
 	case CodeMalformedCredential:
@@ -82,6 +83,8 @@ func (e *MppError) ProblemTypeSuffix() string {
 		return "invalid-payload"
 	case CodeBadRequest:
 		return "bad-request"
+	case CodeInvalidSplit:
+		return "invalid-split"
 	case CodeInsufficientBalance:
 		return "insufficient-balance"
 	case CodeInvalidSignature:
@@ -159,6 +162,8 @@ func (e *MppError) ToProblemDetails(challengeID string) *PaymentErrorDetails {
 		d = d.WithTitle("InvalidPayloadError").WithStatus(402)
 	case CodeBadRequest:
 		d = d.WithTitle("BadRequestError").WithStatus(400)
+	case CodeInvalidSplit:
+		d = d.WithTitle("InvalidSplitError").WithStatus(400)
 	case CodeInsufficientBalance:
 		d = d.WithTitle("InsufficientBalanceError").WithStatus(402)
 	case CodeInvalidSignature:
@@ -365,7 +370,7 @@ func NewPaymentErrorDetails(typeURI string) *PaymentErrorDetails {
 	}
 }
 
-// CorePaymentError creates a PaymentErrorDetails for a core payment-auth problem.
+// CorePaymentError creates a PaymentErrorDetails for a core problem.
 // The full type URI is CoreProblemTypeBase + suffix.
 func CorePaymentError(suffix string) *PaymentErrorDetails {
 	return NewPaymentErrorDetails(CoreProblemTypeBase + suffix)

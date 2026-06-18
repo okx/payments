@@ -367,11 +367,10 @@ func TestHashTypedData(t *testing.T) {
 }
 
 // TestPermit2HashCrossSDKVector verifies that HashPermit2Authorization produces
-// a deterministic hash for a canonical input. The expected hash must equal the
-// value produced by viem's hashTypedData for the same inputs (see the TypeScript
-// equivalent in test/unit/constants.test.ts).
+// a deterministic hash for a canonical input. The expected hash is locked to a
+// known EIP-712 reference value.
 func TestPermit2HashCrossSDKVector(t *testing.T) {
-	// Canonical test vector — keep in sync with TypeScript constants.test.ts
+	// Canonical test vector — locked to a known reference value
 	auth := evm.Permit2Authorization{
 		From: "0x1234567890123456789012345678901234567890",
 		Permitted: evm.Permit2TokenPermissions{
