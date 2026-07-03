@@ -15,6 +15,14 @@ pub fn extract_payment_header<B>(req: &Request<B>) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+/// Extract the `APP-Access` AccessProof header (subscription subsequent access).
+pub fn extract_app_access_header<B>(req: &Request<B>) -> Option<String> {
+    req.headers()
+        .get("APP-Access")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string())
+}
+
 /// Extract the HTTP method as uppercase string.
 pub fn extract_method<B>(req: &Request<B>) -> String {
     req.method().as_str().to_uppercase()

@@ -1,6 +1,6 @@
 [package]
 name = "okxweb3-app-payment-router-axum"
-version = "0.2.0"
+version = "0.3.0"
 edition.workspace = true
 license.workspace = true
 repository = "https://github.com/okx/payments/tree/main/rust/payment-router-axum"
@@ -22,8 +22,8 @@ mpp = { version = "0.10", features = ["server", "evm", "tower", "axum"] }
 mpp-evm = { package = "okxweb3-app-mpp", version = "0.2", path = "../mpp" }
 
 # x402 SDKs (native PaymentMiddleware + X402ResourceServer per-call API)
-x402-axum = { package = "okxweb3-app-x402-axum", version = "0.2", path = "../x402/x402-axum" }
-x402-core = { package = "okxweb3-app-x402-core", version = "0.2", path = "../x402/x402-core" }
+x402-axum = { package = "okxweb3-app-x402-axum", version = "0.3", path = "../x402/x402-axum" }
+x402-core = { package = "okxweb3-app-x402-core", version = "0.3", path = "../x402/x402-core" }
 
 # Tower / axum / http
 axum = { workspace = true }
@@ -48,7 +48,7 @@ tracing = { workspace = true }
 tokio = { workspace = true }
 reqwest = { workspace = true }
 # Used by the example servers.
-x402-evm = { package = "okxweb3-app-x402-evm", version = "0.2", path = "../x402/x402-evm" }
+x402-evm = { package = "okxweb3-app-x402-evm", version = "0.3", path = "../x402/x402-evm" }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Used by `dual_protocol_session_server` to sign EIP-712
 # SettleAuthorization / CloseAuthorization on the payee side.

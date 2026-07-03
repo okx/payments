@@ -84,6 +84,7 @@ async fn main() {
             mime_type: "application/json".into(),
             sync_settle: Some(true),
             resource: None,
+            operation: None,
         },
     )]);
 

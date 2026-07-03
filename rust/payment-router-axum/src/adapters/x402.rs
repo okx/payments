@@ -69,6 +69,7 @@ impl X402RouteConfig {
             mime_type: self.mime_type.clone(),
             sync_settle: self.sync_settle,
             resource: self.resource.clone(),
+            operation: None,
         }
     }
 }

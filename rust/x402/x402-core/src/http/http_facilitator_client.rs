@@ -29,9 +29,13 @@ const DEFAULT_FACILITATOR_URL: &str = "https://web3.okx.com";
 ///
 /// Example: `{"code":0, "data": {...}, "msg":"", "error_code":"0", "error_message":""}`
 #[derive(Debug, serde::Deserialize)]
-struct OkxApiResponse<T> {
+struct OkxApiResponse {
     code: i32,
-    data: Option<T>,
+    /// Raw JSON so a business error (`code != 0`) surfaces its `msg` even when
+    /// `data` is `{}` or wrong-shaped.
+    #[serde(default)]
+    data: Option<serde_json::Value>,
+    #[serde(default)]
     msg: Option<String>,
     #[serde(default)]
     error_message: Option<String>,
@@ -122,23 +126,46 @@ impl OkxHttpFacilitatorClient {
     /// Unwrap OKX API response wrapper, extracting the `data` field.
     /// OKX wraps all responses in `{"code":0, "data": {...}, "msg":""}`.
     fn unwrap_okx_response<T: DeserializeOwned>(body: &str) -> Result<T, X402Error> {
-        // First try to parse as OKX wrapper
-        if let Ok(wrapper) = serde_json::from_str::<OkxApiResponse<T>>(body) {
+        // Check `code` before parsing `data` so a business error surfaces its `msg`.
+        if let Ok(wrapper) = serde_json::from_str::<OkxApiResponse>(body) {
             if wrapper.code != 0 {
                 let msg = wrapper
                     .error_message
-                    .or(wrapper.msg)
+                    .filter(|s| !s.is_empty())
+                    .or_else(|| wrapper.msg.filter(|s| !s.is_empty()))
                     .unwrap_or_else(|| format!("OKX API error code: {}", wrapper.code));
                 return Err(X402Error::Other(msg));
             }
-            if let Some(data) = wrapper.data {
-                return Ok(data);
+            match wrapper.data {
+                Some(serde_json::Value::Null) | None => {
+                    return Err(X402Error::Other("OKX API returned null data".into()))
+                }
+                Some(data) => return serde_json::from_value::<T>(data).map_err(X402Error::Serialization),
             }
-            return Err(X402Error::Other("OKX API returned null data".into()));
         }
 
-        // Fallback: try to parse as raw response (for non-OKX facilitators)
-        serde_json::from_str::<T>(body).map_err(|e| X402Error::Serialization(e))
+        // Fallback: non-OKX facilitator returning the raw `T` directly.
+        serde_json::from_str::<T>(body).map_err(X402Error::Serialization)
+    }
+
+    /// Like [`Self::unwrap_okx_response`] but tolerates an empty result: with
+    /// `code == 0`, a `null` / absent `data` returns `Ok(None)`.
+    fn unwrap_okx_response_opt<T: DeserializeOwned>(body: &str) -> Result<Option<T>, X402Error> {
+        let wrapper: OkxApiResponse = serde_json::from_str(body)?;
+        if wrapper.code != 0 {
+            let msg = wrapper
+                .error_message
+                .filter(|s| !s.is_empty())
+                .or_else(|| wrapper.msg.filter(|s| !s.is_empty()))
+                .unwrap_or_else(|| format!("OKX API error code: {}", wrapper.code));
+            return Err(X402Error::Other(msg));
+        }
+        match wrapper.data {
+            Some(serde_json::Value::Null) | None => Ok(None),
+            Some(data) => serde_json::from_value::<T>(data)
+                .map(Some)
+                .map_err(X402Error::Serialization),
+        }
     }
 }
 
@@ -147,6 +174,7 @@ impl FacilitatorClient for OkxHttpFacilitatorClient {
     async fn get_supported(&self) -> Result<SupportedResponse, X402Error> {
         let path = "/supported";
         let url = self.url(path);
+        tracing::info!(target: "x402-facilitator", "→ GET {}", url);
 
         let headers = build_auth_headers(
             &self.api_key,
@@ -163,6 +191,11 @@ impl FacilitatorClient for OkxHttpFacilitatorClient {
         let body = response.text().await?;
 
         if !status.is_success() {
+            tracing::warn!(
+                target: "x402-facilitator",
+                "← GET {} status={} body={}",
+                path, status.as_u16(), body
+            );
             return Err(X402Error::Other(format!(
                 "facilitator /supported returned {}: {}",
                 status.as_u16(),
@@ -170,6 +203,11 @@ impl FacilitatorClient for OkxHttpFacilitatorClient {
             )));
         }
 
+        tracing::info!(
+            target: "x402-facilitator",
+            "← GET {} status={} body={}",
+            path, status.as_u16(), body
+        );
         Self::unwrap_okx_response(&body)
     }
 
@@ -286,3 +324,208 @@ impl FacilitatorClient for OkxHttpFacilitatorClient {
         Self::unwrap_okx_response(&body)
     }
 }
+
+// ─────────────────────────── subscription endpoints ────────────────────────
+
+use serde::Serialize;
+use crate::subscription::{
+    CancelPendingChangeRequest, CancelSubscriptionRequest, ChangeResponse,
+    ChangeSubscriptionRequest, ChargeResponse, ChargesResponse, CreateSubscriptionRequest,
+    CreateSubscriptionResponse, PendingPlanChange, SubscriptionChargeReq,
+    SubscriptionFacilitatorClient, SubscriptionFinalizeExpiredReq, SubscriptionStatus,
+    TxResultResponse,
+};
+
+/// Shared request helpers for the subscription endpoints (OK-ACCESS signed,
+/// OKX-envelope unwrapped) — same pattern as verify/settle above.
+impl OkxHttpFacilitatorClient {
+    async fn sub_post<B: Serialize, R: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<R, X402Error> {
+        let req_body = serde_json::to_string(body)?;
+        let url = self.url(path);
+        // Logs the protocol body only — never the OK-ACCESS auth headers / API key.
+        tracing::info!(target: "x402-facilitator", "→ POST {} body={}", url, req_body);
+        let headers = build_auth_headers(
+            &self.api_key,
+            &self.secret_key,
+            &self.passphrase,
+            "POST",
+            &self.request_path(path),
+            &req_body,
+        )?;
+        let response = self
+            .http
+            .post(&url)
+            .headers(headers)
+            .header("Content-Type", "application/json")
+            .body(req_body)
+            .send()
+            .await?;
+        Self::handle_sub("POST", path, response).await
+    }
+
+    async fn sub_get<R: DeserializeOwned>(&self, path: &str) -> Result<R, X402Error> {
+        let url = self.url(path);
+        tracing::info!(target: "x402-facilitator", "→ GET {}", url);
+        let headers = build_auth_headers(
+            &self.api_key,
+            &self.secret_key,
+            &self.passphrase,
+            "GET",
+            &self.request_path(path),
+            "",
+        )?;
+        let response = self.http.get(&url).headers(headers).send().await?;
+        Self::handle_sub("GET", path, response).await
+    }
+
+    async fn handle_sub<R: DeserializeOwned>(
+        method: &str,
+        path: &str,
+        response: reqwest::Response,
+    ) -> Result<R, X402Error> {
+        let status = response.status();
+        let body = response.text().await?;
+        if !status.is_success() {
+            tracing::warn!(
+                target: "x402-facilitator",
+                "← {} {} status={} body={}",
+                method, path, status.as_u16(), body
+            );
+            return Err(X402Error::Other(format!(
+                "facilitator {} returned {}: {}",
+                path,
+                status.as_u16(),
+                body
+            )));
+        }
+        tracing::info!(
+            target: "x402-facilitator",
+            "← {} {} status={} body={}",
+            method, path, status.as_u16(), body
+        );
+        Self::unwrap_okx_response(&body)
+    }
+
+    /// GET whose `data` may be empty (`null`) — yields `Ok(None)`.
+    async fn sub_get_opt<R: DeserializeOwned>(&self, path: &str) -> Result<Option<R>, X402Error> {
+        let url = self.url(path);
+        tracing::info!(target: "x402-facilitator", "→ GET {}", url);
+        let headers = build_auth_headers(
+            &self.api_key,
+            &self.secret_key,
+            &self.passphrase,
+            "GET",
+            &self.request_path(path),
+            "",
+        )?;
+        let response = self.http.get(&url).headers(headers).send().await?;
+        let status = response.status();
+        let body = response.text().await?;
+        if !status.is_success() {
+            tracing::warn!(
+                target: "x402-facilitator",
+                "← GET {} status={} body={}",
+                path, status.as_u16(), body
+            );
+            return Err(X402Error::Other(format!(
+                "facilitator {} returned {}: {}",
+                path,
+                status.as_u16(),
+                body
+            )));
+        }
+        tracing::info!(
+            target: "x402-facilitator",
+            "← GET {} status={} body={}",
+            path, status.as_u16(), body
+        );
+        Self::unwrap_okx_response_opt(&body)
+    }
+}
+
+#[async_trait]
+impl SubscriptionFacilitatorClient for OkxHttpFacilitatorClient {
+    async fn create_subscription(
+        &self,
+        req: &CreateSubscriptionRequest,
+    ) -> Result<CreateSubscriptionResponse, X402Error> {
+        tracing::info!(
+            "[x402-sub] create_subscription: chainIndex={} payer={} planTier={} syncSettle={}",
+            req.chain_index, req.terms.payer, req.terms.plan_tier, req.sync_settle
+        );
+        self.sub_post("/subscriptions", req).await
+    }
+
+    async fn charge(
+        &self,
+        sub_id: &str,
+        sync_settle: bool,
+    ) -> Result<ChargeResponse, X402Error> {
+        tracing::info!("[x402-sub] charge: subId={} syncSettle={}", sub_id, sync_settle);
+        let body = SubscriptionChargeReq { sub_id: sub_id.to_string(), sync_settle };
+        self.sub_post("/subscriptions/charge", &body).await
+    }
+
+    async fn change_subscription(
+        &self,
+        req: &ChangeSubscriptionRequest,
+    ) -> Result<ChangeResponse, X402Error> {
+        tracing::info!(
+            "[x402-sub] change_subscription: chainIndex={} oldSubId={} payer={} planTier={} syncSettle={}",
+            req.chain_index, req.old_sub_id, req.new_terms.payer, req.new_terms.plan_tier, req.sync_settle
+        );
+        self.sub_post("/subscriptions/change", req).await
+    }
+
+    async fn cancel_subscription(
+        &self,
+        req: &CancelSubscriptionRequest,
+    ) -> Result<TxResultResponse, X402Error> {
+        tracing::info!("[x402-sub] cancel_subscription: subId={}", req.sub_id);
+        self.sub_post("/subscriptions/cancel", req).await
+    }
+
+    async fn cancel_pending_change(
+        &self,
+        req: &CancelPendingChangeRequest,
+    ) -> Result<TxResultResponse, X402Error> {
+        tracing::info!("[x402-sub] cancel_pending_change: subId={}", req.sub_id);
+        self.sub_post("/subscriptions/cancel-pending-change", req).await
+    }
+
+    async fn finalize_expired(&self, sub_id: &str) -> Result<TxResultResponse, X402Error> {
+        tracing::info!("[x402-sub] finalize_expired: subId={}", sub_id);
+        let body = SubscriptionFinalizeExpiredReq { sub_id: sub_id.to_string() };
+        self.sub_post("/subscriptions/finalize-expired", &body).await
+    }
+
+    async fn get_subscription(&self, sub_id: &str) -> Result<SubscriptionStatus, X402Error> {
+        tracing::info!("[x402-sub] get_subscription: subId={}", sub_id);
+        self.sub_get(&format!("/subscriptions/detail?subId={}", sub_id)).await
+    }
+
+    async fn get_charges(
+        &self,
+        sub_id: &str,
+        limit: u32,
+        offset: u32,
+    ) -> Result<ChargesResponse, X402Error> {
+        self.sub_get(&format!(
+            "/subscriptions/charges?subId={}&limit={}&offset={}",
+            sub_id, limit, offset
+        ))
+        .await
+    }
+
+    async fn get_pending_change(
+        &self,
+        sub_id: &str,
+    ) -> Result<Option<PendingPlanChange>, X402Error> {
+        self.sub_get_opt(&format!("/subscriptions/pending?subId={}", sub_id)).await
+    }
+}
+

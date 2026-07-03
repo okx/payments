@@ -48,6 +48,12 @@ impl X402ResourceServer {
     /// Initialize by fetching supported kinds from the facilitator.
     pub async fn initialize(&mut self) -> Result<(), X402Error> {
         let supported = self.facilitator.get_supported().await?;
+        let kinds: Vec<String> = supported
+            .kinds
+            .iter()
+            .map(|k| format!("{}@{}", k.scheme, k.network))
+            .collect();
+        tracing::info!("[x402] /supported kinds: [{}]", kinds.join(", "));
         self.supported = Some(supported);
         Ok(())
     }

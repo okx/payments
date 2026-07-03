@@ -20,11 +20,12 @@ use x402_core::http::{
     encode_payment_response_header, OnAfterSettleHook, OnAfterVerifyHook, OnBeforeSettleHook,
     OnBeforeVerifyHook, OnProtectedRequestHook, OnSettleFailureHook, OnSettlementTimeoutHook,
     OnVerifyFailureHook, PaymentResolverFn, PollResult, ResolvedAccept, RoutePaymentConfig,
-    RoutesConfig, SettleContext, SettleResultContext, SettlementOverrides, VerifyContext,
-    VerifyResultContext, DEFAULT_POLL_DEADLINE, DEFAULT_POLL_INTERVAL, PAYMENT_REQUIRED_HEADER,
-    PAYMENT_RESPONSE_HEADER, SETTLEMENT_OVERRIDES_HEADER,
+    RoutesConfig, SettleContext, SettleResultContext, SettlementOverrides, SubscriptionOperation,
+    VerifyContext, VerifyResultContext, DEFAULT_POLL_DEADLINE, DEFAULT_POLL_INTERVAL,
+    PAYMENT_REQUIRED_HEADER, PAYMENT_RESPONSE_HEADER, SETTLEMENT_OVERRIDES_HEADER,
 };
 use x402_core::server::X402ResourceServer;
+use x402_core::subscription::{CancelAuth, PendingChangeCancelAuth};
 use x402_core::types::{PaymentRequired, ResourceInfo};
 
 use crate::adapter;
@@ -55,6 +56,7 @@ struct PaymentState {
     on_before_settle: Option<OnBeforeSettleHook>,
     on_after_settle: Option<OnAfterSettleHook>,
     on_settle_failure: Option<OnSettleFailureHook>,
+    subscription: Option<crate::subscription::SubscriptionSupport>,
 }
 
 /// Tower Layer that wraps services with x402 payment checking.
@@ -86,6 +88,7 @@ impl PaymentLayer {
                 on_before_settle: None,
                 on_after_settle: None,
                 on_settle_failure: None,
+                subscription: None,
             }),
         }
     }
@@ -188,6 +191,73 @@ where
                 }
             };
 
+            // 1b. Subscription cancel / cancel-pending-change operation routes:
+            // the buyer POSTs a signed `CancelAuth` / `PendingChangeCancelAuth`
+            // (JSON body); relay it to the facilitator. No 402 / payment flow.
+            if let Some(support) = &state.subscription {
+                match route_config.operation {
+                    Some(SubscriptionOperation::Cancel) => {
+                        let bytes = match axum::body::to_bytes(req.into_body(), 64 * 1024).await {
+                            Ok(b) => b,
+                            Err(_) => {
+                                return Ok(error_response(
+                                    StatusCode::BAD_REQUEST,
+                                    "failed to read cancel body",
+                                ))
+                            }
+                        };
+                        let auth: CancelAuth = match serde_json::from_slice(&bytes) {
+                            Ok(a) => a,
+                            Err(e) => {
+                                return Ok(error_response(
+                                    StatusCode::BAD_REQUEST,
+                                    &format!("invalid CancelAuth: {e}"),
+                                ))
+                            }
+                        };
+                        if let Err(e) = support.verify_cancel(&auth) {
+                            return Ok(error_response(StatusCode::BAD_REQUEST, &e));
+                        }
+                        return Ok(match support.settle_cancel(auth).await {
+                            Ok(r) => json_ok(serde_json::json!({
+                                "subId": r.sub_id, "txHash": r.tx_hash, "state": r.state
+                            })),
+                            Err(e) => error_response(StatusCode::BAD_GATEWAY, &e),
+                        });
+                    }
+                    Some(SubscriptionOperation::CancelPendingChange) => {
+                        let bytes = match axum::body::to_bytes(req.into_body(), 64 * 1024).await {
+                            Ok(b) => b,
+                            Err(_) => {
+                                return Ok(error_response(
+                                    StatusCode::BAD_REQUEST,
+                                    "failed to read cancel-pending body",
+                                ))
+                            }
+                        };
+                        let auth: PendingChangeCancelAuth = match serde_json::from_slice(&bytes) {
+                            Ok(a) => a,
+                            Err(e) => {
+                                return Ok(error_response(
+                                    StatusCode::BAD_REQUEST,
+                                    &format!("invalid PendingChangeCancelAuth: {e}"),
+                                ))
+                            }
+                        };
+                        if let Err(e) = support.verify_cancel_pending(&auth) {
+                            return Ok(error_response(StatusCode::BAD_REQUEST, &e));
+                        }
+                        return Ok(match support.settle_cancel_pending(auth).await {
+                            Ok(r) => json_ok(serde_json::json!({
+                                "subId": r.sub_id, "txHash": r.tx_hash, "state": r.state
+                            })),
+                            Err(e) => error_response(StatusCode::BAD_GATEWAY, &e),
+                        });
+                    }
+                    _ => {}
+                }
+            }
+
             // 2. Hook: onProtectedRequest — can grant access or abort
             if let Some(hook) = &state.on_protected_request {
                 let ctx = x402_core::http::RequestContext {
@@ -205,6 +275,138 @@ where
                         .reason
                         .unwrap_or_else(|| "access denied".to_string());
                     return Ok(error_response(StatusCode::FORBIDDEN, &reason));
+                }
+            }
+
+            // 3a. Subscription subsequent-access: an `APP-Access` proof bypasses
+            // the payment flow — verify it, confirm the sub is active, then serve.
+            if let Some(support) = &state.subscription {
+                if let Some(app_access) = adapter::extract_app_access_header(&req) {
+                    // Change-plan route: an APP-Access proof means "show me the
+                    // plans I can switch to". Return the candidate plans annotated
+                    // with `extra.changeFrom` (current plan dropped).
+                    if route_config.operation == Some(SubscriptionOperation::Change) {
+                        let request_context = x402_core::http::RequestContext {
+                            method: method.clone(),
+                            path: path.clone(),
+                            headers: headers_map.clone().unwrap_or_default(),
+                        };
+                        return match crate::subscription::verify_access(
+                            support,
+                            &app_access,
+                            crate::subscription::now_unix(),
+                        )
+                        .await
+                        {
+                            Ok((sub_id, plan_id, plan_tier)) => {
+                                let accepts = crate::subscription::build_change_accepts(
+                                    &route_config,
+                                    &sub_id,
+                                    &plan_id,
+                                    plan_tier,
+                                );
+                                if accepts.is_empty() {
+                                    return Ok(error_response(
+                                        StatusCode::PAYMENT_REQUIRED,
+                                        "no change-plan options available for the current plan",
+                                    ));
+                                }
+                                let mut rc = route_config.clone();
+                                rc.accepts = accepts;
+                                Ok(build_402_response(
+                                    &state.server,
+                                    &rc,
+                                    &uri_string,
+                                    &request_context,
+                                    &state.resolver,
+                                )
+                                .await)
+                            }
+                            // Merchant policy veto → hard deny, no fallback offer.
+                            Err(crate::subscription::AccessError::Denied(msg)) => {
+                                Ok(error_response(StatusCode::PAYMENT_REQUIRED, &msg))
+                            }
+                            // No active sub / unverifiable proof → degrade to a
+                            // normal subscribe offer (no changeFrom).
+                            Err(_) => Ok(build_402_response(
+                                &state.server,
+                                &route_config,
+                                &uri_string,
+                                &request_context,
+                                &state.resolver,
+                            )
+                            .await),
+                        };
+                    }
+
+                    use crate::subscription::AccessError;
+                    let access = crate::subscription::verify_access(
+                        support,
+                        &app_access,
+                        crate::subscription::now_unix(),
+                    )
+                    .await;
+
+                    // Decide the 402 reason warranting an offer. Plan-gating
+                    // failures and `NotActive` get the offer (buyer can
+                    // subscribe/upgrade); auth failures get a bare 402.
+                    let offer_reason: Option<String> = match &access {
+                        Ok((sub_id, sub_plan_id, _)) => {
+                            // Fail-closed plan gating: planId must be known AND accepted.
+                            let accepted =
+                                crate::subscription::accepted_plan_ids(&route_config);
+                            if !accepted.is_empty() && sub_plan_id.is_empty() {
+                                tracing::warn!(
+                                    "[x402-sub] access: subId={} planId unknown, route accepts {:?} → 402",
+                                    sub_id, accepted
+                                );
+                                Some(
+                                    "subscription plan could not be determined for this resource"
+                                        .to_string(),
+                                )
+                            } else if !accepted.is_empty()
+                                && !crate::subscription::plan_id_accepted(&accepted, sub_plan_id)
+                            {
+                                tracing::warn!(
+                                    "[x402-sub] access: subId={} planId={} not in route plans {:?} → 402",
+                                    sub_id, sub_plan_id, accepted
+                                );
+                                Some(format!(
+                                    "subscription plan {sub_plan_id} is not accepted for this \
+                                     resource (accepts {accepted:?})"
+                                ))
+                            } else {
+                                None
+                            }
+                        }
+                        Err(AccessError::NotActive(msg)) => Some(msg.clone()),
+                        // Auth failure or merchant-policy veto → bare 402, no offer.
+                        Err(AccessError::Unauthorized(msg)) | Err(AccessError::Denied(msg)) => {
+                            return Ok(error_response(StatusCode::PAYMENT_REQUIRED, msg));
+                        }
+                    };
+
+                    return match offer_reason {
+                        // 402 with the PAYMENT-REQUIRED offer header + reason body.
+                        Some(reason) => {
+                            let request_context = x402_core::http::RequestContext {
+                                method: method.clone(),
+                                path: path.clone(),
+                                headers: headers_map.clone().unwrap_or_default(),
+                            };
+                            Ok(build_402_error_with_offer(
+                                &state.server,
+                                &route_config,
+                                &uri_string,
+                                &request_context,
+                                &state.resolver,
+                                &reason,
+                            )
+                            .await)
+                        }
+                        // All checks passed → serve the protected resource.
+                        None => inner.call(req).await,
+                    };
                 }
             }
 
@@ -254,6 +456,74 @@ where
                     ));
                 }
             };
+
+            // 5a. Subscription create / change (settle-before-serve): for `period`,
+            // submit the payload to the facilitator (create or change by
+            // terms.changeFromSubId), then serve with a `PAYMENT-RESPONSE` carrying
+            // the subId. Replaces the verify→serve→settle path for this scheme.
+            if let Some(support) = &state.subscription {
+                if crate::subscription::is_subscription_scheme(&payment_requirements.scheme) {
+                    let chain_index = match crate::subscription::chain_index_from_network(
+                        &payment_requirements.network,
+                    ) {
+                        Some(ci) => ci,
+                        None => {
+                            return Ok(error_response(
+                                StatusCode::BAD_REQUEST,
+                                "unsupported network for subscription",
+                            ))
+                        }
+                    };
+                    let sync_settle = route_config.sync_settle.unwrap_or(true);
+                    // Verify (local: unpack + bind terms to the advertised offer),
+                    // then settle (facilitator create/change by terms.changeFromSubId).
+                    let verified = match crate::subscription::verify_subscription(
+                        &payment_payload,
+                        &route_config.accepts,
+                        &payment_requirements.asset,
+                    ) {
+                        Ok(v) => v,
+                        Err(reason) => {
+                            return Ok(error_response(
+                                StatusCode::PAYMENT_REQUIRED,
+                                &format!("subscription verify failed: {reason}"),
+                            ))
+                        }
+                    };
+                    return match crate::subscription::settle_subscription(
+                        support,
+                        verified,
+                        chain_index,
+                        sync_settle,
+                    )
+                    .await
+                    {
+                        Ok(outcome) => {
+                            let mut inner_response = inner.call(req).await?;
+                            if let Some(encoded) =
+                                crate::subscription::encode_subscription_response_header(&outcome)
+                            {
+                                if let Ok(value) = encoded.parse() {
+                                    inner_response
+                                        .headers_mut()
+                                        .insert(PAYMENT_RESPONSE_HEADER, value);
+                                }
+                            }
+                            Ok(inner_response)
+                        }
+                        Err(reason) => {
+                            tracing::warn!(
+                                "[x402-sub] settle failed (scheme={}): {}",
+                                payment_requirements.scheme, reason
+                            );
+                            Ok(error_response(
+                                StatusCode::PAYMENT_REQUIRED,
+                                &format!("subscription settle failed: {reason}"),
+                            ))
+                        }
+                    };
+                }
+            }
 
             // 6. Hook: onBeforeVerify — can abort before verification
             if let Some(hook) = &state.on_before_verify {
@@ -675,14 +945,16 @@ fn find_matching_requirements(
     None
 }
 
-/// Build a 402 Payment Required response.
-async fn build_402_response(
+/// Build the `PaymentRequired` (402 offer) from a route config, resolving
+/// dynamic price/payTo via the resolver when present. `None` if no accept could
+/// be built. `error` is left unset — callers carry the human reason in the body.
+async fn build_payment_required(
     server: &X402ResourceServer,
     route_config: &RoutePaymentConfig,
     url: &str,
     request_context: &x402_core::http::RequestContext,
     resolver: &Option<PaymentResolverFn>,
-) -> Response<Body> {
+) -> Option<PaymentRequired> {
     // Merchant override wins over the middleware-extracted URL.
     let url = route_config
         .resource
@@ -727,13 +999,10 @@ async fn build_402_response(
     }
 
     if accepts.is_empty() {
-        return error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "failed to build payment requirements",
-        );
+        return None;
     }
 
-    let payment_required = PaymentRequired {
+    Some(PaymentRequired {
         x402_version: 2,
         error: None,
         resource: ResourceInfo {
@@ -743,25 +1012,73 @@ async fn build_402_response(
         },
         accepts,
         extensions: None,
-    };
+    })
+}
 
-    let body_json = serde_json::to_string(&payment_required).unwrap_or_default();
-
-    let mut response = Response::builder()
-        .status(StatusCode::PAYMENT_REQUIRED)
-        .header("Content-Type", "application/json")
-        .body(Body::from(body_json.clone()))
-        .unwrap();
-
-    // Add PAYMENT-REQUIRED header (base64 encoded)
-    if let Ok(encoded) = encode_payment_required_header(&payment_required) {
+/// Attach the base64 `PAYMENT-REQUIRED` offer header to a response.
+fn attach_payment_required_header(response: &mut Response<Body>, payment_required: &PaymentRequired) {
+    if let Ok(encoded) = encode_payment_required_header(payment_required) {
         if let Ok(value) = encoded.parse() {
             response
                 .headers_mut()
                 .insert(PAYMENT_REQUIRED_HEADER, value);
         }
     }
+}
 
+/// 402 whose body is the full `PaymentRequired` JSON + the base64 PAYMENT-REQUIRED
+/// header. Used when the buyer sent no payment at all.
+async fn build_402_response(
+    server: &X402ResourceServer,
+    route_config: &RoutePaymentConfig,
+    url: &str,
+    request_context: &x402_core::http::RequestContext,
+    resolver: &Option<PaymentResolverFn>,
+) -> Response<Body> {
+    let payment_required =
+        match build_payment_required(server, route_config, url, request_context, resolver).await {
+            Some(pr) => pr,
+            None => {
+                return error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to build payment requirements",
+                )
+            }
+        };
+
+    let body_json = serde_json::to_string(&payment_required).unwrap_or_default();
+    let mut response = Response::builder()
+        .status(StatusCode::PAYMENT_REQUIRED)
+        .header("Content-Type", "application/json")
+        .body(Body::from(body_json))
+        .unwrap();
+    attach_payment_required_header(&mut response, &payment_required);
+    response
+}
+
+/// 402 whose body is a bare `{"error": msg}` (same shape as [`error_response`])
+/// but which ALSO carries the PAYMENT-REQUIRED offer header, so the buyer can
+/// act on the reason (subscribe / upgrade). Used for plan-gating / not-active
+/// access denials.
+async fn build_402_error_with_offer(
+    server: &X402ResourceServer,
+    route_config: &RoutePaymentConfig,
+    url: &str,
+    request_context: &x402_core::http::RequestContext,
+    resolver: &Option<PaymentResolverFn>,
+    error: &str,
+) -> Response<Body> {
+    let body = serde_json::json!({ "error": error }).to_string();
+    let mut response = Response::builder()
+        .status(StatusCode::PAYMENT_REQUIRED)
+        .header("Content-Type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    if let Some(pr) =
+        build_payment_required(server, route_config, url, request_context, resolver).await
+    {
+        attach_payment_required_header(&mut response, &pr);
+    }
     response
 }
 
@@ -770,6 +1087,15 @@ fn error_response(status: StatusCode, message: &str) -> Response<Body> {
     let body = serde_json::json!({ "error": message });
     Response::builder()
         .status(status)
+        .header("Content-Type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+/// `200 OK` JSON response (used by subscription cancel operation routes).
+fn json_ok(body: serde_json::Value) -> Response<Body> {
+    Response::builder()
+        .status(StatusCode::OK)
         .header("Content-Type", "application/json")
         .body(Body::from(body.to_string()))
         .unwrap()
@@ -866,6 +1192,7 @@ pub struct PaymentMiddlewareBuilder {
     on_before_settle: Option<OnBeforeSettleHook>,
     on_after_settle: Option<OnAfterSettleHook>,
     on_settle_failure: Option<OnSettleFailureHook>,
+    subscription: Option<crate::subscription::SubscriptionSupport>,
 }
 
 impl PaymentMiddlewareBuilder {
@@ -884,7 +1211,17 @@ impl PaymentMiddlewareBuilder {
             on_before_settle: None,
             on_after_settle: None,
             on_settle_failure: None,
+            subscription: None,
         }
+    }
+
+    /// Enable `period` support: the middleware will create
+    /// subscriptions (settle-before-serve) and verify `APP-Access` on
+    /// subsequent access. Pass a [`crate::subscription::SubscriptionSupport`]
+    /// holding the facilitator client + AccessProof window.
+    pub fn subscription(mut self, support: crate::subscription::SubscriptionSupport) -> Self {
+        self.subscription = Some(support);
+        self
     }
 
     /// Set the `onProtectedRequest` hook.
@@ -962,6 +1299,7 @@ impl PaymentMiddlewareBuilder {
             on_before_settle: self.on_before_settle,
             on_after_settle: self.on_after_settle,
             on_settle_failure: self.on_settle_failure,
+            subscription: self.subscription,
         })
     }
 }
@@ -1018,6 +1356,7 @@ mod path_matching_tests {
             mime_type: "application/json".into(),
             sync_settle: None,
             resource: None,
+            operation: None,
         }
     }
 

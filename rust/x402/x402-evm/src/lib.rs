@@ -3,12 +3,15 @@
 pub mod aggr_deferred;
 pub mod constants;
 pub mod exact;
+pub mod subscription;
 pub mod types;
 pub mod upto;
 
 pub use aggr_deferred::AggrDeferredEvmScheme;
 pub use exact::ExactEvmScheme;
 pub use upto::UptoEvmScheme;
+
+pub use subscription::PermitSubscriptionScheme;
 
 pub use constants::{
     PERMIT2_ADDRESS, PERMIT2_EIP712_DOMAIN_NAME, PERMIT2_EXACT_WITNESS_TYPE_STRING,

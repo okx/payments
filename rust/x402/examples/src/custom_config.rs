@@ -69,6 +69,7 @@ async fn main() {
                 // canonical public URL when the request URL (e.g. an internal
                 // hostname behind a load balancer) isn't suitable.
                 resource: Some("https://api.example.com/weather".into()),
+                operation: None,
             },
         ),
         (
@@ -88,6 +89,7 @@ async fn main() {
                 // Omit `resource` to fall back to middleware auto-extraction
                 // (X-Forwarded-Proto / Host + path + query).
                 resource: None,
+                operation: None,
             },
         ),
     ]);
