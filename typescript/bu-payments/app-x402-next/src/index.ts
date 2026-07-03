@@ -249,6 +249,48 @@ export function paymentProxyFromHTTPServer(
           context,
         );
       }
+
+      case "payment-presettle": {
+        try {
+          const settleResult = await result.settle();
+          if (!settleResult.success) {
+            return new NextResponse(
+              JSON.stringify({
+                error: settleResult.error ?? "subscription settle failed",
+              }),
+              { status: 402, headers: { "Content-Type": "application/json" } },
+            );
+          }
+          const passthrough = NextResponse.next();
+          if (settleResult.headers) {
+            for (const [k, v] of Object.entries(settleResult.headers)) {
+              passthrough.headers.set(k, v);
+            }
+          }
+          return passthrough;
+        } catch (err) {
+          if (err instanceof FacilitatorResponseError) {
+            return createFacilitatorErrorResponse(err);
+          }
+          console.error("payment-presettle error:", err);
+          return new NextResponse(
+            JSON.stringify({
+              error: err instanceof Error ? err.message : "subscription settle threw",
+            }),
+            { status: 402, headers: { "Content-Type": "application/json" } },
+          );
+        }
+      }
+
+      case "access-verified": {
+        const passthrough = NextResponse.next();
+        if (result.headers) {
+          for (const [k, v] of Object.entries(result.headers)) {
+            passthrough.headers.set(k, v);
+          }
+        }
+        return passthrough;
+      }
     }
   };
 }
@@ -387,6 +429,48 @@ export function withX402FromHTTPServer<T = unknown>(
           declaredExtensions,
           context,
         ) as Promise<NextResponse<T>>;
+      }
+
+      case "payment-presettle": {
+        try {
+          const settleResult = await result.settle();
+          if (!settleResult.success) {
+            return new NextResponse(
+              JSON.stringify({
+                error: settleResult.error ?? "subscription settle failed",
+              }),
+              { status: 402, headers: { "Content-Type": "application/json" } },
+            ) as NextResponse<T>;
+          }
+          const handlerResponse = await routeHandler(request);
+          if (settleResult.headers) {
+            for (const [k, v] of Object.entries(settleResult.headers)) {
+              handlerResponse.headers.set(k, v);
+            }
+          }
+          return handlerResponse;
+        } catch (err) {
+          if (err instanceof FacilitatorResponseError) {
+            return createFacilitatorErrorResponse(err) as NextResponse<T>;
+          }
+          console.error("payment-presettle error:", err);
+          return new NextResponse(
+            JSON.stringify({
+              error: err instanceof Error ? err.message : "subscription settle threw",
+            }),
+            { status: 402, headers: { "Content-Type": "application/json" } },
+          ) as NextResponse<T>;
+        }
+      }
+
+      case "access-verified": {
+        const handlerResponse = await routeHandler(request);
+        if (result.headers) {
+          for (const [k, v] of Object.entries(result.headers)) {
+            handlerResponse.headers.set(k, v);
+          }
+        }
+        return handlerResponse;
       }
     }
   };

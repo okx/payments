@@ -97,4 +97,17 @@ export class ExpressAdapter implements HTTPAdapter {
   getBody(): unknown {
     return this.req.body;
   }
+
+  /**
+   * Return all request headers as a lowercase-keyed map.
+   * Multi-value headers are joined with ", ".
+   */
+  getHeaders(): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(this.req.headers)) {
+      if (v == null) continue;
+      out[k.toLowerCase()] = Array.isArray(v) ? v.join(", ") : String(v);
+    }
+    return out;
+  }
 }

@@ -15,6 +15,7 @@ import {
   PaymentRequirements,
 } from "../types";
 import { x402Version } from "..";
+import type { SubscriptionCapability } from "../subscription";
 
 export const SETTLEMENT_OVERRIDES_HEADER = "settlement-overrides";
 
@@ -29,6 +30,13 @@ export interface HTTPAdapter {
   getUrl(): string;
   getAcceptHeader(): string;
   getUserAgent(): string;
+
+  /**
+   * Return the full request headers as a plain lowercase-keyed record.
+   * Optional; adapters that don't implement it cause hooks like
+   * `onBeforeAccess` to receive an empty headers map.
+   */
+  getHeaders?(): Record<string, string>;
 
   /**
    * Get query parameters from the request URL
@@ -170,6 +178,25 @@ export interface RouteConfig {
 
   // Extensions
   extensions?: Record<string, unknown>;
+
+  // ── period scheme additions (subscription-only) ──────────
+  /**
+   * When set, the route is a special-operation endpoint for the subscription
+   * scheme:
+   *   - "change": two-stage upgrade/downgrade flow
+   *   - "cancel": cancel-subscription flow
+   * Ignored by non-subscription schemes.
+   */
+  operation?: "change" | "cancel" | "cancel-pending-change";
+
+  /**
+   * Route-level hook fired AFTER `verifyAccess` succeeded (signature +
+   * payer + plan allowlist + period math) but BEFORE the handler runs.
+   * Seller uses it for custom access policy: rate limiting, quota, feature
+   * flags, bans / blacklists (return `{ok:false, error:"banned"}`). Full
+   * `Subscription` object is on the context so any field is inspectable.
+   */
+  onBeforeAccess?: import("../subscription").OnBeforeAccessHook;
 }
 
 /**
@@ -245,7 +272,28 @@ export type HTTPProcessResult =
       paymentRequirements: PaymentRequirements;
       declaredExtensions?: Record<string, unknown>;
     }
-  | { type: "payment-error"; response: HTTPResponseInstructions };
+  | { type: "payment-error"; response: HTTPResponseInstructions }
+  // ── period dispatch results (produced by subscription-aware branches) ──
+  | {
+      type: "payment-presettle";
+      paymentPayload: PaymentPayload;
+      paymentRequirements: PaymentRequirements;
+      /** Settle action to run AFTER verify; bound to scheme + operation. */
+      settle: () => Promise<{
+        success: boolean;
+        headers?: Record<string, string>;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        data?: any;
+        error?: string;
+      }>;
+      operation: "subscribe" | "change" | "cancel" | "cancel-pending-change";
+    }
+  | {
+      type: "access-verified";
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      subscription: import("../subscription").Subscription;
+      headers?: Record<string, string>;
+    };
 
 /**
  * Result of processSettlement
@@ -325,6 +373,7 @@ export class x402HTTPResourceServer {
   private paywallProvider?: PaywallProvider;
   private protectedRequestHooks: ProtectedRequestHook[] = [];
   private timeoutRecoveryHook?: OnSettlementTimeoutHook;
+  private beforeAccessHooks: import("../subscription").OnBeforeAccessHook[] = [];
   private pollDeadlineMs: number = DEFAULT_POLL_DEADLINE_MS;
 
   /**
@@ -423,6 +472,23 @@ export class x402HTTPResourceServer {
   }
 
   /**
+   * Register a seller-global `onBeforeAccess` hook fired on every access-
+   * verified subscription request, AFTER `verifyAccess` (signature + payer
+   * + plan allowlist + period math) but BEFORE the handler runs. Seller
+   * uses it for cross-cutting access policy (quota / ban list / feature
+   * gating). Hooks are executed in order of registration; the first one
+   * to return `{ ok: false }` denies (→ 402). Route-level
+   * `RouteConfig.onBeforeAccess` runs AFTER all global hooks.
+   *
+   * @param hook - The hook function
+   * @returns The x402HTTPResourceServer instance for chaining
+   */
+  onBeforeAccess(hook: import("../subscription").OnBeforeAccessHook): this {
+    this.beforeAccessHooks.push(hook);
+    return this;
+  }
+
+  /**
    * Register a hook to call when the facilitator returns status="timeout".
    * The hook should verify the tx on-chain and return { confirmed: boolean }.
    * If confirmed=true the resource is delivered (200); otherwise 402 is returned.
@@ -490,29 +556,159 @@ export class x402HTTPResourceServer {
     // Normalize accepts field to array of payment options
     const paymentOptions = this.normalizePaymentOptions(routeConfig);
 
-    // Check for payment header (v1 or v2)
+    // Check for payment header (v1 or v2) — used by Branches A / B / D.
     const paymentPayload = this.extractPayment(adapter);
 
-    // Create resource info, using config override if provided
+    // ── period Branch A: change endpoint ──────────────────
+    // If the route is declared with operation:"change", drive the two-stage
+    // Change route: no special dispatcher. Buyer follows the standard
+    // x402 flow — GET the route → 402 with accepts → pick one → sign newTerms
+    // with `changeFromSubId` set to the current sub → POST + APP-PAYMENT.
+    // The presettle branch below routes to verifyChange / settleChange based
+    // on routeConfig.operation.
+
+    // ── period Branch B: cancel endpoint ──────────────────────────────────
+    if (routeConfig.operation === "cancel") {
+      const cancelResult = await this.tryDispatchCancelFlow(adapter, routeConfig, paymentOptions);
+      if (cancelResult) return cancelResult;
+    }
+
+    // ── period Branch B2: cancel-pending-change endpoint ────────────────
+    if (routeConfig.operation === "cancel-pending-change") {
+      const r = await this.tryDispatchCancelPendingChangeFlow(adapter, routeConfig, paymentOptions);
+      if (r) return r;
+    }
+
+    // ── period Branch C: APP-Access (access flow) ────────
+    // Build PaymentRequired once. Subscribe presettle + classic verify path
+    // both consume the same `accepts[]` — building it here (instead of inside
+    // tryDispatchSubscriptionPresettle + again below) eliminates the duplicate
+    // facilitator-supportedKinds lookup and parsePrice/enhance pipeline.
+    //
+    // access / change / cancel flows don't depend on this; they've already
+    // short-circuited above. The cost of building requirements once on the
+    // way to subscribe / classic dispatch is negligible.
     const resourceInfo = {
       url: routeConfig.resource || enrichedContext.adapter.getUrl(),
       description: routeConfig.description || "",
       mimeType: routeConfig.mimeType || "",
     };
-
-    // Build requirements from all payment options
-    // (this method handles resolving dynamic functions internally)
     let requirements = await this.ResourceServer.buildPaymentRequirementsFromOptions(
       paymentOptions,
       enrichedContext,
     );
 
+    // Change route: inject `extra.changeFrom` into each accept so the 402
+    // tells the buyer exactly which sub they're switching from and which
+    // direction (upgrade/downgrade). Same-tier accepts are filtered out
+    // (a no-op change is illegal — `tier_same`).
+    //
+    // currentSubId source per phase:
+    //   - sniff phase (no PAYMENT-SIGNATURE) → APP-Access header carrying
+    //     a buyer-signed AccessProof; middleware ecrecovers it and reads
+    //     proof.subId. Prevents subId-only reconnaissance attacks.
+    //   - settle phase (PAYMENT-SIGNATURE)   → `terms.changeFromSubId` from
+    //     the buyer-signed newTerms (tamper-proof, signature covers it).
+    //
+    // Both phases MUST produce the same enriched accepts so verifyChange's
+    // `findMatchingRequirements` deepEqual succeeds.
+    if (routeConfig.operation === "change") {
+      // Resolve the subscription scheme first — both phases need it.
+      let scheme: SubscriptionCapability | null = null;
+      for (const opt of paymentOptions) {
+        if (!opt.network || !opt.scheme) continue;
+        scheme = await this.resolveSubscriptionScheme(opt.network, opt.scheme);
+        if (scheme) break;
+      }
+      if (!scheme) {
+        return {
+          type: "payment-error",
+          response: {
+            status: 500,
+            headers: { "Content-Type": "application/json" },
+            body: { error: "change route: no subscription scheme registered" },
+          },
+        };
+      }
+
+      let currentSubId: string | undefined;
+      if (paymentPayload) {
+        const innerTerms = (
+          paymentPayload.payload as { terms?: { changeFromSubId?: string } } | undefined
+        )?.terms;
+        currentSubId = innerTerms?.changeFromSubId;
+      } else {
+        const accessHeader = this.extractAccessProofHeader(enrichedContext.adapter);
+        if (!accessHeader) {
+          return {
+            type: "payment-error",
+            response: {
+              status: 401,
+              headers: { "Content-Type": "application/json" },
+              body: { error: "change route: missing APP-Access header" },
+            },
+          };
+        }
+        const { decodeAccessProof } = await this.loadSubscriptionModule();
+        let proof;
+        try {
+          proof = decodeAccessProof(accessHeader);
+        } catch {
+          return {
+            type: "payment-error",
+            response: {
+              status: 400,
+              headers: { "Content-Type": "application/json" },
+              body: { error: "change route: invalid APP-Access header" },
+            },
+          };
+        }
+        // change-route sniff: prove ownership only. `verifyAccess`'s
+        // plan-allowlist + period-math gating is meant for resource
+        // consumption — it would (wrongly) reject a buyer whose current
+        // period hasn't been charged yet from even seeing change offers.
+        // `verifyOwnership` does just sig + store + payer match.
+        const verify = await scheme.verifyOwnership(proof);
+        if (!verify.ok) {
+          return {
+            type: "payment-error",
+            response: {
+              status: 401,
+              headers: { "Content-Type": "application/json" },
+              body: { error: verify.error },
+            },
+          };
+        }
+        currentSubId = verify.subId;
+      }
+      if (!currentSubId) {
+        return {
+          type: "payment-error",
+          response: {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+            body: { error: "change route: cannot resolve currentSubId" },
+          },
+        };
+      }
+      const enriched = await scheme.enrichAcceptsForChange(requirements, currentSubId);
+      if (enriched === null) {
+        return {
+          type: "payment-error",
+          response: {
+            status: 404,
+            headers: { "Content-Type": "application/json" },
+            body: { error: "sub_not_active_for_change" },
+          },
+        };
+      }
+      requirements = enriched;
+    }
+
     let extensions = routeConfig.extensions;
     if (extensions) {
       extensions = this.ResourceServer.enrichExtensions(extensions, enrichedContext);
     }
-
-    // createPaymentRequiredResponse already handles extension enrichment in the core layer
     const transportContext: HTTPTransportContext = { request: enrichedContext };
     const paymentRequired = await this.ResourceServer.createPaymentRequiredResponse(
       requirements,
@@ -521,6 +717,37 @@ export class x402HTTPResourceServer {
       extensions,
       transportContext,
     );
+
+    // Access flow runs AFTER paymentRequired so that an AccessProof rejection
+    // (sub not in this route's plan allowlist / expired / etc.) can return a
+    // proper 402 + PAYMENT-REQUIRED body with the route's accepts — buyer
+    // sees which plans they'd need to subscribe to gain access.
+    //
+    // Skip for change routes: APP-Access on a change route is the buyer's
+    // identity for `extra.changeFrom` enrichment (above), NOT a request to
+    // access the resource itself.
+    if (routeConfig.operation !== "change") {
+      const accessResult = await this.tryDispatchAccessFlow(
+        adapter,
+        routeConfig,
+        paymentOptions,
+        paymentRequired,
+      );
+      if (accessResult) return accessResult;
+    }
+
+    // ── period Branch D: APP-PAYMENT + scheme="pre" ──────
+    // If the buyer presented a subscription PaymentPayload (scheme tags itself
+    // as `period` and the registered server declares
+    // `settlementMode === "pre"`), run verify+settle BEFORE handler executes.
+    if (paymentPayload) {
+      const subResult = await this.tryDispatchSubscriptionPresettle(
+        paymentPayload,
+        paymentRequired.accepts,
+        routeConfig.operation === "change" ? "change" : "subscribe",
+      );
+      if (subResult) return subResult;
+    }
 
     // If no payment provided
     if (!paymentPayload) {
@@ -787,6 +1014,404 @@ export class x402HTTPResourceServer {
   }
 
   /**
+   * Lazy loader for the subscription submodule. The `import()` cache makes
+   * this effectively free after the first hit; isolating it in one place
+   * keeps dispatch helpers free of dynamic-import boilerplate and lets
+   * bundlers tree-shake the entire subscription path when no caller touches
+   * it.
+   */
+  protected loadSubscriptionModule(): Promise<typeof import("../subscription")> {
+    return import("../subscription");
+  }
+
+  /**
+   * Single chokepoint for "is this (network, scheme) backed by a
+   * SubscriptionCapability-implementing scheme?". Returns the narrowed
+   * capability (so callers get full typing on `verifyAccess` / `verifySubscribe`
+   * / etc.) or null if not registered or not a subscription scheme.
+   */
+  protected async resolveSubscriptionScheme(
+    network: Network,
+    schemeName: string,
+  ): Promise<SubscriptionCapability | null> {
+    const registered = this.ResourceServer.findScheme(network, schemeName);
+    if (!registered) return null;
+    const { hasSubscriptionCapability } = await this.loadSubscriptionModule();
+    return hasSubscriptionCapability(registered) ? registered : null;
+  }
+
+  /**
+   * period dispatch helper — Access flow.
+   *
+   * Returns an `access-verified` (or `payment-error`) HTTPProcessResult when
+   * the request carries `APP-Access` AND a subscription-capable scheme is
+   * registered for one of the route's accepted (scheme, network) pairs.
+   * Returns `null` to indicate the dispatcher should fall through to classic
+   * pay-per-request handling.
+   */
+  protected async tryDispatchAccessFlow(
+    adapter: HTTPAdapter,
+    routeConfig: RouteConfig,
+    paymentOptions: PaymentOption[],
+    paymentRequired: PaymentRequired,
+  ): Promise<HTTPProcessResult | null> {
+    const headerB64 = this.extractAccessProofHeader(adapter);
+    if (!headerB64) return null;
+
+    const { decodeAccessProof } = await this.loadSubscriptionModule();
+
+    let proof;
+    try {
+      proof = decodeAccessProof(headerB64);
+    } catch (err) {
+      return {
+        type: "payment-error",
+        response: {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+          body: { error: `invalid APP-Access: ${(err as Error).message}` },
+        },
+      };
+    }
+
+    // Derive the route's allowed plan-id allowlist from its `accepts` —
+    // every accept entry's `extra.plan.id` is one acceptable plan. A
+    // subscription's `planId` must appear here to satisfy this route.
+    const acceptedPlanIds = collectAcceptedPlanIds(paymentOptions);
+
+    // First (scheme, network) in the route's accepts that resolves to a
+    // SubscriptionCapability wins. v1 assumes one subscription scheme per
+    // route.
+    for (const opt of paymentOptions) {
+      if (!opt.network || !opt.scheme) continue;
+      const scheme = await this.resolveSubscriptionScheme(opt.network, opt.scheme);
+      if (!scheme) continue;
+      const result = await scheme.verifyAccess(proof, { acceptedPlanIds });
+      if (!result.ok) {
+        // 402: PAYMENT-REQUIRED header carries the route's accepts (so buyer
+        // can subscribe / change to a satisfying plan); body carries the
+        // specific reason code (subscription_not_active / signature_invalid
+        // / payer_mismatch / …).
+        return {
+          type: "payment-error",
+          response: {
+            status: 402,
+            headers: {
+              "Content-Type": "application/json",
+              "PAYMENT-REQUIRED": encodePaymentRequiredHeader(paymentRequired),
+            },
+            body: { error: result.error },
+          },
+        };
+      }
+
+      // `onBeforeAccess` hooks: seller-defined access policy
+      // (quota, ban list, feature gating…). Full Subscription is passed so
+      // arbitrary fields (subId / payer / planId / lastChargedPeriod / …)
+      // can drive the decision. Return `{ok:false}` to deny. Global hook
+      // (set via `httpServer.onBeforeAccess()`) runs FIRST; if it passes,
+      // route-level hook (in `RouteConfig.onBeforeAccess`) runs after.
+      const hooks: import("../subscription").OnBeforeAccessHook[] = [
+        ...this.beforeAccessHooks,
+        ...(routeConfig.onBeforeAccess ? [routeConfig.onBeforeAccess] : []),
+      ];
+      for (const hook of hooks) {
+        const decision = await hook({
+          subscription: result.subscription,
+          request: {
+            path: adapter.getPath(),
+            method: adapter.getMethod(),
+            headers: adapter.getHeaders?.() ?? {},
+          },
+          route: { acceptedPlanIds, accepts: paymentRequired.accepts },
+        });
+        if (!decision.ok) {
+          return {
+            type: "payment-error",
+            response: {
+              status: 402,
+              headers: { "Content-Type": "application/json" },
+              body: {
+                error: decision.error ?? "access_denied",
+                retryAfter: decision.retryAfter,
+                upgradeOffers: decision.upgradeOffers,
+              },
+            },
+          };
+        }
+      }
+
+      return {
+        type: "access-verified",
+        subscription: result.subscription,
+        headers: {},
+      };
+    }
+
+    // No subscription-capable scheme registered for any of the route's
+    // accepted networks. Treat as unauthorized rather than fall through to a
+    // 402 paywall, since the buyer clearly tried the access path.
+    return {
+      type: "payment-error",
+      response: {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+        body: { error: "no subscription scheme registered for this route" },
+      },
+    };
+  }
+
+  /**
+   * period dispatch helper — Subscribe presettle flow.
+   *
+   * When the buyer presents a PaymentPayload whose `accepted.scheme` is a
+   * subscription scheme with `settlementMode === "pre"`, this runs verify +
+   * (settle on demand) and returns `payment-presettle`. The middleware is
+   * expected to call `result.settle()` AFTER decision-time but BEFORE
+   * `next()` so handler only runs when the chain creation succeeded.
+   *
+   * Returns `null` to fall through to classic post-settle path-verified flow.
+   */
+  protected async tryDispatchSubscriptionPresettle(
+    paymentPayload: PaymentPayload,
+    serverAccepts: PaymentRequirements[],
+    operation: "subscribe" | "change",
+  ): Promise<HTTPProcessResult | null> {
+    const { accepted } = paymentPayload;
+    const scheme = await this.resolveSubscriptionScheme(accepted.network, accepted.scheme);
+    if (!scheme) return null;
+
+    // ★ Security gate (anti-tampering): caller passes already-built
+    // `serverAccepts` (the seller's authoritative requirements from route
+    // config). We look up which entry the buyer's PaymentPayload matches —
+    // returning the SERVER copy, not the buyer's. Divergence on base fields
+    // or server-declared extra → 402 here, well before any facilitator call.
+    const serverReq = this.ResourceServer.findMatchingRequirements(serverAccepts, paymentPayload);
+    if (!serverReq) {
+      return {
+        type: "payment-error",
+        response: {
+          status: 402,
+          headers: { "Content-Type": "application/json" },
+          body: { error: "no_matching_requirements" },
+        },
+      };
+    }
+
+    if (operation === "change") {
+      const verifyResult = await scheme.verifyChange(paymentPayload, serverReq);
+      if (!verifyResult.ok) {
+        return {
+          type: "payment-error",
+          response: {
+            status: 402,
+            headers: { "Content-Type": "application/json" },
+            body: { error: verifyResult.error },
+          },
+        };
+      }
+      return {
+        type: "payment-presettle",
+        paymentPayload,
+        paymentRequirements: serverReq,
+        operation: "change",
+        settle: async () => {
+          const r = await scheme.settleChange(paymentPayload, serverReq);
+          return r.success
+            ? {
+                success: true,
+                headers: r.headers,
+                data: {
+                  newSubId: r.newSubId,
+                  oldSubId: r.oldSubId,
+                  operationType: r.operationType,
+                  scheduledFromPeriod: r.scheduledFromPeriod,
+                },
+              }
+            : { success: false, error: r.error };
+        },
+      };
+    }
+
+    const verifyResult = await scheme.verifySubscribe(paymentPayload, serverReq);
+    if (!verifyResult.ok) {
+      return {
+        type: "payment-error",
+        response: {
+          status: 402,
+          headers: { "Content-Type": "application/json" },
+          body: { error: verifyResult.error },
+        },
+      };
+    }
+
+    return {
+      type: "payment-presettle",
+      paymentPayload,
+      paymentRequirements: serverReq,
+      operation: "subscribe",
+      settle: async () => {
+        const r = await scheme.settleSubscribe(paymentPayload, serverReq);
+        return r.success
+          ? {
+              success: true,
+              headers: r.headers,
+              data: { subId: r.subId, subscription: r.subscription },
+            }
+          : { success: false, error: r.error };
+      },
+    };
+  }
+
+  /**
+   * period dispatch helper — Cancel flow.
+   *
+   * Reads JSON body { auth: CancelAuth, subId: string }, runs verifyCancel
+   * then wraps settleCancel as a payment-presettle (settle-before-handler so
+   * the cancelation is on-chain before the seller's response).
+   */
+  protected async tryDispatchCancelFlow(
+    adapter: HTTPAdapter,
+    routeConfig: RouteConfig,
+    paymentOptions: PaymentOption[],
+  ): Promise<HTTPProcessResult | null> {
+    let scheme: SubscriptionCapability | null = null;
+    for (const opt of paymentOptions) {
+      if (!opt.network || !opt.scheme) continue;
+      const resolved = await this.resolveSubscriptionScheme(opt.network as Network, opt.scheme);
+      if (resolved) {
+        scheme = resolved;
+        break;
+      }
+    }
+    if (!scheme) return null;
+
+    const body = (adapter.getBody?.() ?? {}) as {
+      auth?: import("../subscription").CancelAuth;
+      subId?: string;
+    };
+    if (!body.auth || !body.subId) {
+      return {
+        type: "payment-error",
+        response: {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+          body: { error: "cancel: body must include auth and subId" },
+        },
+      };
+    }
+
+    const verifyResult = await scheme.verifyCancel(body.auth, body.subId);
+    if (!verifyResult.ok) {
+      return {
+        type: "payment-error",
+        response: {
+          status: 402,
+          headers: { "Content-Type": "application/json" },
+          body: { error: verifyResult.error },
+        },
+      };
+    }
+
+    void routeConfig;
+    const settleScheme = scheme;
+    const auth = body.auth;
+    const subId = body.subId;
+    return {
+      type: "payment-presettle",
+      paymentPayload: { x402Version: 2, accepted: null as never, payload: {} },
+      paymentRequirements: null as never,
+      operation: "cancel",
+      settle: async () => {
+        const r = await settleScheme.settleCancel(auth, subId);
+        return r.success
+          ? { success: true, headers: r.headers, data: { subId } }
+          : { success: false, error: r.error };
+      },
+    };
+  }
+
+  /**
+   * period dispatch helper — Cancel-Pending-Change flow.
+   *
+   * Reads JSON body `{ auth: PendingChangeCancelAuth, subId: string }`. The
+   * auth must carry `newSubId` (matches the currently PENDING downgrade
+   * target). Runs verifyCancelPendingChange then wraps
+   * settleCancelPendingChange as a payment-presettle.
+   */
+  protected async tryDispatchCancelPendingChangeFlow(
+    adapter: HTTPAdapter,
+    routeConfig: RouteConfig,
+    paymentOptions: PaymentOption[],
+  ): Promise<HTTPProcessResult | null> {
+    let scheme: SubscriptionCapability | null = null;
+    for (const opt of paymentOptions) {
+      if (!opt.network || !opt.scheme) continue;
+      const resolved = await this.resolveSubscriptionScheme(opt.network as Network, opt.scheme);
+      if (resolved) {
+        scheme = resolved;
+        break;
+      }
+    }
+    if (!scheme) return null;
+
+    const body = (adapter.getBody?.() ?? {}) as {
+      auth?: import("../subscription").PendingChangeCancelAuth;
+      subId?: string;
+    };
+    if (!body.auth || !body.subId) {
+      return {
+        type: "payment-error",
+        response: {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+          body: { error: "cancel-pending-change: body must include auth and subId" },
+        },
+      };
+    }
+    if (!body.auth.newSubId) {
+      // Facilitator requires newSubId — reject early with a clear code.
+      return {
+        type: "payment-error",
+        response: {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+          body: { error: "cancel-pending-change: auth.newSubId is required" },
+        },
+      };
+    }
+
+    const verifyResult = await scheme.verifyCancelPendingChange(body.auth, body.subId);
+    if (!verifyResult.ok) {
+      return {
+        type: "payment-error",
+        response: {
+          status: 402,
+          headers: { "Content-Type": "application/json" },
+          body: { error: verifyResult.error },
+        },
+      };
+    }
+
+    void routeConfig;
+    const settleScheme = scheme;
+    const auth = body.auth;
+    const subId = body.subId;
+    return {
+      type: "payment-presettle",
+      paymentPayload: { x402Version: 2, accepted: null as never, payload: {} },
+      paymentRequirements: null as never,
+      operation: "cancel-pending-change",
+      settle: async () => {
+        const r = await settleScheme.settleCancelPendingChange(auth, subId);
+        return r.success
+          ? { success: true, headers: r.headers, data: { subId: r.subId } }
+          : { success: false, error: r.error };
+      },
+    };
+  }
+
+  /**
    * Build HTTPResponseInstructions for settlement failure.
    * Uses settlementFailedResponseBody hook if configured, otherwise defaults to empty body.
    *
@@ -942,7 +1567,27 @@ export class x402HTTPResourceServer {
       }
     }
 
+    // period uses APP-PAYMENT (base64-encoded JSON).
+    const subHeader = adapter.getHeader("app-payment") || adapter.getHeader("APP-PAYMENT");
+    if (subHeader) {
+      try {
+        const json = Buffer.from(subHeader, "base64").toString("utf8");
+        return JSON.parse(json) as PaymentPayload;
+      } catch (error) {
+        console.warn("Failed to decode APP-PAYMENT header:", error);
+      }
+    }
+
     return null;
+  }
+
+  /**
+   * Extract `APP-Access` header (subscription access-flow). Returns the raw
+   * base64 string so callers can pass it through to `decodeAccessProof` in
+   * the subscription codec.
+   */
+  private extractAccessProofHeader(adapter: HTTPAdapter): string | null {
+    return adapter.getHeader("app-access") || adapter.getHeader("APP-Access") || null;
   }
 
   /**
@@ -1145,4 +1790,19 @@ export class x402HTTPResourceServer {
     }
     return 0;
   }
+}
+
+/**
+ * Pull `extra.plan.id` out of every payment option, dedup, drop missing.
+ * Used by the access-flow dispatcher to build the route's allowlist of
+ * acceptable plans from `RouteConfig.accepts`.
+ */
+function collectAcceptedPlanIds(options: PaymentOption[]): string[] {
+  const seen = new Set<string>();
+  for (const opt of options) {
+    const extra = opt.extra as { plan?: { id?: unknown } } | undefined;
+    const id = extra?.plan?.id;
+    if (typeof id === "string" && id.length > 0) seen.add(id);
+  }
+  return Array.from(seen);
 }

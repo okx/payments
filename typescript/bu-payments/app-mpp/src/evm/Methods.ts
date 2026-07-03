@@ -20,6 +20,8 @@ const methodDetailsSchema = z.object({
   permit2Address: z.optional(z.string()),
   /** Split payment recipients (max 10). */
   splits: z.optional(z.array(splitSchema)),
+  /** Endpoint URL for per-URL analytics; passed through to SA API via challenge.request. */
+  resourceUrl: z.optional(z.string()),
 })
 
 // ---- EIP-3009 authorization ----

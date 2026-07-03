@@ -26,6 +26,10 @@ TASK.md
 skills/
 REVIEW_PROMPT.md
 
+# Design docs / spec drafts (per global rule: never commit)
+specs/
+plans/
+
 # IDE
 .idea/
 .vscode/

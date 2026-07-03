@@ -1,6 +1,6 @@
 {
   "name": "@okxweb3/app-x402-fastify",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/index.d.ts",
@@ -32,7 +32,7 @@
     "typescript": "^5.7.3"
   },
   "dependencies": {
-    "@okxweb3/app-x402-core": "0.1.2"
+    "@okxweb3/app-x402-core": "0.2.0"
   },
   "peerDependencies": {
     "fastify": "^5.0.0"

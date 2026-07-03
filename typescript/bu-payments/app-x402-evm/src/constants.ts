@@ -197,6 +197,25 @@ export const DEFAULT_MAX_PRIORITY_FEE_PER_GAS = 100_000_000n;
 export const PERMIT2_ADDRESS = "0x000000000022D473030F116dDEE9F6B43aC78BA3" as const;
 
 /**
+ * A2APaySubscription contract — the `verifyingContract` of the EIP-712
+ * domain for SubscriptionTerms / CancelAuth / PendingChangeCancelAuth. Fixed
+ * by protocol, same address on all supported chains. Verify with
+ * `domainSeparator()` (selector `0xf698da25`).
+ */
+export const SUBSCRIPTION_CONTRACT_ADDRESS = "0x3b01D25F7123aAEc97762491d597Ca7a215D8032" as const;
+
+/**
+ * EIP-712 domain `name` for the subscription contract. Matches the on-chain
+ * `EIP712.name()` exactly — DO NOT include a version suffix here; contract
+ * revisions are reflected via the `version` field. Values:
+ * `name="A2APaySubscription", version="1"`.
+ */
+export const SUBSCRIPTION_DOMAIN_NAME = "A2APaySubscription" as const;
+
+/** EIP-712 domain `version`. */
+export const SUBSCRIPTION_DOMAIN_VERSION = "1" as const;
+
+/**
  * x402ExactPermit2Proxy contract address.
  * Vanity address: 0x4020...0001 for easy recognition.
  * This address is deterministic based on:

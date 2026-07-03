@@ -329,6 +329,70 @@ export function paymentMiddlewareFromHTTPServer(
           bufferedCalls = [];
         }
         return;
+
+      // ── period dispatch results ────────────────────────────────────────
+      case "payment-presettle": {
+        // period: settle BEFORE handler so the on-chain
+        // subscription is created (or fails clean) before any handler
+        // side-effects run. No buffering — handlers can stream responses.
+        try {
+          const settleResult = await result.settle();
+          if (!settleResult.success) {
+            res.status(402).json({
+              error: settleResult.error ?? "subscription settle failed",
+            });
+            return;
+          }
+          if (settleResult.headers) {
+            for (const [k, v] of Object.entries(settleResult.headers)) {
+              res.setHeader(k, v);
+            }
+          }
+          // Surface settle data onto req for handler consumption.
+          // Top-level `subscription` mirrors the access-flow shape so handlers
+          // read the same field regardless of whether the request created a
+          // new sub (subscribe) or used an existing one (access).
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (req as any).x402 = {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            ...(req as any).x402,
+            subscription: settleResult.data?.subscription,
+            subId: settleResult.data?.subId,
+            paymentPayload: result.paymentPayload,
+            paymentRequirements: result.paymentRequirements,
+            settleResult,
+          };
+          return next();
+        } catch (err) {
+          if (err instanceof FacilitatorResponseError) {
+            sendFacilitatorError(res, err);
+            return;
+          }
+          console.error("payment-presettle error:", err);
+          res.status(402).json({
+            error: err instanceof Error ? err.message : "subscription settle threw",
+          });
+          return;
+        }
+      }
+
+      case "access-verified": {
+        // No facilitator / no on-chain interaction here — verifyAccess already
+        // ran in dispatch. We just attach the subscription onto req and
+        // forward to the handler.
+        if (result.headers) {
+          for (const [k, v] of Object.entries(result.headers)) {
+            res.setHeader(k, v);
+          }
+        }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (req as any).x402 = {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          ...(req as any).x402,
+          subscription: result.subscription,
+        };
+        return next();
+      }
     }
   };
 }
@@ -436,7 +500,10 @@ export type {
   SettlementOverrides,
 } from "@okxweb3/app-x402-core/server";
 
-export { RouteConfigurationError, SETTLEMENT_OVERRIDES_HEADER } from "@okxweb3/app-x402-core/server";
+export {
+  RouteConfigurationError,
+  SETTLEMENT_OVERRIDES_HEADER,
+} from "@okxweb3/app-x402-core/server";
 
 export type { RouteValidationError } from "@okxweb3/app-x402-core/server";
 

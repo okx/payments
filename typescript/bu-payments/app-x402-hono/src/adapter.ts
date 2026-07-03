@@ -104,4 +104,16 @@ export class HonoAdapter implements HTTPAdapter {
       return undefined;
     }
   }
+
+  /**
+   * Return all request headers as a lowercase-keyed map. Hono's
+   * `req.raw.headers` is a WHATWG Headers instance — lowercase keys by spec.
+   */
+  getHeaders(): Record<string, string> {
+    const out: Record<string, string> = {};
+    this.c.req.raw.headers.forEach((v, k) => {
+      out[k.toLowerCase()] = v;
+    });
+    return out;
+  }
 }
