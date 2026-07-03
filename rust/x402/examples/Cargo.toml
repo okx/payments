@@ -9,13 +9,13 @@ license.workspace = true
 publish = false
 
 [dependencies]
-x402-core = { package = "okxweb3-app-x402-core", version = "0.2", path = "../x402-core" }
-x402-axum = { package = "okxweb3-app-x402-axum", version = "0.2", path = "../x402-axum" }
-x402-evm = { package = "okxweb3-app-x402-evm", version = "0.2", path = "../x402-evm" }
+x402-core = { package = "okxweb3-app-x402-core", version = "0.3", path = "../x402-core" }
+x402-axum = { package = "okxweb3-app-x402-axum", version = "0.3", path = "../x402-axum" }
+x402-evm = { package = "okxweb3-app-x402-evm", version = "0.3", path = "../x402-evm" }
 axum = { workspace = true }
 tokio = { workspace = true }
 serde_json = { workspace = true }
-tracing-subscriber = "0.3"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [[example]]
 name = "basic_server"
@@ -32,3 +32,7 @@ path = "src/exact_permit2_server.rs"
 [[example]]
 name = "upto_server"
 path = "src/upto_server.rs"
+
+[[example]]
+name = "subscription_server"
+path = "src/subscription_server.rs"

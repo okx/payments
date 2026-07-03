@@ -15,6 +15,19 @@ use crate::error::X402Error;
 /// Returns `Some(AssetAmount)` to handle this price, or `None` to pass to the next parser.
 pub type MoneyParser = Box<dyn Fn(f64, &str) -> Option<AssetAmount> + Send + Sync>;
 
+/// When settlement happens relative to serving the protected resource.
+///
+/// Lets the middleware branch without hardcoding scheme names: `Post` schemes
+/// (exact / aggr_deferred / upto) verify → serve → settle; `Pre` schemes
+/// (`period`) settle first, then serve.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettlementMode {
+    /// Verify before serving, settle after (the x402 default).
+    Post,
+    /// Settle (create / charge) before serving.
+    Pre,
+}
+
 /// Server-side mechanism for a specific scheme/network combination.
 /// Converts user-friendly prices to on-chain amounts and enhances payment requirements.
 #[async_trait]
@@ -33,4 +46,10 @@ pub trait SchemeNetworkServer: Send + Sync {
         supported_kind: &SupportedKind,
         facilitator_extensions: &[String],
     ) -> Result<PaymentRequirements, X402Error>;
+
+    /// When this scheme settles relative to serving the resource. Defaults to
+    /// [`SettlementMode::Post`]; `period` overrides to [`SettlementMode::Pre`].
+    fn settlement_mode(&self) -> SettlementMode {
+        SettlementMode::Post
+    }
 }

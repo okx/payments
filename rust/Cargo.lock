@@ -2596,6 +2596,7 @@ dependencies = [
  "once_cell",
  "serdect",
  "sha2",
+ "signature",
 ]
 
 [[package]]
@@ -2925,7 +2926,7 @@ dependencies = [
 
 [[package]]
 name = "okxweb3-app-payment-router-axum"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "alloy-signer-local",
  "async-trait",
@@ -2948,9 +2949,10 @@ dependencies = [
 
 [[package]]
 name = "okxweb3-app-x402-axum"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "axum",
+ "base64",
  "okxweb3-app-x402-core",
  "okxweb3-app-x402-evm",
  "serde_json",
@@ -2962,7 +2964,7 @@ dependencies = [
 
 [[package]]
 name = "okxweb3-app-x402-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "base64",
@@ -2980,13 +2982,16 @@ dependencies = [
 
 [[package]]
 name = "okxweb3-app-x402-evm"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
+ "alloy-primitives",
  "async-trait",
+ "k256",
  "okxweb3-app-x402-core",
  "serde",
  "serde_json",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

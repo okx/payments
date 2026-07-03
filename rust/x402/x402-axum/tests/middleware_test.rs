@@ -68,6 +68,7 @@ async fn build_test_app(mock_server: &MockServer) -> Router {
             mime_type: "application/json".into(),
             sync_settle: None,
             resource: None,
+            operation: None,
         },
     )]);
 
@@ -325,6 +326,7 @@ fn test_routes() -> HashMap<String, RoutePaymentConfig> {
             mime_type: "application/json".into(),
             sync_settle: None,
             resource: None,
+            operation: None,
         },
     )])
 }
@@ -769,6 +771,7 @@ fn test_routes_with_sync_settle(sync_settle: Option<bool>) -> HashMap<String, Ro
             mime_type: "application/json".into(),
             sync_settle,
             resource: None,
+            operation: None,
         },
     )])
 }
@@ -790,6 +793,7 @@ fn test_routes_aggr_deferred() -> HashMap<String, RoutePaymentConfig> {
             mime_type: "application/json".into(),
             sync_settle: None,
             resource: None,
+            operation: None,
         },
     )])
 }
@@ -1654,6 +1658,7 @@ async fn build_app_with_resource_override(
             mime_type: "application/json".into(),
             sync_settle: None,
             resource,
+            operation: None,
         },
     )]);
 

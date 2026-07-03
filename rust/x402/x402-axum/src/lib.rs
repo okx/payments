@@ -19,9 +19,14 @@
 
 mod adapter;
 mod middleware;
+mod subscription;
 
 pub use adapter::*;
 pub use middleware::*;
+pub use subscription::{
+    AccessContext, BeforeAccessResult, OnBeforeAccessHook, SubscriptionSupport,
+    SUBSCRIPTION_ACCESS_HEADER,
+};
 
 // Re-export commonly used types from x402-core
 pub use x402_core::http::{
@@ -34,3 +39,8 @@ pub use x402_core::http::{
     SETTLEMENT_OVERRIDES_HEADER,
 };
 pub use x402_core::server::X402ResourceServer;
+
+// Subscription store (Seller-side cache: write-after-sync + access cache + due).
+pub use x402_core::subscription::{
+    InMemorySubscriptionStore, SubscriptionRecord, SubscriptionStore,
+};

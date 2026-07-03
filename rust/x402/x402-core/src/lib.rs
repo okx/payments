@@ -16,5 +16,6 @@ pub mod facilitator;
 pub mod http;
 pub mod schemas;
 pub mod server;
+pub mod subscription;
 pub mod types;
 pub mod utils;

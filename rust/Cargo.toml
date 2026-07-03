@@ -40,6 +40,11 @@ http-body-util = "0.1"
 hmac = "0.12"
 sha2 = "0.10"
 base64 = "0.22"
+# EVM crypto — used by x402-evm for subscription AccessProof ecrecover.
+# `k256` feature gives keccak256 + secp256k1 signature recovery.
+alloy-primitives = { version = "1", features = ["k256"] }
+# Dev-only: sign test vectors for the AccessProof round-trip test.
+k256 = { version = "0.13", features = ["ecdsa"] }
 
 # Error handling
 thiserror = "2"

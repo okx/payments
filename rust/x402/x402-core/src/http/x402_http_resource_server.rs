@@ -197,7 +197,7 @@ pub struct AcceptConfig {
 }
 
 /// Configuration for a payment-protected route.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RoutePaymentConfig {
     pub accepts: Vec<AcceptConfig>,
@@ -213,6 +213,26 @@ pub struct RoutePaymentConfig {
     /// canonical URL behind reverse proxies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resource: Option<String>,
+    /// OKX `period` extension: subscription special-operation marker for this
+    /// route (dispatched by the middleware to the matching scheme flow). `Change`
+    /// → serve change offers on `APP-Access` and route the change on
+    /// `PAYMENT-SIGNATURE`; `Cancel` / `CancelPendingChange` → relay the
+    /// buyer-signed auth to the facilitator. `None` = a normal route.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation: Option<SubscriptionOperation>,
+}
+
+/// OKX `period` extension: a subscription special-operation endpoint kind.
+/// Serialized as `"change"` / `"cancel"` / `"cancel-pending-change"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SubscriptionOperation {
+    /// Two-stage upgrade/downgrade (was `change_plan: true`).
+    Change,
+    /// Relay a buyer-signed `CancelAuth` to the facilitator.
+    Cancel,
+    /// Relay a buyer-signed `PendingChangeCancelAuth` (revert a scheduled downgrade).
+    CancelPendingChange,
 }
 
 /// Result of the settlement timeout hook.
