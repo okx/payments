@@ -11,6 +11,7 @@ const baseConfig = {
     "upto/facilitator/index": "src/upto/facilitator/index.ts",
     "deferred/client/index": "src/deferred/client/index.ts",
     "deferred/server/index": "src/deferred/server/index.ts",
+    "subscription/index": "src/subscription/index.ts",
   },
   dts: {
     resolve: true,

@@ -1,6 +1,6 @@
 {
   "name": "@okxweb3/app-x402-core",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/cjs/index.d.ts",
@@ -31,6 +31,7 @@
     "typescript": "^5.7.3"
   },
   "dependencies": {
+    "viem": "^2.39.3",
     "zod": "^3.24.2"
   },
   "exports": {
@@ -112,6 +113,16 @@
       "require": {
         "types": "./dist/cjs/schemas/index.d.ts",
         "default": "./dist/cjs/schemas/index.js"
+      }
+    },
+    "./subscription": {
+      "import": {
+        "types": "./dist/esm/subscription/index.d.mts",
+        "default": "./dist/esm/subscription/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/subscription/index.d.ts",
+        "default": "./dist/cjs/subscription/index.js"
       }
     }
   },

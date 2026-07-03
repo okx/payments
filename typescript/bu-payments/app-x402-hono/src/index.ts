@@ -141,6 +141,53 @@ export function paymentMiddlewareFromHTTPServer(
         }
       }
 
+      case "payment-presettle": {
+        try {
+          const settleResult = await result.settle();
+          if (!settleResult.success) {
+            return c.json({ error: settleResult.error ?? "subscription settle failed" }, 402);
+          }
+          if (settleResult.headers) {
+            for (const [k, v] of Object.entries(settleResult.headers)) {
+              c.header(k, v);
+            }
+          }
+          c.set("x402", {
+            ...(c.get("x402") ?? {}),
+            subscription: settleResult.data?.subscription,
+            subId: settleResult.data?.subId,
+            paymentPayload: result.paymentPayload,
+            paymentRequirements: result.paymentRequirements,
+            settleResult,
+          });
+          await next();
+          return;
+        } catch (err) {
+          if (err instanceof FacilitatorResponseError) {
+            return facilitatorErrorResponse(c, err);
+          }
+          console.error("payment-presettle error:", err);
+          return c.json(
+            { error: err instanceof Error ? err.message : "subscription settle threw" },
+            402,
+          );
+        }
+      }
+
+      case "access-verified": {
+        if (result.headers) {
+          for (const [k, v] of Object.entries(result.headers)) {
+            c.header(k, v);
+          }
+        }
+        c.set("x402", {
+          ...(c.get("x402") ?? {}),
+          subscription: result.subscription,
+        });
+        await next();
+        return;
+      }
+
       case "payment-verified": {
         const { paymentPayload, paymentRequirements, declaredExtensions } = result;
 

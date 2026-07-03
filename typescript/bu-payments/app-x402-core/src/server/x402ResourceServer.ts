@@ -243,6 +243,22 @@ export class x402ResourceServer {
   }
 
   /**
+   * Look up the registered SchemeNetworkServer for a given network + scheme.
+   * Exposed so the HTTP dispatch layer can perform capability detection
+   * (e.g. `hasSubscriptionCapability(scheme)`) on the actual instance.
+   *
+   * Pattern matching follows the same CAIP-style rules as `verifyPayment`:
+   * registered keys may use wildcards like `eip155:*`.
+   *
+   * @param network - The network identifier
+   * @param scheme - The payment scheme name
+   * @returns The registered scheme server, or undefined if none matches.
+   */
+  findScheme(network: Network, scheme: string): SchemeNetworkServer | undefined {
+    return findByNetworkAndScheme(this.registeredServerSchemes, scheme, network);
+  }
+
+  /**
    * Registers a resource service extension that can enrich extension declarations.
    *
    * @param extension - The extension to register

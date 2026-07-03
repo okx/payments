@@ -16,6 +16,7 @@ import {
   PaymentPayload,
   PaymentRequirements,
 } from "@okxweb3/app-x402-core/types";
+import type { Subscription } from "@okxweb3/app-x402-core/subscription";
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { FastifyAdapter } from "./adapter";
 
@@ -24,6 +25,15 @@ interface X402PaymentContext {
   paymentRequirements: PaymentRequirements;
   declaredExtensions?: Record<string, unknown>;
   requestContext: HTTPRequestContext;
+}
+
+interface X402SubscriptionContext {
+  subscription?: Subscription;
+  subId?: string;
+  paymentPayload?: PaymentPayload;
+  paymentRequirements?: PaymentRequirements;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  settleResult?: { success: boolean; headers?: Record<string, string>; data?: any; error?: string };
 }
 
 interface BufferedWriteHead {
@@ -58,6 +68,7 @@ declare module "fastify" {
   interface FastifyRequest {
     x402Context?: X402PaymentContext;
     x402RawGuard?: RawGuard;
+    x402?: X402SubscriptionContext;
   }
 }
 
@@ -250,6 +261,7 @@ export function paymentMiddlewareFromHTTPServer(
 
   app.decorateRequest("x402Context", undefined);
   app.decorateRequest("x402RawGuard", undefined);
+  app.decorateRequest("x402", undefined);
 
   let initPromise: Promise<void> | null = syncFacilitatorOnStart ? httpServer.initialize() : null;
   let isInitialized = false;
@@ -337,6 +349,52 @@ export function paymentMiddlewareFromHTTPServer(
           requestContext: context,
         };
         request.x402RawGuard = guardReplyRaw(reply);
+        return;
+      }
+
+      case "payment-presettle": {
+        try {
+          const settleResult = await result.settle();
+          if (!settleResult.success) {
+            return reply.status(402).send({
+              error: settleResult.error ?? "subscription settle failed",
+            });
+          }
+          if (settleResult.headers) {
+            for (const [k, v] of Object.entries(settleResult.headers)) {
+              reply.header(k, v);
+            }
+          }
+          request.x402 = {
+            ...(request.x402 ?? {}),
+            subscription: settleResult.data?.subscription,
+            subId: settleResult.data?.subId,
+            paymentPayload: result.paymentPayload,
+            paymentRequirements: result.paymentRequirements,
+            settleResult,
+          };
+          return;
+        } catch (err) {
+          if (err instanceof FacilitatorResponseError) {
+            return sendFacilitatorError(reply, err);
+          }
+          console.error("payment-presettle error:", err);
+          return reply.status(402).send({
+            error: err instanceof Error ? err.message : "subscription settle threw",
+          });
+        }
+      }
+
+      case "access-verified": {
+        if (result.headers) {
+          for (const [k, v] of Object.entries(result.headers)) {
+            reply.header(k, v);
+          }
+        }
+        request.x402 = {
+          ...(request.x402 ?? {}),
+          subscription: result.subscription,
+        };
         return;
       }
     }

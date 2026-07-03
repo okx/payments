@@ -42,6 +42,9 @@ export type { SessionKeySigner } from "./deferred";
 // Constants
 export {
   PERMIT2_ADDRESS,
+  SUBSCRIPTION_CONTRACT_ADDRESS,
+  SUBSCRIPTION_DOMAIN_NAME,
+  SUBSCRIPTION_DOMAIN_VERSION,
   x402ExactPermit2ProxyAddress,
   x402UptoPermit2ProxyAddress,
   permit2WitnessTypes,
@@ -51,3 +54,9 @@ export {
   x402ExactPermit2ProxyABI,
   x402UptoPermit2ProxyABI,
 } from "./constants";
+
+// Default stablecoin lookup — same map exact / upto / aggr_deferred / now
+// period use to pick a per-network token without forcing the
+// seller to hardcode an ERC-20 address.
+export { DEFAULT_STABLECOINS, getDefaultAsset } from "./shared/defaultAssets";
+export type { DefaultAssetInfo, ExactDefaultAssetInfo } from "./shared/defaultAssets";

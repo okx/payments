@@ -233,7 +233,7 @@ export async function verifyUptoPermit2(
   }
 
   const facilitatorAddress = getAddress(permit2Payload.permit2Authorization.witness.facilitator);
-  // Per spec §Phase 3 Step 7: simulate with requirements.amount (the worst-case charge).
+  // Simulate with requirements.amount (the worst-case charge).
   // At verify time, requirements.amount = max authorized amount.
   // At settle time, requirements.amount = actual settlement amount (≤ max).
   const uptoSettleArgs = buildUptoPermit2SettleArgs(
