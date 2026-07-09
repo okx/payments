@@ -314,6 +314,7 @@ class PaymentMiddleware:
         paywall_config: PaywallConfig | None = None,
         paywall_provider: PaywallProvider | None = None,
         sync_facilitator_on_start: bool = True,
+        exempt_payers: list[str] | None = None,
     ) -> None:
         """Initialize Flask payment middleware.
 
@@ -324,13 +325,14 @@ class PaymentMiddleware:
             paywall_config: Optional paywall configuration.
             paywall_provider: Optional custom paywall provider.
             sync_facilitator_on_start: Initialize on first protected request.
+            exempt_payers: Payer addresses served without payment (empty disables).
         """
         # Auto-register bazaar extension if routes declare it
         if _check_if_bazaar_needed(routes):
             _register_bazaar_extension(server)
 
         self._app = app
-        self._http_server = x402HTTPResourceServerSync(server, routes)
+        self._http_server = x402HTTPResourceServerSync(server, routes, exempt_payers=exempt_payers)
         self._paywall_config = paywall_config
         self._sync_on_start = sync_facilitator_on_start
         self._init_done = False
@@ -498,6 +500,7 @@ def payment_middleware(
     paywall_config: PaywallConfig | None = None,
     paywall_provider: PaywallProvider | None = None,
     sync_facilitator_on_start: bool = True,
+    exempt_payers: list[str] | None = None,
 ) -> PaymentMiddleware:
     """Create Flask payment middleware with pre-configured server.
 
@@ -508,12 +511,19 @@ def payment_middleware(
         paywall_config: Optional paywall UI configuration.
         paywall_provider: Optional custom paywall provider.
         sync_facilitator_on_start: Fetch facilitator support on first request.
+        exempt_payers: Payer addresses served without payment (empty disables).
 
     Returns:
         PaymentMiddleware instance.
     """
     return PaymentMiddleware(
-        app, routes, server, paywall_config, paywall_provider, sync_facilitator_on_start
+        app,
+        routes,
+        server,
+        paywall_config,
+        paywall_provider,
+        sync_facilitator_on_start,
+        exempt_payers,
     )
 
 
@@ -525,6 +535,7 @@ def payment_middleware_from_config(
     paywall_config: PaywallConfig | None = None,
     paywall_provider: PaywallProvider | None = None,
     sync_facilitator_on_start: bool = True,
+    exempt_payers: list[str] | None = None,
 ) -> PaymentMiddleware:
     """Create Flask payment middleware from configuration.
 
@@ -549,5 +560,11 @@ def payment_middleware_from_config(
             server.register(registration["network"], registration["server"])
 
     return PaymentMiddleware(
-        app, routes, server, paywall_config, paywall_provider, sync_facilitator_on_start
+        app,
+        routes,
+        server,
+        paywall_config,
+        paywall_provider,
+        sync_facilitator_on_start,
+        exempt_payers,
     )

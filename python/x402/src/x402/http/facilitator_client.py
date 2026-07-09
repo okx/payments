@@ -164,6 +164,23 @@ class HTTPFacilitatorClient(HTTPFacilitatorClientBase):
             requirements.model_dump(by_alias=True, exclude_none=True),
         )
 
+    async def verify_signature(
+        self,
+        payload: PaymentPayload | PaymentPayloadV1,
+        requirements: PaymentRequirements | PaymentRequirementsV1 | None = None,
+    ) -> VerifyResponse:
+        """Verify the payment signature (async). requirements is optional."""
+        requirements_dict = (
+            requirements.model_dump(by_alias=True, exclude_none=True)
+            if requirements is not None
+            else None
+        )
+        return await self._verify_signature_http(
+            payload.x402_version,
+            payload.model_dump(by_alias=True, exclude_none=True),
+            requirements_dict,
+        )
+
     async def settle(
         self,
         payload: PaymentPayload | PaymentPayloadV1,
@@ -290,6 +307,29 @@ class HTTPFacilitatorClient(HTTPFacilitatorClientBase):
 
         return _parse_facilitator_response(response, VerifyResponse, "verify")
 
+    async def _verify_signature_http(
+        self,
+        version: int,
+        payload_dict: dict[str, Any],
+        requirements_dict: dict[str, Any] | None,
+    ) -> VerifyResponse:
+        """Internal verify-signature via HTTP (async)."""
+        client = self._get_async_client()
+        request_body = self._build_verify_signature_body(version, payload_dict, requirements_dict)
+
+        response = await client.post(
+            f"{self._url}/verify-signature",
+            headers=self._get_verify_headers(),
+            json=request_body,
+        )
+
+        if response.status_code != 200:
+            raise ValueError(
+                f"Facilitator verify-signature failed ({response.status_code}): {response.text}"
+            )
+
+        return _parse_facilitator_response(response, VerifyResponse, "verify-signature")
+
     async def _settle_http(
         self,
         version: int,
@@ -380,6 +420,23 @@ class HTTPFacilitatorClientSync(HTTPFacilitatorClientBase):
             payload.x402_version,
             payload.model_dump(by_alias=True, exclude_none=True),
             requirements.model_dump(by_alias=True, exclude_none=True),
+        )
+
+    def verify_signature(
+        self,
+        payload: PaymentPayload | PaymentPayloadV1,
+        requirements: PaymentRequirements | PaymentRequirementsV1 | None = None,
+    ) -> VerifyResponse:
+        """Verify the payment signature. requirements is optional."""
+        requirements_dict = (
+            requirements.model_dump(by_alias=True, exclude_none=True)
+            if requirements is not None
+            else None
+        )
+        return self._verify_signature_http(
+            payload.x402_version,
+            payload.model_dump(by_alias=True, exclude_none=True),
+            requirements_dict,
         )
 
     def settle(
@@ -505,6 +562,29 @@ class HTTPFacilitatorClientSync(HTTPFacilitatorClientBase):
             raise ValueError(f"Facilitator verify failed ({response.status_code}): {response.text}")
 
         return _parse_facilitator_response(response, VerifyResponse, "verify")
+
+    def _verify_signature_http(
+        self,
+        version: int,
+        payload_dict: dict[str, Any],
+        requirements_dict: dict[str, Any] | None,
+    ) -> VerifyResponse:
+        """Internal verify-signature via HTTP."""
+        client = self._get_client()
+        request_body = self._build_verify_signature_body(version, payload_dict, requirements_dict)
+
+        response = client.post(
+            f"{self._url}/verify-signature",
+            headers=self._get_verify_headers(),
+            json=request_body,
+        )
+
+        if response.status_code != 200:
+            raise ValueError(
+                f"Facilitator verify-signature failed ({response.status_code}): {response.text}"
+            )
+
+        return _parse_facilitator_response(response, VerifyResponse, "verify-signature")
 
     def _settle_http(
         self,

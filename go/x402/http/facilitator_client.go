@@ -273,6 +273,17 @@ func (c *HTTPFacilitatorClient) Verify(ctx context.Context, payloadBytes []byte,
 	return c.verifyHTTP(ctx, version, payloadBytes, requirementsBytes)
 }
 
+// VerifySignature verifies the payment signature. requirementsBytes is
+// optional and omitted from the request body when nil.
+func (c *HTTPFacilitatorClient) VerifySignature(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.VerifyResponse, error) {
+	version, err := types.DetectVersion(payloadBytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to detect version: %w", err)
+	}
+
+	return c.verifySignatureHTTP(ctx, version, payloadBytes, requirementsBytes)
+}
+
 // Settle executes a payment (supports both V1 and V2)
 func (c *HTTPFacilitatorClient) Settle(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.SettleResponse, error) {
 	// Detect version from bytes
@@ -417,6 +428,73 @@ func (c *HTTPFacilitatorClient) verifyHTTP(ctx context.Context, version int, pay
 			)
 		}
 		return nil, fmt.Errorf("facilitator verify failed (%d): %s", resp.StatusCode, string(responseBody))
+	}
+
+	return parseVerifySuccessResponse(responseBody)
+}
+
+func (c *HTTPFacilitatorClient) verifySignatureHTTP(ctx context.Context, version int, payloadBytes, requirementsBytes []byte) (*x402.VerifyResponse, error) {
+	var payloadMap map[string]interface{}
+	if err := json.Unmarshal(payloadBytes, &payloadMap); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal payload: %w", err)
+	}
+
+	requestBody := map[string]interface{}{
+		"x402Version":    version,
+		"paymentPayload": payloadMap,
+	}
+
+	if len(requirementsBytes) > 0 {
+		var requirementsMap map[string]interface{}
+		if err := json.Unmarshal(requirementsBytes, &requirementsMap); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal requirements: %w", err)
+		}
+		requestBody["paymentRequirements"] = requirementsMap
+	}
+
+	body, err := json.Marshal(requestBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal verify-signature request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", c.url+"/verify-signature", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create verify-signature request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	if c.authProvider != nil {
+		authHeaders, err := c.authProvider.GetAuthHeaders(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get auth headers: %w", err)
+		}
+		for k, v := range authHeaders.Verify {
+			req.Header.Set(k, v)
+		}
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("verify-signature request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		var verifyResponse verifyResponseEnvelope
+		if err := json.Unmarshal(responseBody, &verifyResponse); err == nil && verifyResponse.InvalidReason != "" {
+			return nil, x402.NewVerifyError(
+				verifyResponse.InvalidReason,
+				verifyResponse.Payer,
+				verifyResponse.InvalidMessage,
+			)
+		}
+		return nil, fmt.Errorf("facilitator verify-signature failed (%d): %s", resp.StatusCode, string(responseBody))
 	}
 
 	return parseVerifySuccessResponse(responseBody)

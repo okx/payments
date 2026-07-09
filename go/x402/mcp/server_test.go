@@ -24,6 +24,10 @@ func (m *mockFacilitatorClient) Verify(ctx context.Context, payloadBytes []byte,
 	return &x402.VerifyResponse{IsValid: true, Payer: "test-payer"}, nil
 }
 
+func (m *mockFacilitatorClient) VerifySignature(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.VerifyResponse, error) {
+	return m.Verify(ctx, payloadBytes, requirementsBytes)
+}
+
 func (m *mockFacilitatorClient) Settle(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.SettleResponse, error) {
 	if m.settleFunc != nil {
 		return m.settleFunc(ctx, payloadBytes, requirementsBytes)

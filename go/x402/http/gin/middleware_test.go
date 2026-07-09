@@ -53,14 +53,22 @@ func (m *mockSchemeServer) EnhancePaymentRequirements(ctx context.Context, base 
 
 // mockFacilitatorClient implements x402.FacilitatorClient for testing
 type mockFacilitatorClient struct {
-	verifyFunc    func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.VerifyResponse, error)
-	settleFunc    func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.SettleResponse, error)
-	supportedFunc func(ctx context.Context) (x402.SupportedResponse, error)
+	verifyFunc          func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.VerifyResponse, error)
+	verifySignatureFunc func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.VerifyResponse, error)
+	settleFunc          func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.SettleResponse, error)
+	supportedFunc       func(ctx context.Context) (x402.SupportedResponse, error)
 }
 
 func (m *mockFacilitatorClient) Verify(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.VerifyResponse, error) {
 	if m.verifyFunc != nil {
 		return m.verifyFunc(ctx, payloadBytes, requirementsBytes)
+	}
+	return &x402.VerifyResponse{IsValid: true, Payer: "0xmock"}, nil
+}
+
+func (m *mockFacilitatorClient) VerifySignature(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.VerifyResponse, error) {
+	if m.verifySignatureFunc != nil {
+		return m.verifySignatureFunc(ctx, payloadBytes, requirementsBytes)
 	}
 	return &x402.VerifyResponse{IsValid: true, Payer: "0xmock"}, nil
 }
@@ -1494,6 +1502,137 @@ func TestResponseCapture_StatusSizeWritten(t *testing.T) {
 	}
 	if mock.size != 0 {
 		t.Errorf("Expected embedded writer size unchanged (0), got %d", mock.size)
+	}
+}
+
+// ============================================================================
+// Exempt-payer signature bypass
+// ============================================================================
+
+func exemptSupported(context.Context) (x402.SupportedResponse, error) {
+	return x402.SupportedResponse{
+		Kinds:      []x402.SupportedKind{{X402Version: 2, Scheme: "exact", Network: "eip155:1"}},
+		Extensions: []string{},
+		Signers:    make(map[string][]string),
+	}, nil
+}
+
+func exemptPaymentHeader(from string) string {
+	payload := x402.PaymentPayload{
+		X402Version: 2,
+		Payload: map[string]any{
+			"signature":     "0xsig",
+			"authorization": map[string]any{"from": from},
+		},
+		Accepted: x402.PaymentRequirements{
+			Scheme:            "exact",
+			Network:           "eip155:1",
+			Asset:             "USDC",
+			Amount:            "1000000",
+			PayTo:             "0xtest",
+			MaxTimeoutSeconds: 300,
+		},
+	}
+	b, _ := json.Marshal(payload)
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+type exemptCounters struct {
+	verify    bool
+	verifySig bool
+	settle    bool
+}
+
+func serveExemptGin(t *testing.T, exempt []string, sigValid bool, verifyErr error, from string) (*httptest.ResponseRecorder, *exemptCounters) {
+	t.Helper()
+	calls := &exemptCounters{}
+	mockClient := &mockFacilitatorClient{
+		verifyFunc: func(context.Context, []byte, []byte) (*x402.VerifyResponse, error) {
+			calls.verify = true
+			if verifyErr != nil {
+				return nil, verifyErr
+			}
+			return &x402.VerifyResponse{IsValid: true, Payer: "0xpayer"}, nil
+		},
+		verifySignatureFunc: func(context.Context, []byte, []byte) (*x402.VerifyResponse, error) {
+			calls.verifySig = true
+			return &x402.VerifyResponse{IsValid: sigValid, Payer: "0xpayer"}, nil
+		},
+		settleFunc: func(context.Context, []byte, []byte) (*x402.SettleResponse, error) {
+			calls.settle = true
+			return &x402.SettleResponse{Success: true, Transaction: "0xtx", Network: "eip155:1", Payer: "0xpayer"}, nil
+		},
+		supportedFunc: exemptSupported,
+	}
+
+	routes := x402http.RoutesConfig{
+		"GET /resource": x402http.RouteConfig{
+			Accepts: x402http.PaymentOptions{
+				{Scheme: "exact", PayTo: "0xtest", Price: "$1.00", Network: "eip155:1"},
+			},
+		},
+	}
+
+	opts := []MiddlewareOption{
+		WithFacilitatorClient(mockClient),
+		WithScheme("eip155:1", &mockSchemeServer{scheme: "exact"}),
+		WithSyncFacilitatorOnStart(true),
+		WithTimeout(5 * time.Second),
+	}
+	if len(exempt) > 0 {
+		opts = append(opts, WithExemptPayers(exempt))
+	}
+
+	router := gin.New()
+	router.Use(PaymentMiddlewareFromConfig(routes, opts...))
+	router.GET("/resource", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"data": "resource"})
+	})
+
+	req := httptest.NewRequest("GET", "/resource", nil)
+	req.Header.Set("PAYMENT-SIGNATURE", exemptPaymentHeader(from))
+	req.Host = "example.com"
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	return w, calls
+}
+
+// An exempt payer with a valid signature is served without a verify or settle,
+// even when the balance check would fail.
+func TestExempt_ServedWithoutVerifyOrSettle(t *testing.T) {
+	w, calls := serveExemptGin(t, []string{"0xReviewer"}, true, fmt.Errorf("insufficient_funds"), "0xReviewer")
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if !calls.verifySig || calls.verify || calls.settle {
+		t.Errorf("expected verify-signature only, got verifySig=%v verify=%v settle=%v", calls.verifySig, calls.verify, calls.settle)
+	}
+}
+
+// A non-exempt payer takes the normal verify + settle path.
+func TestExempt_NonExemptTakesNormalPath(t *testing.T) {
+	w, calls := serveExemptGin(t, []string{"0xReviewer"}, true, nil, "0xSomeoneElse")
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if calls.verifySig || !calls.verify || !calls.settle {
+		t.Errorf("expected normal verify+settle, got verifySig=%v verify=%v settle=%v", calls.verifySig, calls.verify, calls.settle)
+	}
+}
+
+// A listed payer with an invalid signature falls through to the paid flow.
+func TestExempt_InvalidSignatureFallsThrough(t *testing.T) {
+	_, calls := serveExemptGin(t, []string{"0xReviewer"}, false, nil, "0xReviewer")
+	if !calls.verifySig || !calls.verify {
+		t.Errorf("expected fall-through to verify, got verifySig=%v verify=%v", calls.verifySig, calls.verify)
+	}
+}
+
+// The address match is case-insensitive.
+func TestExempt_CaseInsensitiveMatch(t *testing.T) {
+	w, calls := serveExemptGin(t, []string{"0xABCdef"}, true, nil, "0xabcDEF")
+	if w.Code != http.StatusOK || !calls.verifySig || calls.settle {
+		t.Errorf("expected case-insensitive bypass, got code=%d verifySig=%v settle=%v", w.Code, calls.verifySig, calls.settle)
 	}
 }
 

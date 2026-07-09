@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/okx/payments/go/x402"
 	x402http "github.com/okx/payments/go/x402/http"
+	"github.com/okx/payments/go/x402/subscription"
 )
 
 // Config provides struct-based configuration for x402 payment middleware.
@@ -41,6 +42,12 @@ type Config struct {
 
 	// SettlementHandler called after successful settlement (optional)
 	SettlementHandler func(*gin.Context, *x402.SettleResponse)
+
+	// Subscription support enables the period-scheme flows (optional)
+	Subscription *subscription.SubscriptionSupport
+
+	// ExemptPayers lists payer addresses served without payment (optional)
+	ExemptPayers []string
 }
 
 // SchemeConfig configures a payment scheme for a network.
@@ -123,6 +130,12 @@ func X402Payment(config Config) gin.HandlerFunc {
 	}
 	if config.SettlementHandler != nil {
 		opts = append(opts, WithSettlementHandler(config.SettlementHandler))
+	}
+	if config.Subscription != nil {
+		opts = append(opts, WithSubscription(config.Subscription))
+	}
+	if len(config.ExemptPayers) > 0 {
+		opts = append(opts, WithExemptPayers(config.ExemptPayers))
 	}
 
 	// Delegate to PaymentMiddlewareFromConfig (reuse all logic)

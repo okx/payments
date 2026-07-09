@@ -202,6 +202,7 @@ def payment_middleware(
     paywall_config: PaywallConfig | None = None,
     paywall_provider: PaywallProvider | None = None,
     sync_facilitator_on_start: bool = True,
+    exempt_payers: list[str] | None = None,
 ) -> Callable[[Request, Callable[[Request], Awaitable[Response]]], Awaitable[Response]]:
     """Create FastAPI payment middleware with pre-configured server.
 
@@ -252,7 +253,7 @@ def payment_middleware(
         _register_bazaar_extension(server)
 
     # Create HTTP server wrapper
-    http_server = x402HTTPResourceServer(server, routes)
+    http_server = x402HTTPResourceServer(server, routes, exempt_payers=exempt_payers)
 
     if paywall_provider:
         http_server.register_paywall_provider(paywall_provider)
@@ -393,6 +394,7 @@ def payment_middleware_from_config(
     paywall_config: PaywallConfig | None = None,
     paywall_provider: PaywallProvider | None = None,
     sync_facilitator_on_start: bool = True,
+    exempt_payers: list[str] | None = None,
 ) -> Callable[[Request, Callable[[Request], Awaitable[Response]]], Awaitable[Response]]:
     """Create FastAPI payment middleware from configuration.
 
@@ -423,6 +425,7 @@ def payment_middleware_from_config(
         paywall_config,
         paywall_provider,
         sync_facilitator_on_start,
+        exempt_payers,
     )
 
 
@@ -454,6 +457,7 @@ class PaymentMiddlewareASGI(BaseHTTPMiddleware):
         server: x402ResourceServer,
         paywall_config: PaywallConfig | None = None,
         paywall_provider: PaywallProvider | None = None,
+        exempt_payers: list[str] | None = None,
     ) -> None:
         """Initialize ASGI middleware.
 
@@ -463,9 +467,16 @@ class PaymentMiddlewareASGI(BaseHTTPMiddleware):
             server: x402ResourceServer instance.
             paywall_config: Optional paywall config.
             paywall_provider: Optional custom paywall provider.
+            exempt_payers: Payer addresses served without payment (empty disables).
         """
         super().__init__(app)
-        self._middleware = payment_middleware(routes, server, paywall_config, paywall_provider)
+        self._middleware = payment_middleware(
+            routes,
+            server,
+            paywall_config,
+            paywall_provider,
+            exempt_payers=exempt_payers,
+        )
 
     async def dispatch(
         self,

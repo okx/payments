@@ -102,12 +102,12 @@ def _validate_config(config: OKXFacilitatorConfig) -> None:
     """Validate that required OKX credentials are present."""
     auth = config.auth
     if not auth.api_key or not auth.secret_key or not auth.passphrase:
-        raise ValueError(
-            "OKX API credentials (api_key, secret_key, passphrase) are all required"
-        )
+        raise ValueError("OKX API credentials (api_key, secret_key, passphrase) are all required")
 
 
-def _dump_model(model: PaymentPayload | PaymentPayloadV1 | PaymentRequirements | PaymentRequirementsV1) -> dict[str, Any]:
+def _dump_model(
+    model: PaymentPayload | PaymentPayloadV1 | PaymentRequirements | PaymentRequirementsV1,
+) -> dict[str, Any]:
     """Dump a pydantic model to a JSON-safe dict."""
     return _to_json_safe(model.model_dump(by_alias=True, exclude_none=True))
 
@@ -172,6 +172,18 @@ class OKXFacilitatorClient:
         data = await self._do_request_async("POST", "/verify", body)
         return _parse_response(data, VerifyResponse, "verify")
 
+    async def verify_signature(
+        self,
+        payload: PaymentPayload | PaymentPayloadV1,
+        requirements: PaymentRequirements | PaymentRequirementsV1 | None = None,
+    ) -> VerifyResponse:
+        """Verify the payment signature via the OKX API. requirements is optional."""
+        body: dict[str, Any] = {"x402Version": 2, "paymentPayload": _dump_model(payload)}
+        if requirements is not None:
+            body["paymentRequirements"] = _dump_model(requirements)
+        data = await self._do_request_async("POST", "/verify-signature", body)
+        return _parse_response(data, VerifyResponse, "verify-signature")
+
     async def settle(
         self,
         payload: PaymentPayload | PaymentPayloadV1,
@@ -199,7 +211,10 @@ class OKXFacilitatorClient:
         return _parse_response(data, SettleStatusResponse, "settle/status")
 
     async def _do_request_async(
-        self, method: str, endpoint: str, body: dict[str, Any] | None = None,
+        self,
+        method: str,
+        endpoint: str,
+        body: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Perform an authenticated async HTTP request and unwrap envelope."""
         path = OKX_BASE_PATH + endpoint
@@ -226,7 +241,10 @@ class OKXFacilitatorClient:
         return _unwrap_envelope(response_data, endpoint)
 
     def _do_request_sync(
-        self, method: str, endpoint: str, body: dict[str, Any] | None = None,
+        self,
+        method: str,
+        endpoint: str,
+        body: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Perform an authenticated sync HTTP request (used by get_supported during init)."""
         path = OKX_BASE_PATH + endpoint
@@ -307,6 +325,18 @@ class OKXFacilitatorClientSync:
         data = self._do_request("POST", "/verify", body)
         return _parse_response(data, VerifyResponse, "verify")
 
+    def verify_signature(
+        self,
+        payload: PaymentPayload | PaymentPayloadV1,
+        requirements: PaymentRequirements | PaymentRequirementsV1 | None = None,
+    ) -> VerifyResponse:
+        """Verify the payment signature via the OKX API. requirements is optional."""
+        body: dict[str, Any] = {"x402Version": 2, "paymentPayload": _dump_model(payload)}
+        if requirements is not None:
+            body["paymentRequirements"] = _dump_model(requirements)
+        data = self._do_request("POST", "/verify-signature", body)
+        return _parse_response(data, VerifyResponse, "verify-signature")
+
     def settle(
         self,
         payload: PaymentPayload | PaymentPayloadV1,
@@ -334,7 +364,10 @@ class OKXFacilitatorClientSync:
         return _parse_response(data, SettleStatusResponse, "settle/status")
 
     def _do_request(
-        self, method: str, endpoint: str, body: dict[str, Any] | None = None,
+        self,
+        method: str,
+        endpoint: str,
+        body: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Perform an authenticated sync HTTP request and unwrap envelope."""
         path = OKX_BASE_PATH + endpoint

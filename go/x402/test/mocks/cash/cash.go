@@ -252,6 +252,12 @@ func (c *FacilitatorClient) Verify(ctx context.Context, payloadBytes []byte, req
 	return c.facilitator.Verify(ctx, payloadBytes, requirementsBytes)
 }
 
+// VerifySignature verifies the payment signature. The cash facilitator has no
+// separate signature-only path, so it reuses the full verification.
+func (c *FacilitatorClient) VerifySignature(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.VerifyResponse, error) {
+	return c.facilitator.Verify(ctx, payloadBytes, requirementsBytes)
+}
+
 // Settle settles a payment based on the payload and requirements
 func (c *FacilitatorClient) Settle(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.SettleResponse, error) {
 	// Pass bytes directly to facilitator (it will unmarshal internally)

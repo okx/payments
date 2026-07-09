@@ -268,7 +268,7 @@ NETWORK_CONFIGS: dict[str, NetworkConfig] = {
         "chain_id": 196,
         "default_asset": {
             "address": "0x779ded0c9e1022225f8e0630b35a9b54be713736",
-            "name": "USDT",
+            "name": "USD₮0",
             "version": "1",
             "decimals": 6,
         },

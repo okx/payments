@@ -64,6 +64,9 @@ logger = logging.getLogger("x402")
 DEFAULT_POLL_INTERVAL = 1.0  # seconds between settle/status polls
 DEFAULT_POLL_DEADLINE = 5.0  # maximum seconds to poll settle/status
 
+# Schemes the exempt-payer bypass applies to.
+_EXEMPT_ELIGIBLE_SCHEMES = frozenset({"exact", "aggr_deferred"})
+
 # Callable: (tx_hash, network) -> confirmed
 OnSettlementTimeoutHook = Callable[[str, str], bool]
 
@@ -97,7 +100,9 @@ class PaywallProvider(Protocol):
 # ============================================================================
 
 # Phase for generator yields
-ProcessPhase = Literal["resolve_options", "verify_payment", "build_requirements"]
+ProcessPhase = Literal[
+    "resolve_options", "verify_payment", "verify_signature", "build_requirements"
+]
 ProcessCommand = tuple[ProcessPhase, Any, Any]  # (phase, target, context)
 
 
@@ -117,12 +122,14 @@ class x402HTTPServerBase:
         self,
         server: x402ResourceServer | x402ResourceServerSync,
         routes: RoutesConfig,
+        exempt_payers: list[str] | None = None,
     ) -> None:
         """Create HTTP resource server.
 
         Args:
             server: Core x402ResourceServer instance.
             routes: Route configuration for payment-protected endpoints.
+            exempt_payers: Payer addresses served without payment (empty disables).
         """
         self._server = server
         self._routes_config = routes
@@ -130,6 +137,9 @@ class x402HTTPServerBase:
         self._paywall_provider: PaywallProvider | None = None
         self._poll_deadline: float = DEFAULT_POLL_DEADLINE
         self._timeout_recovery_hook: OnSettlementTimeoutHook | None = None
+        self._exempt_payers: frozenset[str] = (
+            frozenset(addr.lower() for addr in exempt_payers) if exempt_payers else frozenset()
+        )
 
         # Compile routes
         self._compile_routes(routes)
@@ -408,6 +418,17 @@ class x402HTTPServerBase:
                 ),
             )
 
+        # Exempt payers are served for free once the facilitator confirms their
+        # signature; on invalid signature, fall through to the paid flow.
+        if (
+            self._exempt_payers
+            and matching_reqs.scheme in _EXEMPT_ELIGIBLE_SCHEMES
+            and self._payload_is_exempt(payment_payload)
+        ):
+            sig_result = yield ("verify_signature", payment_payload, None)
+            if sig_result.is_valid:
+                return HTTPProcessResult(type=RESULT_NO_PAYMENT_REQUIRED)
+
         # Verify payment (yield for async/sync handling)
         try:
             verify_result = yield (
@@ -498,7 +519,8 @@ class x402HTTPServerBase:
                 recovered = False
                 if settle_response.transaction:
                     recovered = self._recover_from_timeout(
-                        settle_response.transaction, requirements,
+                        settle_response.transaction,
+                        requirements,
                     )
                 if not recovered:
                     failure = ProcessSettleResult(
@@ -634,6 +656,20 @@ class x402HTTPServerBase:
     # =========================================================================
     # Internal Methods
     # =========================================================================
+
+    def _payload_is_exempt(self, payload: PaymentPayload | PaymentPayloadV1) -> bool:
+        """Report whether the payload's payer (authorization.from or
+        permit2Authorization.from) is in the exempt set."""
+        payload_data = getattr(payload, "payload", None)
+        if not isinstance(payload_data, dict):
+            return False
+        for key in ("authorization", "permit2Authorization"):
+            auth = payload_data.get(key)
+            if isinstance(auth, dict):
+                from_addr = str(auth.get("from") or "").lower()
+                if from_addr and from_addr in self._exempt_payers:
+                    return True
+        return False
 
     def _extract_payment(self, adapter: HTTPAdapter) -> PaymentPayload | PaymentPayloadV1 | None:
         """Extract payment from HTTP headers (V2 only)."""
@@ -903,7 +939,7 @@ class x402HTTPServerBase:
             "appLogo": app_logo,
             "amount": display_amount,
             "testnet": testnet,
-            "displayAmount": round(display_amount, 2),
+            "displayAmount": round(display_amount, 6),
             "currentUrl": current_url,
         }
         config_script = (
@@ -919,6 +955,8 @@ class x402HTTPServerBase:
     ) -> str:
         """Generate fallback HTML when templates not available."""
         display_amount = self._get_display_amount(payment_required)
+        amount_str = self._format_display_amount(display_amount)
+        currency = html.escape(self._get_display_currency(payment_required))
         resource_desc = ""
         if payment_required.resource:
             resource_desc = payment_required.resource.description or payment_required.resource.url
@@ -945,7 +983,7 @@ class x402HTTPServerBase:
     {app_logo}
     <h1>{title}</h1>
     <p><strong>Resource:</strong> {html.escape(resource_desc)}</p>
-    <p><strong>Amount:</strong> ${display_amount:.2f} USDC</p>
+    <p><strong>Amount:</strong> {amount_str} {currency}</p>
     <div id="payment-widget" data-requirements='{html.escape(payment_data)}'>
         <p style="padding: 1rem; background: #fef3c7;">
             Payment widget not available. Use an x402-compatible client.
@@ -965,3 +1003,21 @@ class x402HTTPServerBase:
                 except (ValueError, TypeError):
                     pass
         return 0.0
+
+    @staticmethod
+    def _format_display_amount(amount: float) -> str:
+        """Format a display amount with up to 6 decimal places, no trailing zeros."""
+        formatted = f"{amount:.6f}".rstrip("0").rstrip(".")
+        return formatted or "0"
+
+    @staticmethod
+    def _get_display_currency(payment_required: PaymentRequired) -> str:
+        """Resolve the token name to display, falling back to a generic label."""
+        if payment_required.accepts:
+            first = payment_required.accepts[0]
+            extra = getattr(first, "extra", None)
+            if extra:
+                name = extra.get("name")
+                if name:
+                    return name
+        return "tokens"

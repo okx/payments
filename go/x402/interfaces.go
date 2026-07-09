@@ -221,6 +221,10 @@ type FacilitatorClient interface {
 	// Verify a payment (detects version from bytes, routes internally)
 	Verify(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*VerifyResponse, error)
 
+	// VerifySignature verifies only the payment signature.
+	// requirementsBytes is optional and may be nil.
+	VerifySignature(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*VerifyResponse, error)
+
 	// Settle a payment (detects version from bytes, routes internally)
 	Settle(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*SettleResponse, error)
 

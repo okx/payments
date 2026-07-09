@@ -12,19 +12,34 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
 
 	"github.com/okx/payments/go/x402"
-	echomw "github.com/okx/payments/go/x402/http/echo"
 	x402http "github.com/okx/payments/go/x402/http"
+	echomw "github.com/okx/payments/go/x402/http/echo"
 	deferred "github.com/okx/payments/go/x402/mechanisms/evm/deferred/server"
 	exact "github.com/okx/payments/go/x402/mechanisms/evm/exact/server"
 	uptoserver "github.com/okx/payments/go/x402/mechanisms/evm/upto/server"
 )
 
 func boolPtr(b bool) *bool { return &b }
+
+// parseExemptPayers splits a CSV of payer addresses, dropping blanks.
+func parseExemptPayers(csv string) []string {
+	if csv == "" {
+		return nil
+	}
+	var out []string
+	for _, p := range strings.Split(csv, ",") {
+		if t := strings.TrimSpace(p); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
 
 func makeRoute(payTo, description string) x402http.RouteConfig {
 	return x402http.RouteConfig{
@@ -94,10 +109,11 @@ func main() {
 			"GET /resource/sync": makeRoute(payTo, "Premium X Layer data (sync)"),
 		}
 		syncGroup := e.Group("/", echomw.X402Payment(echomw.Config{
-			Routes:      syncRoutes,
-			Facilitator: syncClient,
-			Schemes:     schemes(),
-			Timeout:     300 * time.Second,
+			Routes:       syncRoutes,
+			Facilitator:  syncClient,
+			Schemes:      schemes(),
+			ExemptPayers: parseExemptPayers(os.Getenv("EXEMPT_PAYERS")),
+			Timeout:      300 * time.Second,
 		}))
 		syncGroup.GET("/resource/sync", func(c echo.Context) error {
 			return c.JSON(http.StatusOK, map[string]any{

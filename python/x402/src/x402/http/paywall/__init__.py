@@ -123,6 +123,24 @@ def _get_display_amount(payment_required: PaymentRequired) -> float:
     return 0.0
 
 
+def _format_amount(amount: float) -> str:
+    """Format a display amount with up to 6 decimal places, no trailing zeros."""
+    formatted = f"{amount:.6f}".rstrip("0").rstrip(".")
+    return formatted or "0"
+
+
+def _get_display_currency(payment_required: PaymentRequired) -> str:
+    """Resolve the token name to display, falling back to a generic label."""
+    if payment_required.accepts:
+        first = payment_required.accepts[0]
+        extra = getattr(first, "extra", None)
+        if extra:
+            name = extra.get("name")
+            if name:
+                return name
+    return "tokens"
+
+
 @dataclass
 class EvmPaywallHandler:
     """EVM network paywall handler."""
@@ -175,6 +193,8 @@ class EvmPaywallHandler:
     ) -> str:
         """Generate fallback HTML when template not available."""
         amount = _get_display_amount(payment_required)
+        amount_str = _format_amount(amount)
+        currency = html.escape(_get_display_currency(payment_required))
         app_name = config.app_name if config else ""
         title = f"{html.escape(app_name)} - Payment Required" if app_name else "Payment Required"
 
@@ -187,7 +207,7 @@ class EvmPaywallHandler:
 </head>
 <body style="max-width: 600px; margin: 50px auto; padding: 20px; font-family: system-ui;">
     <h1>{title}</h1>
-    <p><strong>Amount:</strong> ${amount:.2f} USDC</p>
+    <p><strong>Amount:</strong> {amount_str} {currency}</p>
     <p style="padding: 1rem; background: #fef3c7;">
         EVM Paywall template not found. Run 'pnpm build:paywall' in typescript/packages/http/paywall.
     </p>
@@ -252,6 +272,8 @@ class SvmPaywallHandler:
     ) -> str:
         """Generate fallback HTML when template not available."""
         amount = _get_display_amount(payment_required)
+        amount_str = _format_amount(amount)
+        currency = html.escape(_get_display_currency(payment_required))
         app_name = config.app_name if config else ""
         title = f"{html.escape(app_name)} - Payment Required" if app_name else "Payment Required"
 
@@ -264,7 +286,7 @@ class SvmPaywallHandler:
 </head>
 <body style="max-width: 600px; margin: 50px auto; padding: 20px; font-family: system-ui;">
     <h1>{title}</h1>
-    <p><strong>Amount:</strong> ${amount:.2f} USDC</p>
+    <p><strong>Amount:</strong> {amount_str} {currency}</p>
     <p style="padding: 1rem; background: #fef3c7;">
         SVM Paywall template not found. Run 'pnpm build:paywall' in typescript/packages/http/paywall.
     </p>

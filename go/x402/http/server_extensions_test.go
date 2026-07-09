@@ -56,6 +56,9 @@ type extTestFacilitatorClient struct {
 func (m *extTestFacilitatorClient) Verify(_ context.Context, _, _ []byte) (*x402.VerifyResponse, error) {
 	return &x402.VerifyResponse{IsValid: true, Payer: "0xmock"}, nil
 }
+func (m *extTestFacilitatorClient) VerifySignature(_ context.Context, _, _ []byte) (*x402.VerifyResponse, error) {
+	return &x402.VerifyResponse{IsValid: true, Payer: "0xmock"}, nil
+}
 func (m *extTestFacilitatorClient) Settle(_ context.Context, _, _ []byte) (*x402.SettleResponse, error) {
 	return &x402.SettleResponse{Success: true, Transaction: "0xmock", Network: "eip155:1", Payer: "0xmock"}, nil
 }

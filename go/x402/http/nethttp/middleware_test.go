@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/okx/payments/go/x402"
 	x402http "github.com/okx/payments/go/x402/http"
+	"github.com/okx/payments/go/x402/subscription"
 	"github.com/okx/payments/go/x402/types"
 )
 
@@ -41,14 +43,22 @@ func (m *mockSchemeServer) EnhancePaymentRequirements(ctx context.Context, base 
 
 // mockFacilitatorClient implements x402.FacilitatorClient for testing.
 type mockFacilitatorClient struct {
-	verifyFunc    func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.VerifyResponse, error)
-	settleFunc    func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.SettleResponse, error)
-	supportedFunc func(ctx context.Context) (x402.SupportedResponse, error)
+	verifyFunc          func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.VerifyResponse, error)
+	verifySignatureFunc func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.VerifyResponse, error)
+	settleFunc          func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.SettleResponse, error)
+	supportedFunc       func(ctx context.Context) (x402.SupportedResponse, error)
 }
 
 func (m *mockFacilitatorClient) Verify(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.VerifyResponse, error) {
 	if m.verifyFunc != nil {
 		return m.verifyFunc(ctx, payloadBytes, requirementsBytes)
+	}
+	return &x402.VerifyResponse{IsValid: true, Payer: "0xmock"}, nil
+}
+
+func (m *mockFacilitatorClient) VerifySignature(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.VerifyResponse, error) {
+	if m.verifySignatureFunc != nil {
+		return m.verifySignatureFunc(ctx, payloadBytes, requirementsBytes)
 	}
 	return &x402.VerifyResponse{IsValid: true, Payer: "0xmock"}, nil
 }
@@ -1142,6 +1152,457 @@ func TestPaymentMiddlewareFromHTTPServer_Returns402ForProtectedRoute(t *testing.
 
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected status 200 for public route, got %d", w.Code)
+	}
+}
+
+// ============================================================================
+// Period Subscription Settlement Tests
+// ============================================================================
+
+func boolPtr(b bool) *bool { return &b }
+
+// captureSubscriptionFacilitator records the syncSettle flag the middleware
+// passes down when settling a period subscribe, and returns an already-active
+// subscription so settlement does not poll.
+type captureSubscriptionFacilitator struct {
+	createSyncSettle *bool
+}
+
+func (c *captureSubscriptionFacilitator) CreateSubscription(_ context.Context, req *subscription.CreateSubscriptionRequest) (*subscription.CreateSubscriptionResponse, error) {
+	v := req.SyncSettle
+	c.createSyncSettle = &v
+	return &subscription.CreateSubscriptionResponse{SubID: "0xnew", State: subscription.StateActive}, nil
+}
+func (c *captureSubscriptionFacilitator) Charge(_ context.Context, _ *subscription.ChargeRequest) (*subscription.ChargeResponse, error) {
+	return &subscription.ChargeResponse{}, nil
+}
+func (c *captureSubscriptionFacilitator) ChangeSubscription(_ context.Context, _ *subscription.ChangeSubscriptionRequest) (*subscription.ChangeResponse, error) {
+	return &subscription.ChangeResponse{NewSubID: "0xnew", State: subscription.StateActive}, nil
+}
+func (c *captureSubscriptionFacilitator) CancelSubscription(_ context.Context, req *subscription.CancelSubscriptionRequest) (*subscription.TxResultResponse, error) {
+	return &subscription.TxResultResponse{SubID: req.SubID}, nil
+}
+func (c *captureSubscriptionFacilitator) CancelPendingChange(_ context.Context, req *subscription.CancelPendingChangeRequest) (*subscription.TxResultResponse, error) {
+	return &subscription.TxResultResponse{SubID: req.SubID}, nil
+}
+func (c *captureSubscriptionFacilitator) FinalizeExpired(_ context.Context, req *subscription.FinalizeExpiredRequest) (*subscription.TxResultResponse, error) {
+	return &subscription.TxResultResponse{SubID: req.SubID}, nil
+}
+func (c *captureSubscriptionFacilitator) GetSubscription(_ context.Context, _ string) (*subscription.SubscriptionStatus, error) {
+	return nil, nil
+}
+func (c *captureSubscriptionFacilitator) GetCharges(_ context.Context, _ string, _, _ int) (*subscription.ChargesResponse, error) {
+	return &subscription.ChargesResponse{}, nil
+}
+func (c *captureSubscriptionFacilitator) GetPendingChange(_ context.Context, _ string) (*subscription.PendingPlanChange, error) {
+	return nil, nil
+}
+
+// periodSubscribeHeader builds a base64 PAYMENT-SIGNATURE for a period subscribe
+// whose signed terms match the pro plan advertised by periodSubscribeRoute.
+func periodSubscribeHeader(t *testing.T) string {
+	t.Helper()
+	terms := subscription.SubscriptionTerms{
+		Merchant:             "0xmerchant",
+		Token:                "0xtok",
+		AmountPerPeriod:      "5000",
+		PeriodSec:            2592000,
+		MaxPeriods:           12,
+		PlanID:               "pro",
+		PlanTier:             2,
+		PeriodMode:           subscription.PeriodModeFixed,
+		InitialChargePeriods: 1,
+		InitialChargeAmount:  "5000",
+		StartAt:              0,
+		ChangeFromSubID:      "0x0000000000000000000000000000000000000000000000000000000000000000",
+	}
+	inner := subscription.SubscriptionPayloadInner{
+		Terms:                 terms,
+		TermsSignature:        "0xtermsig",
+		PermitSingleSignature: "0xpermitsig",
+	}
+	innerJSON, err := json.Marshal(inner)
+	if err != nil {
+		t.Fatalf("marshal inner: %v", err)
+	}
+	var innerMap map[string]any
+	if err := json.Unmarshal(innerJSON, &innerMap); err != nil {
+		t.Fatalf("decode inner map: %v", err)
+	}
+
+	payload := x402.PaymentPayload{
+		X402Version: 2,
+		Payload:     innerMap,
+		Accepted: x402.PaymentRequirements{
+			Scheme:            subscription.SchemePeriod,
+			Network:           "eip155:196",
+			Asset:             "0xtok",
+			PayTo:             "0xmerchant",
+			Amount:            "5000",
+			MaxTimeoutSeconds: 300,
+		},
+	}
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	return base64.StdEncoding.EncodeToString(payloadJSON)
+}
+
+// periodSubscribeRoutes advertises a single pro plan on POST /subscribe with the
+// given per-route SyncSettle setting.
+func periodSubscribeRoutes(syncSettle *bool) x402http.RoutesConfig {
+	plan := subscription.SubscriptionPlan{
+		ID:                   "pro",
+		Tier:                 2,
+		Network:              "eip155:196",
+		PayTo:                "0xmerchant",
+		AmountPerPeriod:      "5000",
+		PeriodSec:            2592000,
+		PeriodMode:           subscription.PeriodModeFixed,
+		MaxPeriods:           12,
+		InitialChargePeriods: 1,
+		InitialChargeAmount:  "5000",
+	}
+	return x402http.RoutesConfig{
+		"POST /subscribe": x402http.RouteConfig{
+			Accepts: x402http.PaymentOptions{
+				{
+					Scheme:  subscription.SchemePeriod,
+					Price:   map[string]any{"amount": "5000", "asset": "0xtok"},
+					Network: "eip155:196",
+					PayTo:   "0xmerchant",
+					Extra:   plan.BuildExtra(),
+				},
+			},
+			SyncSettle: syncSettle,
+		},
+	}
+}
+
+// TestPeriodSubscribeSettlesWithRouteSyncSettle verifies the period subscribe
+// path derives the settlement mode from the route's SyncSettle: a nil pointer
+// stays synchronous (the prior hardcoded behavior), and an explicit value is
+// honored.
+func TestPeriodSubscribeSettlesWithRouteSyncSettle(t *testing.T) {
+	cases := []struct {
+		name     string
+		route    *bool
+		expected bool
+	}{
+		{"nil defaults to synchronous", nil, true},
+		{"explicit sync", boolPtr(true), true},
+		{"explicit async", boolPtr(false), false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			facilitator := &captureSubscriptionFacilitator{}
+			support := subscription.NewSupport(facilitator, subscription.AccessWindowSecs)
+
+			periodScheme := subscription.NewPeriodScheme().
+				WithFacilitator("0xfacilitator").
+				WithSubscriptionContract("0xsubscription").
+				WithPermit2Contract("0xpermit2")
+
+			nextCalled := false
+			handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				nextCalled = true
+				w.WriteHeader(http.StatusOK)
+				_ = json.NewEncoder(w).Encode(map[string]string{"data": "granted"})
+			})
+
+			middleware := X402Payment(Config{
+				Routes:       periodSubscribeRoutes(tc.route),
+				Schemes:      []SchemeConfig{{Network: "eip155:196", Server: periodScheme}},
+				Subscription: support,
+				Timeout:      5 * time.Second,
+			})
+			wrapped := middleware(handler)
+
+			req := httptest.NewRequest("POST", "/subscribe", nil)
+			req.Header.Set("PAYMENT-SIGNATURE", periodSubscribeHeader(t))
+			req.Host = "example.com"
+
+			w := httptest.NewRecorder()
+			wrapped.ServeHTTP(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected status 200, got %d. Body: %s", w.Code, w.Body.String())
+			}
+			if !nextCalled {
+				t.Error("expected the protected handler to be served after settlement")
+			}
+			if facilitator.createSyncSettle == nil {
+				t.Fatal("expected CreateSubscription to be called")
+			}
+			if *facilitator.createSyncSettle != tc.expected {
+				t.Errorf("expected syncSettle %v, got %v", tc.expected, *facilitator.createSyncSettle)
+			}
+		})
+	}
+}
+
+// ============================================================================
+// Exempt-payer signature bypass
+// ============================================================================
+
+// exemptPaymentHeader builds a base64 PAYMENT-SIGNATURE whose authorization.from
+// is the given address, carrying the given scheme.
+func exemptPaymentHeader(from, scheme string) string {
+	payload := x402.PaymentPayload{
+		X402Version: 2,
+		Payload: map[string]any{
+			"signature":     "0xsig",
+			"authorization": map[string]any{"from": from},
+		},
+		Accepted: x402.PaymentRequirements{
+			Scheme:            scheme,
+			Network:           "eip155:1",
+			Asset:             "USDC",
+			Amount:            "1000000",
+			PayTo:             "0xtest",
+			MaxTimeoutSeconds: 300,
+		},
+	}
+	b, _ := json.Marshal(payload)
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+// permit2PaymentHeader builds a header whose payer is under permit2Authorization.
+func permit2PaymentHeader(from string) string {
+	payload := x402.PaymentPayload{
+		X402Version: 2,
+		Payload: map[string]any{
+			"signature":            "0xsig",
+			"permit2Authorization": map[string]any{"from": from},
+		},
+		Accepted: x402.PaymentRequirements{
+			Scheme:            "exact",
+			Network:           "eip155:1",
+			Asset:             "USDC",
+			Amount:            "1000000",
+			PayTo:             "0xtest",
+			MaxTimeoutSeconds: 300,
+		},
+	}
+	b, _ := json.Marshal(payload)
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+type exemptCounters struct {
+	verify    bool
+	verifySig bool
+	settle    bool
+}
+
+// schemeSupportedFunc reports facilitator support for a single scheme.
+func schemeSupportedFunc(scheme string) func(ctx context.Context) (x402.SupportedResponse, error) {
+	return func(ctx context.Context) (x402.SupportedResponse, error) {
+		return x402.SupportedResponse{
+			Kinds:      []x402.SupportedKind{{X402Version: 2, Scheme: scheme, Network: "eip155:1"}},
+			Extensions: []string{},
+			Signers:    make(map[string][]string),
+		}, nil
+	}
+}
+
+// buildExemptMiddleware wires a middleware for the given scheme and exempt list
+// with a mock facilitator that records which calls it receives.
+func buildExemptMiddleware(t *testing.T, scheme string, exempt []string, sigValid bool, verifyErr error) (func(http.Handler) http.Handler, *exemptCounters) {
+	t.Helper()
+	calls := &exemptCounters{}
+	mockClient := &mockFacilitatorClient{
+		verifyFunc: func(context.Context, []byte, []byte) (*x402.VerifyResponse, error) {
+			calls.verify = true
+			if verifyErr != nil {
+				return nil, verifyErr
+			}
+			return &x402.VerifyResponse{IsValid: true, Payer: "0xpayer"}, nil
+		},
+		verifySignatureFunc: func(context.Context, []byte, []byte) (*x402.VerifyResponse, error) {
+			calls.verifySig = true
+			return &x402.VerifyResponse{IsValid: sigValid, Payer: "0xpayer"}, nil
+		},
+		settleFunc: func(context.Context, []byte, []byte) (*x402.SettleResponse, error) {
+			calls.settle = true
+			return &x402.SettleResponse{Success: true, Transaction: "0xtx", Network: "eip155:1", Payer: "0xpayer"}, nil
+		},
+		supportedFunc: schemeSupportedFunc(scheme),
+	}
+
+	routes := x402http.RoutesConfig{
+		"GET /resource": x402http.RouteConfig{
+			Accepts: x402http.PaymentOptions{
+				{Scheme: scheme, PayTo: "0xtest", Price: "$1.00", Network: "eip155:1"},
+			},
+		},
+	}
+
+	opts := []MiddlewareOption{
+		WithFacilitatorClient(mockClient),
+		WithScheme("eip155:1", &mockSchemeServer{scheme: scheme}),
+		WithSyncFacilitatorOnStart(true),
+		WithTimeout(5 * time.Second),
+	}
+	if len(exempt) > 0 {
+		opts = append(opts, WithExemptPayers(exempt))
+	}
+
+	return PaymentMiddlewareFromConfig(routes, opts...), calls
+}
+
+func serveExempt(mw func(http.Handler) http.Handler, from, scheme string) *httptest.ResponseRecorder {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]string{"data": "resource"})
+	})
+	req := httptest.NewRequest("GET", "/resource", nil)
+	req.Header.Set("PAYMENT-SIGNATURE", exemptPaymentHeader(from, scheme))
+	req.Host = "example.com"
+	w := httptest.NewRecorder()
+	mw(handler).ServeHTTP(w, req)
+	return w
+}
+
+// An exempt payer with a valid signature is served without a verify or a settle
+// call, even when the balance check would otherwise fail (empty review wallet).
+func TestExempt_ServedWithoutVerifyOrSettle(t *testing.T) {
+	mw, calls := buildExemptMiddleware(t, "exact", []string{"0xReviewer"}, true, fmt.Errorf("insufficient_funds"))
+	w := serveExempt(mw, "0xReviewer", "exact")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if !calls.verifySig {
+		t.Error("expected verify-signature to be called")
+	}
+	if calls.verify {
+		t.Error("expected verify NOT to be called on the exempt path")
+	}
+	if calls.settle {
+		t.Error("expected settle NOT to be called on the exempt path")
+	}
+}
+
+// A non-exempt payer takes the normal verify + settle path and never hits
+// verify-signature.
+func TestExempt_NonExemptTakesNormalPath(t *testing.T) {
+	mw, calls := buildExemptMiddleware(t, "exact", []string{"0xReviewer"}, true, nil)
+	w := serveExempt(mw, "0xSomeoneElse", "exact")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if calls.verifySig {
+		t.Error("expected verify-signature NOT to be called for a non-exempt payer")
+	}
+	if !calls.verify || !calls.settle {
+		t.Error("expected normal verify + settle for a non-exempt payer")
+	}
+}
+
+// A listed payer whose signature is invalid is not bypassed; the request falls
+// through to the normal paid flow. A forged header therefore cannot self-exempt.
+func TestExempt_InvalidSignatureFallsThrough(t *testing.T) {
+	mw, calls := buildExemptMiddleware(t, "exact", []string{"0xReviewer"}, false, nil)
+	w := serveExempt(mw, "0xReviewer", "exact")
+
+	if !calls.verifySig {
+		t.Error("expected verify-signature to be attempted")
+	}
+	if !calls.verify {
+		t.Error("expected fall-through to normal verify when the signature is invalid")
+	}
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 after fall-through, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// An empty exempt list leaves the normal paid flow untouched.
+func TestExempt_EmptyListDisablesBypass(t *testing.T) {
+	mw, calls := buildExemptMiddleware(t, "exact", nil, true, nil)
+	w := serveExempt(mw, "0xReviewer", "exact")
+
+	if calls.verifySig {
+		t.Error("expected verify-signature NOT to be called when the list is empty")
+	}
+	if !calls.verify || !calls.settle {
+		t.Error("expected normal verify + settle when the list is empty")
+	}
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+}
+
+// A payer carried under permit2Authorization.from is matched too.
+func TestExempt_Permit2Authorization(t *testing.T) {
+	mw, calls := buildExemptMiddleware(t, "exact", []string{"0xReviewer"}, true, nil)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]string{"data": "resource"})
+	})
+	req := httptest.NewRequest("GET", "/resource", nil)
+	req.Header.Set("PAYMENT-SIGNATURE", permit2PaymentHeader("0xReviewer"))
+	req.Host = "example.com"
+	w := httptest.NewRecorder()
+	mw(handler).ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if !calls.verifySig || calls.settle {
+		t.Errorf("expected exempt bypass for permit2Authorization, got verifySig=%v settle=%v", calls.verifySig, calls.settle)
+	}
+}
+
+// The address match is case-insensitive.
+func TestExempt_CaseInsensitiveMatch(t *testing.T) {
+	mw, calls := buildExemptMiddleware(t, "exact", []string{"0xABCdef"}, true, nil)
+	w := serveExempt(mw, "0xabcDEF", "exact")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if !calls.verifySig {
+		t.Error("expected verify-signature to be called for a case-insensitive match")
+	}
+	if calls.settle {
+		t.Error("expected no settle for an exempt payer")
+	}
+}
+
+// The aggr_deferred scheme is in scope for the bypass.
+func TestExempt_AggrDeferredSchemeBypassed(t *testing.T) {
+	mw, calls := buildExemptMiddleware(t, "aggr_deferred", []string{"0xReviewer"}, true, nil)
+	w := serveExempt(mw, "0xReviewer", "aggr_deferred")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if !calls.verifySig {
+		t.Error("expected verify-signature to be called for aggr_deferred")
+	}
+	if calls.verify || calls.settle {
+		t.Error("expected no verify/settle on the aggr_deferred exempt path")
+	}
+}
+
+// A scheme outside the eligible set is never bypassed, even for a listed payer
+// with an otherwise valid signature; it takes the normal verify + settle path.
+func TestExempt_IneligibleSchemeNotBypassed(t *testing.T) {
+	mw, calls := buildExemptMiddleware(t, "upto", []string{"0xReviewer"}, true, nil)
+	w := serveExempt(mw, "0xReviewer", "upto")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if calls.verifySig {
+		t.Error("expected verify-signature NOT to be called for an ineligible scheme")
+	}
+	if !calls.verify || !calls.settle {
+		t.Error("expected normal verify + settle for an ineligible scheme")
 	}
 }
 

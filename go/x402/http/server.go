@@ -15,6 +15,7 @@ import (
 
 	"github.com/okx/payments/go/x402"
 	exttypes "github.com/okx/payments/go/x402/extensions/types"
+	"github.com/okx/payments/go/x402/subscription"
 	"github.com/okx/payments/go/x402/types"
 )
 
@@ -110,6 +111,17 @@ type RouteConfig struct {
 	MimeType          string                 `json:"mimeType,omitempty"`
 	CustomPaywallHTML string                 `json:"customPaywallHtml,omitempty"`
 	Extensions        map[string]interface{} `json:"extensions,omitempty"`
+
+	// Operation marks a subscription operation route. An empty value is a normal
+	// (payment/access) route; the operation values route the request to the
+	// subscription change/cancel flows instead of the generic payment pipeline.
+	Operation SubscriptionOperation `json:"operation,omitempty"`
+
+	// SyncSettle selects synchronous (true) or asynchronous (false) settlement
+	// for the period subscribe/change path on this route. A nil pointer means
+	// synchronous. It applies to the period scheme only; for exact/upto the
+	// settle mode is a client-level setting on the facilitator.
+	SyncSettle *bool `json:"syncSettle,omitempty"`
 
 	// AcceptedDomains is an optional host allowlist for payload.resource.url validation.
 	// When non-empty, the payload URL host (case-insensitive) must appear in this list
@@ -264,6 +276,8 @@ type x402HTTPResourceServer struct {
 	protectedRequestHooks []ProtectedRequestHook
 	pollDeadline          time.Duration
 	timeoutRecoveryHook   OnSettlementTimeoutHook
+	subscription          *subscription.SubscriptionSupport
+	exemptPayers          map[string]struct{}
 }
 
 // Newx402HTTPResourceServer creates a new HTTP resource server
@@ -331,6 +345,68 @@ func (s *x402HTTPResourceServer) SetPollDeadline(deadline time.Duration) *x402HT
 func (s *x402HTTPResourceServer) OnSettlementTimeout(hook OnSettlementTimeoutHook) *x402HTTPResourceServer {
 	s.timeoutRecoveryHook = hook
 	return s
+}
+
+// exemptEligibleSchemes are the schemes the exempt-payer bypass applies to.
+var exemptEligibleSchemes = map[string]struct{}{
+	"exact":         {},
+	"aggr_deferred": {},
+}
+
+// WithExemptPayers sets payer addresses served without payment. The set is
+// lowercased once for case-insensitive membership. Returns the server.
+func (s *x402HTTPResourceServer) WithExemptPayers(payers []string) *x402HTTPResourceServer {
+	if len(payers) == 0 {
+		s.exemptPayers = nil
+		return s
+	}
+	set := make(map[string]struct{}, len(payers))
+	for _, addr := range payers {
+		set[strings.ToLower(addr)] = struct{}{}
+	}
+	s.exemptPayers = set
+	return s
+}
+
+// hasExemptPayers reports whether any exempt payers are configured.
+func (s *x402HTTPResourceServer) hasExemptPayers() bool {
+	return len(s.exemptPayers) > 0
+}
+
+// isExempt reports whether addr is in the exempt-payer set (case-insensitive).
+func (s *x402HTTPResourceServer) isExempt(addr string) bool {
+	_, ok := s.exemptPayers[strings.ToLower(addr)]
+	return ok
+}
+
+// verifySignature asks the facilitator to verify only the payment signature.
+func (s *x402HTTPResourceServer) verifySignature(ctx context.Context, payload types.PaymentPayload, requirements types.PaymentRequirements) (*x402.VerifyResponse, error) {
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	s.RLock()
+	facilitator := s.GetFacilitatorClient(x402.Network(requirements.Network), requirements.Scheme)
+	s.RUnlock()
+	if facilitator == nil {
+		return nil, fmt.Errorf("no facilitator for %s on %s", requirements.Scheme, requirements.Network)
+	}
+	return facilitator.VerifySignature(ctx, payloadBytes, nil)
+}
+
+// isExemptPayload reports whether the payload's payer (authorization.from or
+// permit2Authorization.from) is in the exempt set.
+func (s *x402HTTPResourceServer) isExemptPayload(payload *types.PaymentPayload) bool {
+	for _, key := range []string{"authorization", "permit2Authorization"} {
+		auth, ok := payload.Payload[key].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if from, _ := auth["from"].(string); from != "" && s.isExempt(from) {
+			return true
+		}
+	}
+	return false
 }
 
 // Initialize initializes the server by populating facilitator data and validating route configuration.
@@ -668,6 +744,17 @@ func (s *x402HTTPResourceServer) ProcessHTTPRequest(ctx context.Context, reqCtx 
 			return HTTPProcessResult{
 				Type:     ResultPaymentError,
 				Response: response,
+			}
+		}
+	}
+
+	// Exempt payers are served for free once the facilitator confirms their
+	// signature; on error or invalid signature, fall through to the paid flow.
+	if s.hasExemptPayers() {
+		if _, eligible := exemptEligibleSchemes[matchingReqs.Scheme]; eligible && s.isExemptPayload(typedPayload) {
+			sigResult, sigErr := s.verifySignature(ctx, *typedPayload, *matchingReqs)
+			if sigErr == nil && sigResult != nil && sigResult.IsValid {
+				return HTTPProcessResult{Type: ResultNoPaymentRequired}
 			}
 		}
 	}

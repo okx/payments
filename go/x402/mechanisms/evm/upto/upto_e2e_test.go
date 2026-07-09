@@ -327,6 +327,14 @@ func (l *inProcessFacilitatorClient) Verify(
 	return l.facilitator.Verify(ctx, payloadBytes, requirementsBytes)
 }
 
+func (l *inProcessFacilitatorClient) VerifySignature(
+	ctx context.Context,
+	payloadBytes []byte,
+	requirementsBytes []byte,
+) (*x402.VerifyResponse, error) {
+	return l.facilitator.Verify(ctx, payloadBytes, requirementsBytes)
+}
+
 func (l *inProcessFacilitatorClient) Settle(
 	ctx context.Context,
 	payloadBytes []byte,
