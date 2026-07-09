@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -62,6 +63,16 @@ func (m *multiFacilitatorClient) Verify(ctx context.Context, payloadBytes []byte
 		}
 	}
 	return nil, fmt.Errorf("all facilitators failed verification")
+}
+
+func (m *multiFacilitatorClient) VerifySignature(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.VerifyResponse, error) {
+	for _, client := range m.clients {
+		result, err := client.VerifySignature(ctx, payloadBytes, requirementsBytes)
+		if err == nil {
+			return result, nil
+		}
+	}
+	return nil, fmt.Errorf("all facilitators failed signature verification")
 }
 
 func (m *multiFacilitatorClient) Settle(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.SettleResponse, error) {
@@ -939,6 +950,10 @@ func (m *mockMultiFacilitatorClient) Verify(ctx context.Context, payloadBytes []
 	return nil, fmt.Errorf("no verify function")
 }
 
+func (m *mockMultiFacilitatorClient) VerifySignature(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.VerifyResponse, error) {
+	return m.Verify(ctx, payloadBytes, requirementsBytes)
+}
+
 func (m *mockMultiFacilitatorClient) Settle(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.SettleResponse, error) {
 	if m.settleFunc != nil {
 		return m.settleFunc(ctx, payloadBytes, requirementsBytes)
@@ -955,4 +970,83 @@ func (m *mockMultiFacilitatorClient) GetSupported(ctx context.Context) (x402.Sup
 
 func (m *mockMultiFacilitatorClient) Identifier() string {
 	return m.id
+}
+
+// sampleV2Payload builds a minimal v2 payment payload for signature checks.
+func sampleV2Payload(t *testing.T) []byte {
+	t.Helper()
+	payload := x402.PaymentPayload{
+		X402Version: 2,
+		Payload: map[string]any{
+			"signature":     "0xsig",
+			"authorization": map[string]any{"from": "0xReviewer"},
+		},
+		Accepted: x402.PaymentRequirements{
+			Scheme:            "exact",
+			Network:           "eip155:1",
+			Asset:             "USDC",
+			Amount:            "1000000",
+			PayTo:             "0xtest",
+			MaxTimeoutSeconds: 300,
+		},
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	return b
+}
+
+// The signature-only verify posts to /verify-signature and omits
+// paymentRequirements when none is provided.
+func TestHTTPFacilitatorClientVerifySignature(t *testing.T) {
+	var gotPath string
+	var body map[string]any
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"isValid": true, "payer": "0xReviewer"})
+	}))
+	defer srv.Close()
+
+	client := NewHTTPFacilitatorClient(&FacilitatorConfig{URL: srv.URL})
+	resp, err := client.VerifySignature(context.Background(), sampleV2Payload(t), nil)
+	if err != nil {
+		t.Fatalf("VerifySignature error: %v", err)
+	}
+	if !resp.IsValid {
+		t.Error("expected IsValid=true")
+	}
+	if gotPath != "/verify-signature" {
+		t.Errorf("expected POST /verify-signature, got %s", gotPath)
+	}
+	if _, ok := body["paymentRequirements"]; ok {
+		t.Error("expected paymentRequirements to be omitted when nil")
+	}
+	if _, ok := body["paymentPayload"]; !ok {
+		t.Error("expected paymentPayload in request body")
+	}
+}
+
+// An invalid-signature error response surfaces as an error.
+func TestHTTPFacilitatorClientVerifySignatureInvalid(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"isValid":        false,
+			"invalidReason":  "invalid_signature",
+			"invalidMessage": "Signature verification failed",
+		})
+	}))
+	defer srv.Close()
+
+	client := NewHTTPFacilitatorClient(&FacilitatorConfig{URL: srv.URL})
+	_, err := client.VerifySignature(context.Background(), sampleV2Payload(t), nil)
+	if err == nil {
+		t.Fatal("expected an error for an invalid signature response")
+	}
 }

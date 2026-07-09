@@ -54,6 +54,10 @@ func (m *mockServerFacilitatorClient) Verify(ctx context.Context, payloadBytes [
 	return &VerifyResponse{IsValid: true, Payer: "0xpayer"}, nil
 }
 
+func (m *mockServerFacilitatorClient) VerifySignature(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*VerifyResponse, error) {
+	return &VerifyResponse{IsValid: true, Payer: "0xpayer"}, nil
+}
+
 func (m *mockServerFacilitatorClient) Settle(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*SettleResponse, error) {
 	return &SettleResponse{Success: true, Transaction: "0xtx", Network: "eip155:1", Payer: "0xpayer"}, nil
 }

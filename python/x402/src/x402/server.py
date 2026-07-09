@@ -21,6 +21,7 @@ from .schemas import (
     SettleResponse,
     VerifyResponse,
 )
+from .schemas.errors import SchemeNotFoundError
 from .server_base import (
     AfterSettleHook,
     AfterVerifyHook,
@@ -181,6 +182,18 @@ class x402ResourceServer(x402ResourceServerBase):
                     result = await self._execute_hook(target, ctx)
         except StopIteration as e:
             return e.value
+
+    async def verify_signature(
+        self,
+        payload: PaymentPayload | PaymentPayloadV1,
+    ) -> VerifyResponse:
+        """Verify only the payment signature via the facilitator."""
+        scheme = payload.get_scheme()
+        network = payload.get_network()
+        client = self._facilitator_clients_map.get(network, {}).get(scheme)
+        if client is None:
+            raise SchemeNotFoundError(scheme, network)
+        return await client.verify_signature(payload)
 
     # ========================================================================
     # Settle Payment (Async)
@@ -384,6 +397,18 @@ class x402ResourceServerSync(x402ResourceServerBase):
                     result = self._execute_hook_sync(target, ctx)
         except StopIteration as e:
             return e.value
+
+    def verify_signature(
+        self,
+        payload: PaymentPayload | PaymentPayloadV1,
+    ) -> VerifyResponse:
+        """Verify only the payment signature via the facilitator."""
+        scheme = payload.get_scheme()
+        network = payload.get_network()
+        client = self._facilitator_clients_map.get(network, {}).get(scheme)
+        if client is None:
+            raise SchemeNotFoundError(scheme, network)
+        return client.verify_signature(payload)
 
     # ========================================================================
     # Settle Payment (Sync)

@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 logger = logging.getLogger("x402")
 
-from ..schemas import PaymentPayload, PaymentRequirements, SettleResponse
+from ..schemas import PaymentPayload, PaymentRequirements, SettleResponse, VerifyResponse
 from ..schemas.errors import SettleError
 from ..schemas.v1 import PaymentPayloadV1
 from ..server import ResourceConfig
@@ -121,6 +121,12 @@ class x402HTTPResourceServer(x402HTTPServerBase):
                     # Verify payment (await async method)
                     payload, reqs = target
                     result = await self._server.verify_payment(payload, reqs)
+                elif phase == "verify_signature":
+                    # Signature-only check; fall through on error (fail-closed).
+                    try:
+                        result = await self._server.verify_signature(target)
+                    except Exception:
+                        result = VerifyResponse(is_valid=False)
                 else:
                     result = None
         except StopIteration as e:
@@ -169,7 +175,8 @@ class x402HTTPResourceServer(x402HTTPServerBase):
                 recovered = False
                 if settle_response.transaction:
                     recovered = await self._recover_from_timeout_async(
-                        settle_response.transaction, requirements,
+                        settle_response.transaction,
+                        requirements,
                     )
                 if not recovered:
                     failure = ProcessSettleResult(
@@ -425,12 +432,14 @@ class x402HTTPResourceServerSync(x402HTTPServerBase):
         self,
         server: x402ResourceServerSync,  # type: ignore[override]
         routes: RoutesConfig,
+        exempt_payers: list[str] | None = None,
     ) -> None:
         """Create sync HTTP resource server.
 
         Args:
             server: Core x402ResourceServerSync instance (must be sync variant).
             routes: Route configuration for payment-protected endpoints.
+            exempt_payers: Payer addresses served without payment (empty disables).
 
         Raises:
             TypeError: If server is not x402ResourceServerSync.
@@ -445,7 +454,7 @@ class x402HTTPResourceServerSync(x402HTTPServerBase):
                 f"or use x402HTTPResourceServer (async) with x402ResourceServer."
             )
 
-        super().__init__(server, routes)  # type: ignore[arg-type]
+        super().__init__(server, routes, exempt_payers)  # type: ignore[arg-type]
 
     def register_paywall_provider(self, provider: PaywallProvider) -> x402HTTPResourceServerSync:
         """Register custom paywall provider for HTML generation.
@@ -493,6 +502,12 @@ class x402HTTPResourceServerSync(x402HTTPServerBase):
                     # Verify payment
                     payload, reqs = target
                     result = self._server.verify_payment(payload, reqs)
+                elif phase == "verify_signature":
+                    # Signature-only check; fall through on error (fail-closed).
+                    try:
+                        result = self._server.verify_signature(target)
+                    except Exception:
+                        result = VerifyResponse(is_valid=False)
                 else:
                     result = None
         except StopIteration as e:

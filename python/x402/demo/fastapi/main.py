@@ -21,6 +21,7 @@ from x402.server import x402ResourceServer
 PAY_TO = os.getenv("PAY_TO_ADDRESS", "")
 PAY_TO_ASYNC = os.getenv("PAY_TO_ADDRESS_ASYNC", "") or PAY_TO
 OKX_BASE_URL = os.getenv("OKX_BASE_URL", "")
+EXEMPT_PAYERS = [a.strip() for a in os.getenv("EXEMPT_PAYERS", "").split(",") if a.strip()]
 
 if not PAY_TO:
     print("PAY_TO_ADDRESS is required")
@@ -47,20 +48,44 @@ server = x402ResourceServer(facilitator)
 server.register("eip155:196", ExactEvmScheme())
 server.register("eip155:196", AggrDeferredEvmScheme())
 
-# Routes 
+# Routes
 routes = {
     "GET /resource/sync": RouteConfig(
         accepts=[
-            PaymentOption(scheme="exact", price="$0.00001", network="eip155:196", pay_to=PAY_TO, max_timeout_seconds=300),
-            PaymentOption(scheme="aggr_deferred", price="$0.00001", network="eip155:196", pay_to=PAY_TO, max_timeout_seconds=300),
+            PaymentOption(
+                scheme="exact",
+                price="$0.00001",
+                network="eip155:196",
+                pay_to=PAY_TO,
+                max_timeout_seconds=300,
+            ),
+            PaymentOption(
+                scheme="aggr_deferred",
+                price="$0.00001",
+                network="eip155:196",
+                pay_to=PAY_TO,
+                max_timeout_seconds=300,
+            ),
         ],
         description="Premium X Layer data (sync)",
         mime_type="application/json",
     ),
     "GET /resource/async": RouteConfig(
         accepts=[
-            PaymentOption(scheme="exact", price="$0.00001", network="eip155:196", pay_to=PAY_TO_ASYNC, max_timeout_seconds=300),
-            PaymentOption(scheme="aggr_deferred", price="$0.00001", network="eip155:196", pay_to=PAY_TO_ASYNC, max_timeout_seconds=300),
+            PaymentOption(
+                scheme="exact",
+                price="$0.00001",
+                network="eip155:196",
+                pay_to=PAY_TO_ASYNC,
+                max_timeout_seconds=300,
+            ),
+            PaymentOption(
+                scheme="aggr_deferred",
+                price="$0.00001",
+                network="eip155:196",
+                pay_to=PAY_TO_ASYNC,
+                max_timeout_seconds=300,
+            ),
         ],
         description="Premium X Layer data (async)",
         mime_type="application/json",
@@ -69,7 +94,7 @@ routes = {
 
 # App
 app = FastAPI()
-app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
+app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server, exempt_payers=EXEMPT_PAYERS)
 
 
 @app.get("/health")
@@ -79,12 +104,20 @@ async def health():
 
 @app.get("/resource/sync")
 async def resource_sync():
-    return {"message": "Payment successful! Here is your premium X Layer data (sync).", "network": "eip155:196", "settle_mode": "sync"}
+    return {
+        "message": "Payment successful! Here is your premium X Layer data (sync).",
+        "network": "eip155:196",
+        "settle_mode": "sync",
+    }
 
 
 @app.get("/resource/async")
 async def resource_async():
-    return {"message": "Payment successful! Here is your premium X Layer data (async).", "network": "eip155:196", "settle_mode": "async"}
+    return {
+        "message": "Payment successful! Here is your premium X Layer data (async).",
+        "network": "eip155:196",
+        "settle_mode": "async",
+    }
 
 
 if __name__ == "__main__":

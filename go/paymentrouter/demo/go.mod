@@ -5,7 +5,7 @@ go 1.24.0
 require (
 	github.com/gin-gonic/gin v1.11.0
 	github.com/labstack/echo/v4 v4.15.1
-	github.com/okx/payments/go/x402 v0.1.0
+	github.com/okx/payments/go/x402 v0.3.0
 )
 
 require (

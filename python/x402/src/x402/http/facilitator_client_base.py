@@ -86,6 +86,14 @@ class FacilitatorClient(Protocol):
         """Verify a payment."""
         ...
 
+    async def verify_signature(
+        self,
+        payload: PaymentPayload | PaymentPayloadV1,
+        requirements: PaymentRequirements | PaymentRequirementsV1 | None = None,
+    ) -> VerifyResponse:
+        """Verify the payment signature. requirements is optional."""
+        ...
+
     async def settle(
         self,
         payload: PaymentPayload | PaymentPayloadV1,
@@ -108,6 +116,14 @@ class FacilitatorClientSync(Protocol):
         requirements: PaymentRequirements | PaymentRequirementsV1,
     ) -> VerifyResponse:
         """Verify a payment."""
+        ...
+
+    def verify_signature(
+        self,
+        payload: PaymentPayload | PaymentPayloadV1,
+        requirements: PaymentRequirements | PaymentRequirementsV1 | None = None,
+    ) -> VerifyResponse:
+        """Verify the payment signature. requirements is optional."""
         ...
 
     def settle(
@@ -202,6 +218,21 @@ class HTTPFacilitatorClientBase:
             "paymentPayload": self._to_json_safe(payload_dict),
             "paymentRequirements": self._to_json_safe(requirements_dict),
         }
+
+    def _build_verify_signature_body(
+        self,
+        version: int,
+        payload_dict: dict[str, Any],
+        requirements_dict: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Build request body for verify-signature (requirements optional)."""
+        body: dict[str, Any] = {
+            "x402Version": version,
+            "paymentPayload": self._to_json_safe(payload_dict),
+        }
+        if requirements_dict is not None:
+            body["paymentRequirements"] = self._to_json_safe(requirements_dict)
+        return body
 
     def _get_verify_headers(self) -> dict[str, str]:
         """Get headers for verify request."""

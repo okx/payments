@@ -13,6 +13,7 @@ import (
 	"github.com/okx/payments/go/x402"
 	"github.com/okx/payments/go/x402/extensions/bazaar"
 	x402http "github.com/okx/payments/go/x402/http"
+	"github.com/okx/payments/go/x402/subscription"
 )
 
 // SetSettlementOverrides sets settlement overrides on the Echo response for partial
@@ -103,6 +104,13 @@ type MiddlewareConfig struct {
 	// Custom settlement handler
 	SettlementHandler func(echo.Context, *x402.SettleResponse)
 
+	// Subscription support enables the period-scheme flows (access gating,
+	// change/cancel operations, subscribe/change settlement).
+	Subscription *subscription.SubscriptionSupport
+
+	// ExemptPayers lists payer addresses served without payment (empty disables).
+	ExemptPayers []string
+
 	// Context timeout for payment operations
 	Timeout time.Duration
 }
@@ -168,6 +176,20 @@ func WithTimeout(timeout time.Duration) MiddlewareOption {
 	}
 }
 
+// WithSubscription enables the period-scheme subscription flows.
+func WithSubscription(support *subscription.SubscriptionSupport) MiddlewareOption {
+	return func(c *MiddlewareConfig) {
+		c.Subscription = support
+	}
+}
+
+// WithExemptPayers sets payer addresses served without payment.
+func WithExemptPayers(payers []string) MiddlewareOption {
+	return func(c *MiddlewareConfig) {
+		c.ExemptPayers = payers
+	}
+}
+
 // ============================================================================
 // Payment Middleware
 // ============================================================================
@@ -187,6 +209,14 @@ func PaymentMiddleware(routes x402http.RoutesConfig, server *x402.X402ResourceSe
 
 	// Wrap the resource server with HTTP functionality
 	httpServer := x402http.Wrappedx402HTTPResourceServer(routes, server)
+
+	if config.Subscription != nil {
+		httpServer.WithSubscription(config.Subscription)
+	}
+
+	if len(config.ExemptPayers) > 0 {
+		httpServer.WithExemptPayers(config.ExemptPayers)
+	}
 
 	httpServer.RegisterExtension(bazaar.BazaarResourceServerExtension)
 
@@ -227,6 +257,14 @@ func PaymentMiddlewareFromHTTPServer(httpServer *x402http.HTTPServer, opts ...Mi
 		opt(config)
 	}
 
+	if config.Subscription != nil {
+		httpServer.WithSubscription(config.Subscription)
+	}
+
+	if len(config.ExemptPayers) > 0 {
+		httpServer.WithExemptPayers(config.ExemptPayers)
+	}
+
 	httpServer.RegisterExtension(bazaar.BazaarResourceServerExtension)
 
 	// Initialize if requested - queries facilitator /supported to populate facilitatorClients map
@@ -265,6 +303,14 @@ func PaymentMiddlewareFromConfig(routes x402http.RoutesConfig, opts ...Middlewar
 
 	httpServer := x402http.Newx402HTTPResourceServer(config.Routes, serverOpts...)
 
+	if config.Subscription != nil {
+		httpServer.WithSubscription(config.Subscription)
+	}
+
+	if len(config.ExemptPayers) > 0 {
+		httpServer.WithExemptPayers(config.ExemptPayers)
+	}
+
 	httpServer.RegisterExtension(bazaar.BazaarResourceServerExtension)
 
 	// Register schemes
@@ -295,6 +341,18 @@ func createMiddlewareHandler(server *x402http.HTTPServer, config *MiddlewareConf
 				Adapter: adapter,
 				Path:    c.Request().URL.Path,
 				Method:  c.Request().Method,
+			}
+
+			// Subscription (period) flows replace the generic pipeline for
+			// their routes; dispatch before the payment gate since operation
+			// routes carry no accepts.
+			if server.SubscriptionEnabled() {
+				subCtx, subCancel := context.WithTimeout(c.Request().Context(), config.Timeout)
+				handled, err := handleSubscription(c, next, server, reqCtx, subCtx)
+				subCancel()
+				if handled {
+					return err
+				}
 			}
 
 			// Check if route requires payment before waiting for initialization

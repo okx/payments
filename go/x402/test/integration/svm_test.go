@@ -222,6 +222,14 @@ func (l *localSvmFacilitatorClient) Verify(
 	return l.facilitator.Verify(ctx, payloadBytes, requirementsBytes)
 }
 
+func (l *localSvmFacilitatorClient) VerifySignature(
+	ctx context.Context,
+	payloadBytes []byte,
+	requirementsBytes []byte,
+) (*x402.VerifyResponse, error) {
+	return l.facilitator.Verify(ctx, payloadBytes, requirementsBytes)
+}
+
 func (l *localSvmFacilitatorClient) Settle(
 	ctx context.Context,
 	payloadBytes []byte,

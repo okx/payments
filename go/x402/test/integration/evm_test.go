@@ -347,6 +347,14 @@ func (l *localEvmFacilitatorClient) Verify(
 	return l.facilitator.Verify(ctx, payloadBytes, requirementsBytes)
 }
 
+func (l *localEvmFacilitatorClient) VerifySignature(
+	ctx context.Context,
+	payloadBytes []byte,
+	requirementsBytes []byte,
+) (*x402.VerifyResponse, error) {
+	return l.facilitator.Verify(ctx, payloadBytes, requirementsBytes)
+}
+
 func (l *localEvmFacilitatorClient) Settle(
 	ctx context.Context,
 	payloadBytes []byte,

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	ginfw "github.com/gin-gonic/gin"
@@ -24,6 +25,20 @@ import (
 )
 
 func boolPtr(b bool) *bool { return &b }
+
+// parseExemptPayers splits a CSV of payer addresses, dropping blanks.
+func parseExemptPayers(csv string) []string {
+	if csv == "" {
+		return nil
+	}
+	var out []string
+	for _, p := range strings.Split(csv, ",") {
+		if t := strings.TrimSpace(p); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
 
 func makeRoute(payTo, description string) x402http.RouteConfig {
 	return x402http.RouteConfig{
@@ -94,10 +109,11 @@ func main() {
 		}
 		syncGroup := r.Group("/")
 		syncGroup.Use(ginmw.X402Payment(ginmw.Config{
-			Routes:      syncRoutes,
-			Facilitator: syncClient,
-			Schemes:     schemes(),
-			Timeout:     300 * time.Second,
+			Routes:       syncRoutes,
+			Facilitator:  syncClient,
+			Schemes:      schemes(),
+			ExemptPayers: parseExemptPayers(os.Getenv("EXEMPT_PAYERS")),
+			Timeout:      300 * time.Second,
 		}))
 		syncGroup.GET("/resource/sync", func(c *ginfw.Context) {
 			c.JSON(http.StatusOK, ginfw.H{

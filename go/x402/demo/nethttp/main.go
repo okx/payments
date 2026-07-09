@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/okx/payments/go/x402"
@@ -24,6 +25,20 @@ import (
 )
 
 func boolPtr(b bool) *bool { return &b }
+
+// parseExemptPayers splits a CSV of payer addresses, dropping blanks.
+func parseExemptPayers(csv string) []string {
+	if csv == "" {
+		return nil
+	}
+	var out []string
+	for _, p := range strings.Split(csv, ",") {
+		if t := strings.TrimSpace(p); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
 
 func makeRoute(payTo, description string) x402http.RouteConfig {
 	return x402http.RouteConfig{
@@ -98,10 +113,11 @@ func main() {
 			"GET /resource/sync": makeRoute(payTo, "Premium X Layer data (sync)"),
 		}
 		syncHandler := nethttpmw.X402Payment(nethttpmw.Config{
-			Routes:      syncRoutes,
-			Facilitator: syncClient,
-			Schemes:     schemes(),
-			Timeout:     300 * time.Second,
+			Routes:       syncRoutes,
+			Facilitator:  syncClient,
+			Schemes:      schemes(),
+			ExemptPayers: parseExemptPayers(os.Getenv("EXEMPT_PAYERS")),
+			Timeout:      300 * time.Second,
 		})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			writeJSON(w, http.StatusOK, map[string]any{
 				"message":     "Payment successful! Here is your premium X Layer data (sync).",

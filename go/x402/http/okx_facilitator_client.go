@@ -133,6 +133,27 @@ func (c *OKXFacilitatorClient) Verify(ctx context.Context, payloadBytes []byte, 
 	return &result, nil
 }
 
+// VerifySignature verifies the payment signature via the OKX API.
+// requirementsBytes is optional and omitted from the request body when nil.
+func (c *OKXFacilitatorClient) VerifySignature(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.VerifyResponse, error) {
+	body, err := buildBody(payloadBytes, requirementsBytes, false, false)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build verify-signature request: %w", err)
+	}
+
+	data, err := c.doRequest(ctx, "POST", "/verify-signature", body)
+	if err != nil {
+		return nil, err
+	}
+
+	var result x402.VerifyResponse
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse verify-signature response: %w", err)
+	}
+
+	return &result, nil
+}
+
 // Settle executes a payment via the OKX API.
 func (c *OKXFacilitatorClient) Settle(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.SettleResponse, error) {
 	body, err := buildBody(payloadBytes, requirementsBytes, true, c.syncSettle)
@@ -252,14 +273,16 @@ func buildBody(payloadBytes, requirementsBytes []byte, includeSyncSettle bool, s
 	type v2Body struct {
 		X402Version         int             `json:"x402Version"`
 		PaymentPayload      json.RawMessage `json:"paymentPayload"`
-		PaymentRequirements json.RawMessage `json:"paymentRequirements"`
+		PaymentRequirements json.RawMessage `json:"paymentRequirements,omitempty"`
 		SyncSettle          *bool           `json:"syncSettle,omitempty"`
 	}
 
 	b := v2Body{
-		X402Version:         2,
-		PaymentPayload:      json.RawMessage(payloadBytes),
-		PaymentRequirements: json.RawMessage(requirementsBytes),
+		X402Version:    2,
+		PaymentPayload: json.RawMessage(payloadBytes),
+	}
+	if len(requirementsBytes) > 0 {
+		b.PaymentRequirements = json.RawMessage(requirementsBytes)
 	}
 
 	if includeSyncSettle {

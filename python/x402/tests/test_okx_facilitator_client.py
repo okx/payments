@@ -71,14 +71,19 @@ class TestOKXFacilitatorClientSync:
                 assert request.method == "GET"
                 assert request.headers.get("ok-access-key") == "test-key"
                 assert request.headers.get("ok-access-sign")
-                return Response(200, content=_envelope({
-                    "kinds": [
-                        {"x402Version": 2, "scheme": "exact", "network": "eip155:196"},
-                        {"x402Version": 2, "scheme": "exact", "network": "eip155:8453"},
-                    ],
-                    "extensions": [],
-                    "signers": {},
-                }))
+                return Response(
+                    200,
+                    content=_envelope(
+                        {
+                            "kinds": [
+                                {"x402Version": 2, "scheme": "exact", "network": "eip155:196"},
+                                {"x402Version": 2, "scheme": "exact", "network": "eip155:8453"},
+                            ],
+                            "extensions": [],
+                            "signers": {},
+                        }
+                    ),
+                )
 
         client = OKXFacilitatorClientSync(_config_with(Transport()))
         supported = client.get_supported()
@@ -117,12 +122,17 @@ class TestOKXFacilitatorClientSync:
                 assert request.url.path == f"{OKX_BASE_PATH}/settle"
                 assert request.method == "POST"
                 captured["body"] = json.loads(request.content)
-                return Response(200, content=_envelope({
-                    "success": True,
-                    "transaction": "0xtx123",
-                    "network": "eip155:196",
-                    "payer": "0xpayer",
-                }))
+                return Response(
+                    200,
+                    content=_envelope(
+                        {
+                            "success": True,
+                            "transaction": "0xtx123",
+                            "network": "eip155:196",
+                            "payer": "0xpayer",
+                        }
+                    ),
+                )
 
         client = OKXFacilitatorClientSync(_config_with(Transport()))
         resp = client.settle(_make_payload(), _make_requirements())
@@ -139,12 +149,17 @@ class TestOKXFacilitatorClientSync:
         class Transport(httpx.BaseTransport):
             def handle_request(self, request: httpx.Request) -> Response:
                 captured["body"] = json.loads(request.content)
-                return Response(200, content=_envelope({
-                    "success": True,
-                    "transaction": "0xtxasync",
-                    "network": "eip155:196",
-                    "payer": "0xpayer",
-                }))
+                return Response(
+                    200,
+                    content=_envelope(
+                        {
+                            "success": True,
+                            "transaction": "0xtxasync",
+                            "network": "eip155:196",
+                            "payer": "0xpayer",
+                        }
+                    ),
+                )
 
         client = OKXFacilitatorClientSync(_config_with(Transport(), sync_settle=False))
         client.settle(_make_payload(), _make_requirements())
@@ -153,13 +168,18 @@ class TestOKXFacilitatorClientSync:
     def test_error_envelope(self):
         class Transport(httpx.BaseTransport):
             def handle_request(self, request: httpx.Request) -> Response:
-                return Response(200, content=json.dumps({
-                    "code": 50103,
-                    "msg": "Invalid API key",
-                    "error_code": "50103",
-                    "error_message": "Invalid API key",
-                    "data": {},
-                }).encode())
+                return Response(
+                    200,
+                    content=json.dumps(
+                        {
+                            "code": 50103,
+                            "msg": "Invalid API key",
+                            "error_code": "50103",
+                            "error_message": "Invalid API key",
+                            "data": {},
+                        }
+                    ).encode(),
+                )
 
         client = OKXFacilitatorClientSync(_config_with(Transport()))
         with pytest.raises(OKXFacilitatorResponseError, match="50103") as exc_info:
@@ -168,25 +188,36 @@ class TestOKXFacilitatorClientSync:
 
     def test_missing_credentials(self):
         with pytest.raises(ValueError, match="required"):
-            OKXFacilitatorClientSync(OKXFacilitatorConfig(
-                auth=OKXAuthConfig(api_key="", secret_key="secret", passphrase="pass"),
-            ))
+            OKXFacilitatorClientSync(
+                OKXFacilitatorConfig(
+                    auth=OKXAuthConfig(api_key="", secret_key="secret", passphrase="pass"),
+                )
+            )
         with pytest.raises(ValueError, match="required"):
-            OKXFacilitatorClientSync(OKXFacilitatorConfig(
-                auth=OKXAuthConfig(api_key="key", secret_key="", passphrase="pass"),
-            ))
+            OKXFacilitatorClientSync(
+                OKXFacilitatorConfig(
+                    auth=OKXAuthConfig(api_key="key", secret_key="", passphrase="pass"),
+                )
+            )
         with pytest.raises(ValueError, match="required"):
-            OKXFacilitatorClientSync(OKXFacilitatorConfig(
-                auth=OKXAuthConfig(api_key="key", secret_key="secret", passphrase=""),
-            ))
+            OKXFacilitatorClientSync(
+                OKXFacilitatorConfig(
+                    auth=OKXAuthConfig(api_key="key", secret_key="secret", passphrase=""),
+                )
+            )
 
     def test_verify_invalid_signature(self):
         class Transport(httpx.BaseTransport):
             def handle_request(self, request: httpx.Request) -> Response:
-                return Response(200, content=_envelope({
-                    "isValid": False,
-                    "invalidReason": "signature mismatch",
-                }))
+                return Response(
+                    200,
+                    content=_envelope(
+                        {
+                            "isValid": False,
+                            "invalidReason": "signature mismatch",
+                        }
+                    ),
+                )
 
         client = OKXFacilitatorClientSync(_config_with(Transport()))
         resp = client.verify(_make_payload(), _make_requirements())
@@ -196,13 +227,18 @@ class TestOKXFacilitatorClientSync:
     def test_settle_insufficient_balance(self):
         class Transport(httpx.BaseTransport):
             def handle_request(self, request: httpx.Request) -> Response:
-                return Response(200, content=_envelope({
-                    "success": False,
-                    "transaction": "",
-                    "network": "eip155:196",
-                    "errorReason": "insufficient balance",
-                    "payer": "0xpayer",
-                }))
+                return Response(
+                    200,
+                    content=_envelope(
+                        {
+                            "success": False,
+                            "transaction": "",
+                            "network": "eip155:196",
+                            "errorReason": "insufficient balance",
+                            "payer": "0xpayer",
+                        }
+                    ),
+                )
 
         client = OKXFacilitatorClientSync(_config_with(Transport()))
         resp = client.settle(_make_payload(), _make_requirements())
@@ -221,11 +257,16 @@ class TestOKXFacilitatorClientSync:
     def test_no_envelope_fallback(self):
         class Transport(httpx.BaseTransport):
             def handle_request(self, request: httpx.Request) -> Response:
-                return Response(200, content=json.dumps({
-                    "kinds": [{"x402Version": 2, "scheme": "exact", "network": "eip155:1"}],
-                    "extensions": [],
-                    "signers": {},
-                }).encode())
+                return Response(
+                    200,
+                    content=json.dumps(
+                        {
+                            "kinds": [{"x402Version": 2, "scheme": "exact", "network": "eip155:1"}],
+                            "extensions": [],
+                            "signers": {},
+                        }
+                    ).encode(),
+                )
 
         client = OKXFacilitatorClientSync(_config_with(Transport()))
         supported = client.get_supported()
@@ -237,12 +278,17 @@ class TestOKXFacilitatorClientSync:
                 assert "/settle/status" in str(request.url)
                 assert "txHash=0xhash" in str(request.url)
                 assert request.method == "GET"
-                return Response(200, content=_envelope({
-                    "success": True,
-                    "status": "success",
-                    "transaction": "0xhash",
-                    "network": "eip155:196",
-                }))
+                return Response(
+                    200,
+                    content=_envelope(
+                        {
+                            "success": True,
+                            "status": "success",
+                            "transaction": "0xhash",
+                            "network": "eip155:196",
+                        }
+                    ),
+                )
 
         client = OKXFacilitatorClientSync(_config_with(Transport()))
         resp = client.get_settle_status("0xhash")
@@ -252,9 +298,16 @@ class TestOKXFacilitatorClientSync:
     def test_context_manager(self):
         class Transport(httpx.BaseTransport):
             def handle_request(self, request: httpx.Request) -> Response:
-                return Response(200, content=_envelope({
-                    "kinds": [], "extensions": [], "signers": {},
-                }))
+                return Response(
+                    200,
+                    content=_envelope(
+                        {
+                            "kinds": [],
+                            "extensions": [],
+                            "signers": {},
+                        }
+                    ),
+                )
 
         with OKXFacilitatorClientSync(_config_with(Transport())) as client:
             client.get_supported()
@@ -293,14 +346,36 @@ class TestOKXFacilitatorClientAsync:
             assert resp.payer == "0xabc"
 
     @pytest.mark.asyncio
+    async def test_verify_signature_omits_requirements(self):
+        captured: dict[str, Any] = {}
+
+        def handler(req: httpx.Request) -> Response:
+            captured["path"] = req.url.path
+            captured["body"] = json.loads(req.content)
+            return Response(200, content=_envelope({"isValid": True, "payer": "0xabc"}))
+
+        async with OKXFacilitatorClient(_async_config(handler)) as client:
+            resp = await client.verify_signature(_make_payload())
+            assert resp.is_valid is True
+            assert captured["path"].endswith("/verify-signature")
+            assert "paymentRequirements" not in captured["body"]
+
+    @pytest.mark.asyncio
     async def test_settle(self):
         captured: dict[str, Any] = {}
 
         def handler(req: httpx.Request) -> Response:
             captured["body"] = json.loads(req.content)
-            return Response(200, content=_envelope({
-                "success": True, "transaction": "0xtx", "network": "eip155:196",
-            }))
+            return Response(
+                200,
+                content=_envelope(
+                    {
+                        "success": True,
+                        "transaction": "0xtx",
+                        "network": "eip155:196",
+                    }
+                ),
+            )
 
         async with OKXFacilitatorClient(_async_config(handler)) as client:
             resp = await client.settle(_make_payload(), _make_requirements())
@@ -310,9 +385,16 @@ class TestOKXFacilitatorClientAsync:
     @pytest.mark.asyncio
     async def test_get_settle_status(self):
         def handler(req: httpx.Request) -> Response:
-            return Response(200, content=_envelope({
-                "success": True, "status": "success", "transaction": "0xh",
-            }))
+            return Response(
+                200,
+                content=_envelope(
+                    {
+                        "success": True,
+                        "status": "success",
+                        "transaction": "0xh",
+                    }
+                ),
+            )
 
         async with OKXFacilitatorClient(_async_config(handler)) as client:
             resp = await client.get_settle_status("0xh")
@@ -322,7 +404,9 @@ class TestOKXFacilitatorClientAsync:
     @pytest.mark.asyncio
     async def test_error_envelope(self):
         def handler(req: httpx.Request) -> Response:
-            return Response(200, content=json.dumps({"code": 99, "msg": "fail", "data": None}).encode())
+            return Response(
+                200, content=json.dumps({"code": 99, "msg": "fail", "data": None}).encode()
+            )
 
         async with OKXFacilitatorClient(_async_config(handler)) as client:
             with pytest.raises(OKXFacilitatorResponseError, match="99"):

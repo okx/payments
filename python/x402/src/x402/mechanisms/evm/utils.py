@@ -280,3 +280,26 @@ def parse_money_to_decimal(money: str | float | int) -> float:
     clean = clean.strip()
 
     return float(clean)
+
+
+def parse_money_to_string(money: str | float | int) -> str:
+    """Parse Money to a plain decimal string.
+
+    Handles formats like "$1.50", "1.50 USDC", 1.50 and returns the bare decimal
+    string with the currency symbol/suffix stripped. Keeping the value as a
+    string preserves the exact digits so callers can convert with Decimal
+    precision instead of binary float.
+
+    Args:
+        money: Money value in various formats.
+
+    Returns:
+        Cleaned decimal string.
+    """
+    if isinstance(money, int | float):
+        return str(money)
+
+    clean = money.strip()
+    clean = clean.lstrip("$")
+    clean = re.sub(r"\s*(USD|USDC|usd|usdc)\s*$", "", clean)
+    return clean.strip()

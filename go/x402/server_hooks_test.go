@@ -22,6 +22,10 @@ func (m *mockFacilitatorClient) Verify(ctx context.Context, payloadBytes []byte,
 	return &VerifyResponse{IsValid: true, Payer: "0xmock"}, nil // Default to success
 }
 
+func (m *mockFacilitatorClient) VerifySignature(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*VerifyResponse, error) {
+	return m.Verify(ctx, payloadBytes, requirementsBytes)
+}
+
 func (m *mockFacilitatorClient) Settle(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*SettleResponse, error) {
 	if m.settle != nil {
 		return m.settle(ctx, payloadBytes, requirementsBytes)

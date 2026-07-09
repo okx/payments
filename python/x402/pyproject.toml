@@ -1,6 +1,6 @@
 [project]
 name = "okxweb3-app-x402"
-version = "0.1.0"
+version = "0.1.1"
 description = "x402 Payment Protocol SDK for Python"
 readme = {text = "OKX x402 Python SDK", content-type = "text/markdown"}
 license = { text = "MIT" }

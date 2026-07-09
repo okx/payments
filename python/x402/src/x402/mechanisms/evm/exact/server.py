@@ -9,6 +9,7 @@ from ..utils import (
     get_network_config,
     parse_amount,
     parse_money_to_decimal,
+    parse_money_to_string,
 )
 
 # Type alias for money parser (sync)
@@ -93,7 +94,7 @@ class ExactEvmScheme:
                 return result
 
         # Default: convert to USDC
-        return self._default_money_conversion(decimal_amount, str(network))
+        return self._default_money_conversion(price, str(network))
 
     def enhance_payment_requirements(
         self,
@@ -159,11 +160,14 @@ class ExactEvmScheme:
 
         return requirements
 
-    def _default_money_conversion(self, amount: float, network: str) -> AssetAmount:
-        """Convert decimal amount to network's default stablecoin AssetAmount.
+    def _default_money_conversion(self, price: str | float | int, network: str) -> AssetAmount:
+        """Convert a Money price to network's default stablecoin AssetAmount.
+
+        The atomic amount is computed with Decimal arithmetic so a price like
+        "$1.50" maps exactly to 1_500_000 (6 decimals) without float rounding.
 
         Args:
-            amount: Decimal amount (e.g., 1.50).
+            price: Money price (e.g., "$1.50", "1.50", 1.50).
             network: Network identifier.
 
         Returns:
@@ -181,7 +185,7 @@ class ExactEvmScheme:
                 "use register_money_parser or specify an explicit AssetAmount"
             )
 
-        token_amount = int(amount * (10 ** asset["decimals"]))
+        token_amount = parse_amount(parse_money_to_string(price), asset["decimals"])
 
         atm = asset.get("asset_transfer_method")
         include_eip712_domain = not atm or asset.get("supports_eip2612", False)
