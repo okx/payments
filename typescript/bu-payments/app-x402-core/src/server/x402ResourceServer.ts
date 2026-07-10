@@ -191,6 +191,9 @@ export class x402ResourceServer {
   private afterSettleHooks: AfterSettleHook[] = [];
   private onSettleFailureHooks: OnSettleFailureHook[] = [];
 
+  /** Lowercased settlement-exempt payer addresses. */
+  private exemptPayerSet: Set<string> = new Set();
+
   /**
    * Creates a new x402ResourceServer instance.
    *
@@ -382,6 +385,77 @@ export class x402ResourceServer {
   onSettleFailure(hook: OnSettleFailureHook): x402ResourceServer {
     this.onSettleFailureHooks.push(hook);
     return this;
+  }
+
+  /**
+   * Register settlement-exempt payer addresses.
+   *
+   * When a payment's declared payer is on this list, the request skips the whole
+   * verify + settle (charge) flow: the signature is confirmed via the
+   * facilitator's `verifySignature` endpoint (doc §3) and, on success, access is
+   * granted without charging. Addresses are matched case-insensitively; calling
+   * this multiple times adds to the existing set.
+   *
+   * @param addresses - Payer addresses to exempt from settlement
+   * @returns The x402ResourceServer instance for chaining
+   */
+  exemptPayers(addresses: string[]): x402ResourceServer {
+    for (const address of addresses) {
+      const normalized = address.trim().toLowerCase();
+      if (normalized) this.exemptPayerSet.add(normalized);
+    }
+    return this;
+  }
+
+  /**
+   * Attempt the settlement-exemption bypass for a payment.
+   *
+   * First checks whether the payload's declared payer is on the exempt allowlist
+   * — reading `from` from either exact payload shape: EIP-3009
+   * (`authorization.from`) or Permit2 (`permit2Authorization.from`). Only when it
+   * matches does it call the facilitator's `verifySignature` (doc §3) to confirm
+   * the signature; if valid, returns the result so the caller can skip the entire
+   * verify + settle flow and deliver the resource. Returns null in every other
+   * case — no allowlist, non-exempt payer, facilitator without `verifySignature`,
+   * invalid signature, or any error — so the caller runs the normal flow.
+   *
+   * The declared `from` is only used to gate the allowlist lookup (so
+   * `verifySignature` runs solely for exempt candidates); trust comes from the
+   * signature check.
+   *
+   * @param paymentPayload - The payment payload carrying the signature
+   * @param requirements - The matching payment requirements
+   * @returns A valid VerifyResponse to grant access, or null
+   */
+  async tryExemptSignatureBypass(
+    paymentPayload: PaymentPayload,
+    requirements: PaymentRequirements,
+  ): Promise<VerifyResponse | null> {
+    if (this.exemptPayerSet.size === 0) return null;
+
+    // Declared payer — supports both exact payload shapes: EIP-3009
+    // (`authorization.from`) and Permit2 (`permit2Authorization.from`).
+    const inner = paymentPayload.payload as
+      | { authorization?: { from?: string }; permit2Authorization?: { from?: string } }
+      | undefined;
+    const payer = inner?.authorization?.from ?? inner?.permit2Authorization?.from;
+    if (!payer || !this.exemptPayerSet.has(payer.toLowerCase())) return null;
+
+    const client =
+      this.getFacilitatorClient(
+        paymentPayload.x402Version,
+        requirements.network,
+        requirements.scheme,
+      ) ?? this.facilitatorClients[0];
+    if (!client?.verifySignature) return null;
+
+    try {
+      const result = await client.verifySignature(paymentPayload, requirements);
+      return result.isValid ? result : null;
+    } catch (error) {
+      console.error("[x402] exempt verifySignature failed; falling back to normal flow:", error);
+      return null;
+    }
   }
 
   /**
