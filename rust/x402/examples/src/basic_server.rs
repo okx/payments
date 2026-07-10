@@ -57,7 +57,8 @@ async fn main() {
 
     let mut server = X402ResourceServer::new(facilitator_client)
         .register("eip155:196", ExactEvmScheme::new())
-        .register("eip155:196", aggr_deferred);
+        .register("eip155:196", aggr_deferred)
+        .exempt_payers(exempt_payers); // review-wallet no-charge allowlist (empty = off)
 
     // MUST initialize before use (fetches facilitator's supported schemes)
     server
@@ -95,17 +96,9 @@ async fn main() {
         },
     )]);
 
-    // 4. Axum router + payment middleware))
-    // exempt_payers: when set, a request whose facilitator-recovered payer is
-    // one of these review wallets is served 200 with verify+settle skipped
-    // (no charge). Empty = normal paid flow for everyone.
     let app = Router::new()
         .route("/weather", get(weather_handler))
-        .layer(
-            PaymentMiddlewareBuilder::new(routes, server)
-                .exempt_payers(exempt_payers)
-                .build(),
-        );
+        .layer(PaymentMiddlewareBuilder::new(routes, server).build());
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:4021").await.unwrap();
     println!("Server listening at http://localhost:4021");
