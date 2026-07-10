@@ -60,3 +60,21 @@ hs_err_pid*
 # Local config overrides
 application-local.properties
 application-local.yml
+
+# MPP local-only credentials (NEVER commit) — see LocalBetaCreds.java.example template
+**/LocalBetaCreds.java
+
+# Local-only demo + e2e harness (NOT shipped in public SDK; kept locally for dev convenience).
+# The mpp-x402-demo module embeds runnable demo servers, end-to-end runners, and ad-hoc
+# integration tests that reference live SA endpoints. Excluded from the public SDK release
+# surface so external integrators get only the mpp + payment-router protocol libraries.
+mpp-x402-demo/
+jakarta/src/test/java/com/okx/x402/examples/DemoServerLauncher.java
+
+# x402 examples DemoServer kept local-only for internal dev/e2e against beta env;
+# intentionally NOT part of the public SDK.
+examples/DemoServer.java
+examples/target/
+
+# ARCHITECTURE.md kept local-only — internal developer doc, not part of public SDK release.
+ARCHITECTURE.md
