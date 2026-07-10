@@ -248,6 +248,49 @@ impl FacilitatorClient for OkxHttpFacilitatorClient {
         Self::unwrap_okx_response(&body)
     }
 
+    async fn verify_signature_only(
+        &self,
+        request: &VerifyRequest,
+    ) -> Result<VerifyResponse, X402Error> {
+        // Signature-only verify: validates just the signature (no balance/
+        // nonce/blacklist/etc). Same contract as `/verify`.
+        let path = "/verify-signature";
+        let url = self.url(path);
+        let req_body = serde_json::to_string(request)?;
+
+        let headers = build_auth_headers(
+            &self.api_key,
+            &self.secret_key,
+            &self.passphrase,
+            "POST",
+            &self.request_path(path),
+            &req_body,
+        )?;
+
+        let response = self
+            .http
+            .post(&url)
+            .headers(headers)
+            .header("Content-Type", "application/json")
+            .body(req_body)
+            .send()
+            .await?;
+
+        let status = response.status();
+        let body = response.text().await?;
+
+        if !status.is_success() {
+            return Err(X402Error::Other(format!(
+                "facilitator {} returned {}: {}",
+                path,
+                status.as_u16(),
+                body
+            )));
+        }
+
+        Self::unwrap_okx_response(&body)
+    }
+
     async fn settle(&self, request: &SettleRequest) -> Result<SettleResponse, X402Error> {
         let path = "/settle";
         let url = self.url(path);
