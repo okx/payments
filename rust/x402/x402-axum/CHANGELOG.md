@@ -5,6 +5,11 @@ All notable changes to `okxweb3-app-x402-axum` are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2026-07-10
+
+### Changed
+- **Breaking:** removed `PaymentMiddlewareBuilder::exempt_payers`. Configure the review-wallet exemption on the resource server instead — `X402ResourceServer::new(..).register(..).exempt_payers([..])`. The middleware reads the allowlist from the server; short-circuit behavior is unchanged.
+
 ## [0.3.1] - 2026-07-10
 
 ### Added

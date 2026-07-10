@@ -2949,7 +2949,7 @@ dependencies = [
 
 [[package]]
 name = "okxweb3-app-x402-axum"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "axum",
  "base64",
@@ -2964,7 +2964,7 @@ dependencies = [
 
 [[package]]
 name = "okxweb3-app-x402-core"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "async-trait",
  "base64",

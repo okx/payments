@@ -1,7 +1,7 @@
 [package]
 name = "okxweb3-app-x402-core"
 description = "OKX Agent Payments Protocol: x402 core types, server logic, and facilitator client"
-version = "0.3.1"
+version = "0.3.2"
 edition.workspace = true
 license.workspace = true
 repository = "https://github.com/okx/payments/tree/main/rust/x402/x402-core"

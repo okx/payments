@@ -5,6 +5,14 @@ All notable changes to `okxweb3-app-x402-core` are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2026-07-10
+
+### Added
+- `X402ResourceServer::exempt_payers` (chained with `register`) — the review-wallet no-charge allowlist. Case-insensitive and additive across calls; empty = off. The whole bypass (allowlist check + signature-only verify) is encapsulated on the server; the HTTP middleware just calls it.
+
+### Removed
+- Internal `X402ResourceServer::recover_payer` (added in 0.3.1, `#[doc(hidden)]`) — superseded by the encapsulated bypass above.
+
 ## [0.3.1] - 2026-07-10
 
 ### Added
