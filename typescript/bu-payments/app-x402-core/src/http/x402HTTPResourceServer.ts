@@ -789,6 +789,18 @@ export class x402HTTPResourceServer {
         };
       }
 
+      // Settlement-exemption bypass: if the payer is on the allowlist and the
+      // facilitator confirms the signature (doc §3 /verify-signature), skip the
+      // entire verify + settle (charge) flow and deliver the resource. Reuse the
+      // no-payment path so the handler runs with no PAYMENT-RESPONSE header.
+      const exemptBypass = await this.ResourceServer.tryExemptSignatureBypass(
+        paymentPayload,
+        matchingRequirements,
+      );
+      if (exemptBypass) {
+        return { type: "no-payment-required" };
+      }
+
       const verifyResult = await this.ResourceServer.verifyPayment(
         paymentPayload,
         matchingRequirements,

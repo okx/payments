@@ -53,29 +53,6 @@ export class OKXFacilitatorClient implements FacilitatorClient {
 
   /**
    *
-   * @param method
-   * @param path
-   * @param body
-   */
-  private createHeaders(method: string, path: string, body?: string): Record<string, string> {
-    const timestamp = new Date().toISOString();
-    const prehash = timestamp + method + path + (body ?? "");
-    const sign = crypto
-      .createHmac("sha256", this.config.secretKey)
-      .update(prehash)
-      .digest("base64");
-
-    return {
-      "OK-ACCESS-KEY": this.config.apiKey,
-      "OK-ACCESS-SIGN": sign,
-      "OK-ACCESS-TIMESTAMP": timestamp,
-      "OK-ACCESS-PASSPHRASE": this.config.passphrase,
-      "Content-Type": "application/json",
-    };
-  }
-
-  /**
-   *
    */
   async getSupported(): Promise<SupportedResponse> {
     const path = "/api/v6/pay/x402/supported";
@@ -145,6 +122,40 @@ export class OKXFacilitatorClient implements FacilitatorClient {
     if (!res.ok) throw new Error(`OKX settle failed: ${res.status}`);
     const json = (await res.json()) as Record<string, unknown>;
     const data = (json.data ?? json) as SettleResponse;
+    return data;
+  }
+
+  /**
+   * Verify only the payment signature (doc §3, `POST /verify-signature`).
+   *
+   * Unlike {@link verify}, this performs no blacklist / KYS / parameter-match /
+   * time-window / on-chain (balance / nonce / allowance) / anti-replay checks —
+   * a valid result means "signature is authentic", NOT "safe to settle". The
+   * request body matches `/verify`; `paymentRequirements` does not participate in
+   * signature verification and may be omitted.
+   *
+   * @param payload - The payment payload carrying the signature
+   * @param requirements - Optional payment requirements (not used for verification)
+   * @returns Signature verification response
+   */
+  async verifySignature(
+    payload: PaymentPayload,
+    requirements?: PaymentRequirements,
+  ): Promise<VerifyResponse> {
+    const path = "/api/v6/pay/x402/verify-signature";
+    const body = JSON.stringify({
+      x402Version: 2,
+      paymentPayload: payload,
+      ...(requirements ? { paymentRequirements: requirements } : {}),
+    });
+    const res = await fetch(this.config.baseUrl + path, {
+      method: "POST",
+      headers: this.createHeaders("POST", path, body),
+      body,
+    });
+    if (!res.ok) throw new Error(`OKX verifySignature failed: ${res.status}`);
+    const json = (await res.json()) as Record<string, unknown>;
+    const data = (json.data ?? json) as VerifyResponse;
     return data;
   }
 
@@ -347,5 +358,31 @@ export class OKXFacilitatorClient implements FacilitatorClient {
       throw new Error(`OKX getSubscription failed: ${res.status} ${body}`);
     }
     return (await res.json()) as FacilitatorEnvelope<FacilitatorGetSubscriptionData>;
+  }
+
+  /**
+   * Build the OKX REST authentication headers (HMAC-SHA256 over
+   * timestamp + method + path + body) shared by every request method.
+   *
+   * @param method - HTTP method
+   * @param path - Request path (including query string)
+   * @param body - Optional request body
+   * @returns The authentication headers
+   */
+  private createHeaders(method: string, path: string, body?: string): Record<string, string> {
+    const timestamp = new Date().toISOString();
+    const prehash = timestamp + method + path + (body ?? "");
+    const sign = crypto
+      .createHmac("sha256", this.config.secretKey)
+      .update(prehash)
+      .digest("base64");
+
+    return {
+      "OK-ACCESS-KEY": this.config.apiKey,
+      "OK-ACCESS-SIGN": sign,
+      "OK-ACCESS-TIMESTAMP": timestamp,
+      "OK-ACCESS-PASSPHRASE": this.config.passphrase,
+      "Content-Type": "application/json",
+    };
   }
 }
