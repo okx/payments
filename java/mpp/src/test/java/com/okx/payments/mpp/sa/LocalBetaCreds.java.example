@@ -1,0 +1,51 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// HOW TO USE
+//
+// 1. Copy this file beside it:
+//      cp LocalBetaCreds.java.example LocalBetaCreds.java
+//
+// 2. Open the new LocalBetaCreds.java and replace the four PASTE_ placeholders
+//    with your actual values. Do NOT edit this .example file. Do NOT commit
+//    LocalBetaCreds.java — it is gitignored at java/.gitignore.
+//
+// 3. Run the smoke test:
+//      mvn -B -pl mpp -am -Dsurefire.failIfNoSpecifiedTests=false \
+//          test -Dtest=BetaChargeSmokeTest
+//
+// 4. If you ever see LocalBetaCreds.java in `git status`, STOP and verify
+//    your gitignore is wired up before proceeding.
+// ─────────────────────────────────────────────────────────────────────────────
+
+package com.okx.payments.mpp.sa;
+
+/** Local-only credentials for ad-hoc smoke tests against pre/beta. NEVER commit. */
+public final class LocalBetaCreds {
+
+    /** OKX SA gateway base URL (e.g. https://www.okx.com or beta endpoint). */
+    public static final String BASE_URL       = "PASTE_BASE_URL_HERE";
+
+    /** OK-ACCESS-KEY (UUID-shaped). */
+    public static final String API_KEY        = "PASTE_API_KEY_HERE";
+
+    /** OK-ACCESS-SIGN secret (HMAC-SHA256 key, hex). */
+    public static final String API_SECRET     = "PASTE_API_SECRET_HERE";
+
+    /** OK-ACCESS-PASSPHRASE. */
+    public static final String API_PASSPHRASE = "PASTE_API_PASSPHRASE_HERE";
+
+    /** Optional: payee EOA private key (32-byte hex) used to sign SettleAuth /
+     *  CloseAuth in {@code SessionDemoServer}. Falls back to a deterministic
+     *  dev seed when this stays at the placeholder. */
+    public static final String PAYEE_PRIVATE_KEY = "PASTE_PAYEE_PRIVATE_KEY_HEX_HERE";
+
+    private LocalBetaCreds() {}
+
+    /** True only when every placeholder has been replaced. */
+    public static boolean isFilled() {
+        return !API_KEY.startsWith("PASTE_")
+            && !API_SECRET.startsWith("PASTE_")
+            && !API_PASSPHRASE.startsWith("PASTE_")
+            && !BASE_URL.isBlank()
+            && !BASE_URL.startsWith("PASTE_");
+    }
+}
