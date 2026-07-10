@@ -7,12 +7,13 @@
 //! 4. If verified → pass through to handler, buffer response, settle
 //! 5. Add PAYMENT-RESPONSE header with settlement result
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
 use axum::body::Body;
-use axum::http::{Request, Response, StatusCode};
+use axum::http::{HeaderValue, Request, Response, StatusCode};
 use tower::{Layer, Service};
 
 use x402_core::http::{
@@ -26,7 +27,7 @@ use x402_core::http::{
 };
 use x402_core::server::X402ResourceServer;
 use x402_core::subscription::{CancelAuth, PendingChangeCancelAuth};
-use x402_core::types::{PaymentRequired, ResourceInfo};
+use x402_core::types::{PaymentPayload, PaymentRequired, ResourceInfo};
 
 use crate::adapter;
 
@@ -57,6 +58,10 @@ struct PaymentState {
     on_after_settle: Option<OnAfterSettleHook>,
     on_settle_failure: Option<OnSettleFailureHook>,
     subscription: Option<crate::subscription::SubscriptionSupport>,
+    /// OKX.AI review test-wallet addresses (lowercased) exempt from
+    /// verify+settle. Empty = feature off. See
+    /// [`PaymentMiddlewareBuilder::exempt_payers`].
+    exempt_payers: HashSet<String>,
 }
 
 /// Tower Layer that wraps services with x402 payment checking.
@@ -89,6 +94,7 @@ impl PaymentLayer {
                 on_after_settle: None,
                 on_settle_failure: None,
                 subscription: None,
+                exempt_payers: HashSet::new(),
             }),
         }
     }
@@ -522,6 +528,43 @@ where
                             ))
                         }
                     };
+                }
+            }
+
+            // 5b. OKX.AI review-wallet exemption (short-circuit BEFORE verify).
+            // Pre-filter locally on the payload's `from`; only a review wallet
+            // reaches the sign-only endpoint. verify-signature guarantees
+            // isValid == true implies signer == from, so `from in exempt_payers
+            // && isValid` means the authenticated payer is a review wallet. On a
+            // hit: serve and skip verify AND settle (no on-chain charge).
+            // `from` unreadable (unknown scheme shape) => do not exempt.
+            if !state.exempt_payers.is_empty()
+                && claimed_from(&payment_payload)
+                    .map(|f| is_exempt(&state.exempt_payers, Some(&f)))
+                    .unwrap_or(false)
+            {
+                match state
+                    .server
+                    .recover_payer(&payment_payload, &payment_requirements)
+                    .await
+                {
+                    // Some(_) = facilitator confirmed the signature is valid (and
+                    // thus bound to `from`); serve without verify/settle.
+                    Ok(Some(_)) => {
+                        let mut inner_response = inner.call(req).await?;
+                        inner_response.headers_mut().insert(
+                            "x-payment-review-exempt",
+                            HeaderValue::from_static("true"),
+                        );
+                        return Ok(inner_response);
+                    }
+                    // Signature invalid -> not a genuine review payment.
+                    Ok(None) => {}
+                    Err(e) => {
+                        // Endpoint failed — do NOT exempt; fall through to the
+                        // normal verify+settle path.
+                        tracing::warn!("[x402] review-exempt verify-signature failed: {e}");
+                    }
                 }
             }
 
@@ -1193,6 +1236,7 @@ pub struct PaymentMiddlewareBuilder {
     on_after_settle: Option<OnAfterSettleHook>,
     on_settle_failure: Option<OnSettleFailureHook>,
     subscription: Option<crate::subscription::SubscriptionSupport>,
+    exempt_payers: HashSet<String>,
 }
 
 impl PaymentMiddlewareBuilder {
@@ -1212,6 +1256,7 @@ impl PaymentMiddlewareBuilder {
             on_after_settle: None,
             on_settle_failure: None,
             subscription: None,
+            exempt_payers: HashSet::new(),
         }
     }
 
@@ -1221,6 +1266,33 @@ impl PaymentMiddlewareBuilder {
     /// holding the facilitator client + AccessProof window.
     pub fn subscription(mut self, support: crate::subscription::SubscriptionSupport) -> Self {
         self.subscription = Some(support);
+        self
+    }
+
+    /// Register review test-wallet addresses that are exempt from
+    /// verify+settle (the OKX.AI onboarding "review-wallet no-charge" flow).
+    ///
+    /// When this set is non-empty, a request whose payload `from` is one of
+    /// these addresses is checked against the facilitator's signature-only
+    /// endpoint (no balance/nonce check — the review wallet holds no funds).
+    /// If the signature is valid, the resource is served with HTTP 200 while
+    /// verify AND settle are skipped (no on-chain charge). Everyone else falls
+    /// through to the normal verify+settle path.
+    ///
+    /// Security: a valid signature is required, so a normal user cannot forge a
+    /// review wallet's payment (isValid guarantees signer == from). The address
+    /// list is the seller/SDK's to control; do not derive it from
+    /// caller-supplied input. Empty = feature off.
+    pub fn exempt_payers<I, S>(mut self, payers: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.exempt_payers = payers
+            .into_iter()
+            .map(|p| p.into().trim().to_lowercase())
+            .filter(|p| !p.is_empty())
+            .collect();
         self
     }
 
@@ -1300,6 +1372,7 @@ impl PaymentMiddlewareBuilder {
             on_after_settle: self.on_after_settle,
             on_settle_failure: self.on_settle_failure,
             subscription: self.subscription,
+            exempt_payers: self.exempt_payers,
         })
     }
 }
@@ -1314,6 +1387,121 @@ pub fn payment_middleware_with_resolver(
     resolver: PaymentResolverFn,
 ) -> PaymentLayer {
     PaymentLayer::new(server, routes, None, DEFAULT_POLL_DEADLINE, Some(resolver))
+}
+
+/// True when `addr` is a configured review test wallet. Case-insensitive; an
+/// empty set means the feature is off. Used for the local membership pre-filter
+/// on the payload's claimed `from`; the facilitator's `isValid` then
+/// authenticates that `from` is the true signer.
+fn is_exempt(exempt_payers: &HashSet<String>, addr: Option<&str>) -> bool {
+    if exempt_payers.is_empty() {
+        return false;
+    }
+    match addr {
+        Some(p) => exempt_payers.contains(&p.to_lowercase()),
+        None => false,
+    }
+}
+
+/// The buyer-claimed payer address in the payment payload, if present. Used as
+/// the local membership pre-filter for the review-wallet exemption; the
+/// facilitator's `isValid` then authenticates it.
+///
+/// The `from` lives in different places per scheme sub-path:
+/// - exact + EIP-3009 / aggr_deferred: `payload.authorization.from`
+/// - exact + Permit2 / upto: `payload.permit2Authorization.from`
+///   (there `authorization` is `null`)
+///
+/// Returns `None` for shapes that carry neither (caller then does not exempt).
+fn claimed_from(payment_payload: &PaymentPayload) -> Option<String> {
+    let payload = &payment_payload.payload;
+    for key in ["authorization", "permit2Authorization"] {
+        if let Some(from) = payload
+            .get(key)
+            .and_then(|a| a.get("from"))
+            .and_then(|f| f.as_str())
+        {
+            return Some(from.to_string());
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod review_exempt_tests {
+    use super::*;
+
+    fn set(addrs: &[&str]) -> HashSet<String> {
+        addrs.iter().map(|a| a.to_lowercase()).collect()
+    }
+
+    #[test]
+    fn exempt_when_recovered_payer_matches_case_insensitive() {
+        let s = set(&["0xReviewWallet01"]);
+        assert!(is_exempt(&s, Some("0xreviewwallet01")));
+        assert!(is_exempt(&s, Some("0xREVIEWWALLET01")));
+    }
+
+    #[test]
+    fn not_exempt_for_normal_payer() {
+        let s = set(&["0xreviewwallet01"]);
+        assert!(!is_exempt(&s, Some("0xbuyer00000000000000000000000000000000beef")));
+    }
+
+    #[test]
+    fn feature_off_when_set_empty() {
+        assert!(!is_exempt(&HashSet::new(), Some("0xreviewwallet01")));
+    }
+
+    #[test]
+    fn not_exempt_when_payer_missing() {
+        let s = set(&["0xreviewwallet01"]);
+        assert!(!is_exempt(&s, None));
+    }
+
+    fn payload_with(payload_json: serde_json::Value) -> PaymentPayload {
+        serde_json::from_value(serde_json::json!({
+            "x402Version": 2,
+            "accepted": {
+                "scheme": "exact",
+                "network": "eip155:196",
+                "asset": "0xasset",
+                "amount": "10000",
+                "payTo": "0xrecipient",
+                "maxTimeoutSeconds": 60
+            },
+            "payload": payload_json
+        }))
+        .expect("valid PaymentPayload")
+    }
+
+    #[test]
+    fn claimed_from_reads_authorization_from() {
+        let p = payload_with(serde_json::json!({
+            "signature": "0xsig",
+            "authorization": { "from": "0xReviewWallet01", "to": "0xr", "value": "1" }
+        }));
+        assert_eq!(claimed_from(&p).as_deref(), Some("0xReviewWallet01"));
+    }
+
+    #[test]
+    fn claimed_from_reads_permit2_authorization_from() {
+        // exact + Permit2 / upto: `authorization` is null, `from` lives under
+        // `permit2Authorization`.
+        let p = payload_with(serde_json::json!({
+            "signature": "0xsig",
+            "authorization": serde_json::Value::Null,
+            "permit2Authorization": { "from": "0xReviewWallet02", "spender": "0xs" }
+        }));
+        assert_eq!(claimed_from(&p).as_deref(), Some("0xReviewWallet02"));
+    }
+
+    #[test]
+    fn claimed_from_none_when_absent() {
+        // No `from` under either key → None, so the pre-filter does not exempt.
+        let p = payload_with(serde_json::json!({ "signature": "0xsig" }));
+        assert_eq!(claimed_from(&p), None);
+    }
 }
 
 #[cfg(test)]

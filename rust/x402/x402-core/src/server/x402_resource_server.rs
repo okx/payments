@@ -217,6 +217,32 @@ impl X402ResourceServer {
         self.facilitator.verify(&request).await
     }
 
+    /// Recover the payer from a payment payload via signature-only verify
+    /// (no balance/nonce check). Returns the recovered signer, or `None` if the
+    /// signature was invalid (`isValid == false`) or no payer was returned.
+    /// Used for the review-wallet exemption. See
+    /// [`crate::facilitator::FacilitatorClient::verify_signature_only`].
+    ///
+    /// Internal plumbing for `exempt_payers` — not developer-facing.
+    #[doc(hidden)]
+    pub async fn recover_payer(
+        &self,
+        payment_payload: &PaymentPayload,
+        payment_requirements: &PaymentRequirements,
+    ) -> Result<Option<String>, X402Error> {
+        let request = VerifyRequest {
+            x402_version: payment_payload.x402_version,
+            payment_payload: payment_payload.clone(),
+            payment_requirements: payment_requirements.clone(),
+        };
+        let resp = self.facilitator.verify_signature_only(&request).await?;
+        // Failed verify must not grant the exemption, even if `payer` is echoed.
+        if !resp.is_valid {
+            return Ok(None);
+        }
+        Ok(resp.payer)
+    }
+
     /// Settle a verified payment.
     ///
     /// If `settlement_overrides` is provided with an amount, the effective
