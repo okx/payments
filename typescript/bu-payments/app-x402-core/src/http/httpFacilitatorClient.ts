@@ -92,6 +92,23 @@ export interface FacilitatorClient {
    * @returns Settlement status response
    */
   getSettleStatus?(txHash: string): Promise<SettleStatusResponse>;
+
+  /**
+   * Verify only the payment signature, without any settleability checks
+   * (no blacklist / KYS / parameter match / time window / on-chain / anti-replay).
+   * OKX extension used by the settlement-exemption fast path: a valid result
+   * confirms the payload was signed by its declared payer, NOT that it is safe
+   * to settle. `paymentRequirements` does not participate in verification and
+   * may be omitted.
+   *
+   * @param paymentPayload - The payment payload carrying the signature
+   * @param paymentRequirements - Optional requirements (unused for verification)
+   * @returns Signature verification response
+   */
+  verifySignature?(
+    paymentPayload: PaymentPayload,
+    paymentRequirements?: PaymentRequirements,
+  ): Promise<VerifyResponse>;
 }
 
 /** Number of retries for getSupported() on 429 rate limit errors */
