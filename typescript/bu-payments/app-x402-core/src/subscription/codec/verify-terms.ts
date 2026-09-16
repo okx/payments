@@ -42,6 +42,10 @@ export function verifyTermsBindRequirements(
   if (terms.periodSec !== extra.periodSec) return ErrorCode.TermsBindingInvalid;
   if (terms.maxPeriods !== extra.maxPeriods) return ErrorCode.TermsBindingInvalid;
   if (terms.periodMode !== (extra.periodMode ?? 0)) return ErrorCode.TermsBindingInvalid;
+  // planId is wire-only (not covered by the contract's EIP-712 TypeHash), so
+  // bind it explicitly to the authoritative Seller offer before forwarding
+  // the payload to the facilitator. Missing values fail closed.
+  if (terms.planId !== extra.plan.id) return ErrorCode.TermsBindingInvalid;
   if (terms.planTier !== extra.plan.tier) return ErrorCode.TermsBindingInvalid;
 
   // Server-pinned startAt must be honored; if server left it unset (==undefined),
@@ -54,10 +58,6 @@ export function verifyTermsBindRequirements(
   const expectedInitAmount = extra.initialCharge?.totalAmount ?? "0";
   if (terms.initialChargePeriods !== expectedInitPeriods) return ErrorCode.TermsBindingInvalid;
   if (terms.initialChargeAmount !== expectedInitAmount) return ErrorCode.TermsBindingInvalid;
-
-  // planId itself isn't compared here — the other field-level checks
-  // (planTier / amountPerPeriod / merchant / …) already pin down the
-  // economic effect of the subscription.
 
   // changeFrom binding — direction encoded in changeEffectiveAt:
   //   undefined → create (changeFromSubId==0 / changeEffectiveAt==0)

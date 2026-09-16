@@ -54,6 +54,14 @@ export interface SubscriptionTerms {
   permitHash: Hex;
   /** bytes32 — buyer-generated random anti-replay value. */
   salt: Hex;
+  /**
+   * Business plan identifier carried on the wire only. It is deliberately not
+   * part of `SUBSCRIPTION_TERMS_TYPES`, so the Seller SDK MUST bind it to the
+   * authoritative `PaymentRequirements.extra.plan.id` before settlement.
+   * Optional on decode for backward compatibility; verification fails closed
+   * when it is absent.
+   */
+  planId?: string;
   /** uint8 (>0) — plan tier for upgrade/downgrade comparison. */
   planTier: number;
   /** bytes32 — old subId on change, zero on create. */
@@ -62,13 +70,6 @@ export interface SubscriptionTerms {
   changeEffectiveAt: number;
   /** uint8 — 0 fixed_seconds / 1 calendar_month. */
   periodMode: number;
-  /**
-   * bytes32 — keccak256(utf8(plan.id)). Buyer SDKs sign it as a terms field
-   * and the facilitator persists it as the on-chain `planId`. Seller verify
-   * MUST cross-check this hash equals `keccak256(utf8(accepted.extra.plan.id))`
-   * to defeat plan-spoof attacks.
-   */
-  planId?: Hex;
 }
 
 /**
