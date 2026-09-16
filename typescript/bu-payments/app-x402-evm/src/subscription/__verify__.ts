@@ -133,7 +133,10 @@ async function buildSignedPayload(
       sigDeadline: "1900000600",
     },
     permitSingleSignature: permitSignature,
-    terms: termsTd.message,
+    terms: {
+      ...termsTd.message,
+      planId: (requirements.extra as SubscriptionRequirementsExtra).plan.id,
+    },
     termsSignature,
   });
 }
@@ -309,6 +312,32 @@ test("verifySubscribe: real signatures → ok", async () => {
   const payload = JSON.parse(Buffer.from(headerB64, "base64").toString("utf8"));
   const r = await scheme.verifySubscribe(payload, req);
   assert(r.ok, `must verify; got: ${JSON.stringify(r)}`);
+});
+
+test("verifySubscribe: forged wire planId → terms_binding_invalid", async () => {
+  const scheme = makeScheme();
+  const req = makeRequirements();
+  const headerB64 = await buildSignedPayload(req);
+  const payload = JSON.parse(Buffer.from(headerB64, "base64").toString("utf8"));
+  payload.payload.terms.planId = "enterprise_monthly";
+  const r = await scheme.verifySubscribe(payload, req);
+  assert(
+    !r.ok && (r as any).error === "terms_binding_invalid",
+    `expected terms_binding_invalid; got ${JSON.stringify(r)}`,
+  );
+});
+
+test("verifySubscribe: missing wire planId → terms_binding_invalid", async () => {
+  const scheme = makeScheme();
+  const req = makeRequirements();
+  const headerB64 = await buildSignedPayload(req);
+  const payload = JSON.parse(Buffer.from(headerB64, "base64").toString("utf8"));
+  delete payload.payload.terms.planId;
+  const r = await scheme.verifySubscribe(payload, req);
+  assert(
+    !r.ok && (r as any).error === "terms_binding_invalid",
+    `expected terms_binding_invalid; got ${JSON.stringify(r)}`,
+  );
 });
 
 test("verifySubscribe: bad signatures pass SDK (contract is authoritative verifier)", async () => {
@@ -838,7 +867,10 @@ async function buildSignedChangePayload(
       sigDeadline: "1900000600",
     },
     permitSingleSignature: permitSignature,
-    terms: termsTd.message,
+    terms: {
+      ...termsTd.message,
+      planId: extra.plan.id,
+    },
     termsSignature,
   });
   return {
@@ -854,6 +886,19 @@ test("verifyChange: upgrade happy → ok + direction:upgrade", async () => {
   const { payload, requirements } = await buildSignedChangePayload(scheme, SUB_ID);
   const r = await scheme.verifyChange(payload, requirements);
   assert(r.ok && r.direction === "upgrade", `verify ok: ${JSON.stringify(r)}`);
+});
+
+test("verifyChange: forged wire planId → terms_binding_invalid", async () => {
+  const store = new InMemoryStore();
+  await seedSub(store, { planTier: 1, planId: "basic_monthly" });
+  const scheme = makeScheme({ store });
+  const { payload, requirements } = await buildSignedChangePayload(scheme, SUB_ID);
+  payload.payload.terms.planId = "enterprise_monthly";
+  const r = await scheme.verifyChange(payload, requirements);
+  assert(
+    !r.ok && (r as any).error === "terms_binding_invalid",
+    `expected terms_binding_invalid; got ${JSON.stringify(r)}`,
+  );
 });
 
 test("verifyChange: zero changeFromSubId → terms_binding_invalid", async () => {
