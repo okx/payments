@@ -525,6 +525,19 @@ where
                 }
             }
 
+            // 5b. Review-wallet exemption (short-circuit BEFORE verify). When the
+            // payload's declared payer is on the server's exempt allowlist and
+            // the facilitator confirms the signature, serve the resource and skip
+            // both verify and settle (no on-chain charge). Any other case falls
+            // through to the normal flow.
+            if state
+                .server
+                .try_exempt_signature_bypass(&payment_payload, &payment_requirements)
+                .await
+            {
+                return inner.call(req).await;
+            }
+
             // 6. Hook: onBeforeVerify — can abort before verification
             if let Some(hook) = &state.on_before_verify {
                 let ctx = VerifyContext {
@@ -1315,6 +1328,7 @@ pub fn payment_middleware_with_resolver(
 ) -> PaymentLayer {
     PaymentLayer::new(server, routes, None, DEFAULT_POLL_DEADLINE, Some(resolver))
 }
+
 
 #[cfg(test)]
 mod path_matching_tests {

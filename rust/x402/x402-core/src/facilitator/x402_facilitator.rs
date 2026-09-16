@@ -25,6 +25,28 @@ pub trait FacilitatorClient: Send + Sync {
     /// Calls: `POST /verify`
     async fn verify(&self, request: &VerifyRequest) -> Result<VerifyResponse, X402Error>;
 
+    /// Recover the payer by verifying ONLY the signature — no balance or nonce
+    /// check. Used for the review-wallet exemption: the review test wallet
+    /// holds no funds, so the normal balance-checking `verify` would reject it;
+    /// and for aggr_deferred (session-key signing, `ecrecover != from`) the
+    /// facilitator resolves the session key to the payer EOA, which the SDK
+    /// cannot do locally. Returns `VerifyResponse` whose `payer` is the
+    /// recovered signer.
+    ///
+    /// Calls `POST /api/v6/pay/x402/verify-signature`. Default: unsupported;
+    /// the OKX HTTP client overrides it.
+    ///
+    /// Internal plumbing for `exempt_payers` — not developer-facing.
+    #[doc(hidden)]
+    async fn verify_signature_only(
+        &self,
+        _request: &VerifyRequest,
+    ) -> Result<VerifyResponse, X402Error> {
+        Err(X402Error::Other(
+            "verify_signature_only not supported by this facilitator".to_string(),
+        ))
+    }
+
     /// Submit a payment for on-chain settlement.
     ///
     /// Calls: `POST /settle`

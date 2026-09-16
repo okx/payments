@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use axum::{routing::get, Json, Router};
 use serde_json::{json, Value};
 
-use x402_axum::{payment_middleware, AcceptConfig, RoutePaymentConfig};
+use x402_axum::{AcceptConfig, PaymentMiddlewareBuilder, RoutePaymentConfig};
 use x402_core::http::OkxHttpFacilitatorClient;
 use x402_core::server::X402ResourceServer;
 use x402_core::types::AssetAmount;
@@ -26,6 +26,13 @@ async fn main() {
     let secret_key = std::env::var("OKX_SECRET_KEY").expect("OKX_SECRET_KEY is required");
     let passphrase = std::env::var("OKX_PASSPHRASE").expect("OKX_PASSPHRASE is required");
     let pay_to = std::env::var("PAY_TO_ADDRESS").expect("PAY_TO_ADDRESS is required");
+    // Optional: OKX.AI review test wallets exempt from verify+settle (no charge).
+    // Comma-separated, e.g. EXEMPT_PAYERS=0xReviewWallet1,0xReviewWallet2
+    // Applies to both exact and aggr_deferred below.
+    let exempt_payers: Vec<String> = std::env::var("EXEMPT_PAYERS")
+        .ok()
+        .map(|s| s.split(',').map(|w| w.trim().to_string()).collect())
+        .unwrap_or_default();
     let facilitator_client =
         OkxHttpFacilitatorClient::new(&api_key, &secret_key, &passphrase)
             .expect("Failed to create facilitator client");
@@ -50,7 +57,8 @@ async fn main() {
 
     let mut server = X402ResourceServer::new(facilitator_client)
         .register("eip155:196", ExactEvmScheme::new())
-        .register("eip155:196", aggr_deferred);
+        .register("eip155:196", aggr_deferred)
+        .exempt_payers(exempt_payers); // review-wallet no-charge allowlist (empty = off)
 
     // MUST initialize before use (fetches facilitator's supported schemes)
     server
@@ -88,10 +96,9 @@ async fn main() {
         },
     )]);
 
-    // 4. Axum router + payment middleware))
     let app = Router::new()
         .route("/weather", get(weather_handler))
-        .layer(payment_middleware(routes, server));
+        .layer(PaymentMiddlewareBuilder::new(routes, server).build());
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:4021").await.unwrap();
     println!("Server listening at http://localhost:4021");
