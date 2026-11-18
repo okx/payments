@@ -296,10 +296,17 @@ impl EvmMpp {
     // Verify
     // -------------------------------------------------------------------
 
-    /// Verify a charge credential (HMAC + expiry + SA-API roundtrip).
-    pub async fn verify_charge(&self, auth_header: &str) -> Result<Receipt, String> {
+    /// Check the server's current base-unit price and token, then run HMAC + expiry + SA verification.
+    /// Both expected values must come from server-owned route configuration.
+    pub async fn verify_charge(
+        &self,
+        auth_header: &str,
+        expected_amount: &str,
+        expected_currency: &str,
+    ) -> Result<Receipt, String> {
         let credential =
             parse_authorization(auth_header).map_err(|e| format!("parse authorization: {e}"))?;
+        crate::amount::check(&credential, expected_amount, expected_currency)?;
         match &self.inner {
             EvmMppInner::ChargeOnly(m) => m
                 .verify_credential(&credential)
@@ -312,18 +319,20 @@ impl EvmMpp {
         }
     }
 
-    /// Verify a session credential. Errors out when no session method
-    /// was registered.
+    /// Check the server's current per-unit price and token before session verification.
+    /// `expected_amount` comes from the route, not the buyer's cumulative voucher.
+    /// `expected_currency` is the token required by the current route.
     pub async fn verify_session(
         &self,
         auth_header: &str,
+        expected_amount: &str,
+        expected_currency: &str,
     ) -> Result<SessionVerifyResult, String> {
         let credential =
             parse_authorization(auth_header).map_err(|e| format!("parse authorization: {e}"))?;
+        crate::amount::check(&credential, expected_amount, expected_currency)?;
         match &self.inner {
-            EvmMppInner::ChargeOnly(_) => {
-                Err("EvmMpp: session method not registered".to_string())
-            }
+            EvmMppInner::ChargeOnly(_) => Err("EvmMpp: session method not registered".to_string()),
             EvmMppInner::Both(m) => m
                 .verify_session(&credential)
                 .await

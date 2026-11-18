@@ -204,6 +204,17 @@ async fn manage(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl 
                                     .into_response();
                             }
                         };
+                    if let Err(error) =
+                        mpp_evm::check_amount(&request.amount, UNIT_PRICE_BASE_UNITS).and_then(
+                            |()| mpp_evm::check_currency(&request.currency, &state.currency),
+                        )
+                    {
+                        return (
+                            StatusCode::PAYMENT_REQUIRED,
+                            Json(json!({ "error": error })),
+                        )
+                            .into_response();
+                    }
                     match state
                         .session_method
                         .verify_session(&credential, &request)

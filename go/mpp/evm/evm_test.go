@@ -803,7 +803,8 @@ func TestEVMChargeMethodVerify(t *testing.T) {
 	proofSourceStr := "did:pkh:eip155:1:" + hardhatAddress
 	echo := &protocol.ChallengeEcho{ID: challengeID}
 	method := NewEVMChargeMethod().WithChainID(chainID).WithRecipient(hardhatAddress)
-	req := &protocol.ChargeRequest{}
+	req := &protocol.ChargeRequest{Amount: "100", Currency: "fixture-token"}
+	echo.Request, _ = protocol.SerializeRequest(req)
 
 	tests := []struct {
 		name    string
@@ -906,7 +907,9 @@ func TestEVMChargeMethodVerifyChainIDMismatch(t *testing.T) {
 	}
 	_ = signerChainID
 
-	_, err := method.Verify(context.Background(), cred, &protocol.ChargeRequest{})
+	request := &protocol.ChargeRequest{Amount: "100", Currency: "fixture-token"}
+	cred.Echo.Request, _ = protocol.SerializeRequest(request)
+	_, err := method.Verify(context.Background(), cred, request)
 	if err == nil {
 		t.Error("expected chain ID mismatch error, got nil")
 	}

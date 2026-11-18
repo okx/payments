@@ -90,15 +90,42 @@ class MppAdapterTest {
     }
 
     @Test
-    void handle_legacy_cfg_passes_through_chain_with_marker() throws Exception {
+    void missing_route_config_does_not_run_business_handler() throws Exception {
         HttpServletRequest req = mock(HttpServletRequest.class);
         HttpServletResponse resp = mock(HttpServletResponse.class);
         FilterChain chain = mock(FilterChain.class);
-
-        // Legacy cfg path: not an MppRouteConfig.Entry → backward-compat marker + chain.doFilter
+        when(resp.getWriter()).thenReturn(new java.io.PrintWriter(new java.io.StringWriter()));
         adapter.handle(req, resp, chain, null);
-
-        verify(resp).setHeader("X-Mpp-Detected", "true");
-        verify(chain, times(1)).doFilter(req, resp);
+        verify(resp).setStatus(402);
+        verify(chain, times(0)).doFilter(req, resp);
     }
+    @Test
+    void legacy_charge_uses_server_amount_before_existing_sa_pipeline() throws Exception {
+        com.okx.payments.mpp.sa.SaApiClient sa = mock(com.okx.payments.mpp.sa.SaApiClient.class);
+        when(mppServer.evmChargeMethod()).thenReturn(new com.okx.payments.mpp.server.EvmChargeMethod(
+            new com.okx.payments.mpp.seller.ChargeHandler(sa)));
+        com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        com.okx.payments.mpp.protocol.encoding.Base64UrlJson codec = new com.okx.payments.mpp.protocol.encoding.Base64UrlJson(mapper);
+        Challenge challenge = new Challenge("fixture", "fixture", Method.EVM, Intent.CHARGE,
+            codec.encode(Map.of("amount", "100")), null, null, null, null);
+        com.okx.payments.mpp.protocol.Credential credential = new com.okx.payments.mpp.protocol.Credential(
+            challenge, mapper.readTree("{\"type\":\"hash\",\"hash\":\"fixture\"}"), null);
+        HttpServletRequest req = mock(HttpServletRequest.class);
+        when(req.getHeader("Authorization")).thenReturn("Payment " + codec.encode(credential));
+        HttpServletResponse resp = mock(HttpServletResponse.class);
+        when(resp.getWriter()).thenReturn(new java.io.PrintWriter(new java.io.StringWriter()));
+        FilterChain chain = mock(FilterChain.class);
+        adapter.handle(req, resp, chain, new MppAdapter.MppRouteConfigLegacy("fixture", Intent.CHARGE, Map.of("amount", "50000")));
+        org.mockito.Mockito.verifyNoInteractions(sa);
+        verify(chain, times(0)).doFilter(req, resp);
+
+        com.okx.payments.mpp.protocol.Receipt.ChargeReceipt paid = new com.okx.payments.mpp.protocol.Receipt.ChargeReceipt(
+            Method.EVM, "fixture", "success", "ts", 196L, "fixture", null);
+        when(sa.chargeVerifyHash(any())).thenReturn(paid);
+        adapter.handle(req, resp, chain, new MppAdapter.MppRouteConfigLegacy("fixture", Intent.CHARGE, Map.of("amount", "100")));
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(sa, chain);
+        order.verify(sa).chargeVerifyHash(any());
+        order.verify(chain).doFilter(req, resp);
+    }
+
 }

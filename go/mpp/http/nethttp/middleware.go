@@ -40,13 +40,13 @@ func ChargeMiddleware(m *server.Mpp, cfg server.ChargeRouteConfig) func(http.Han
 				return
 			}
 
-			challengeHeader, err := server.ChallengeHeaderFromAuth(authHeader)
+			_, err := server.ChallengeHeaderFromAuth(authHeader)
 			if err != nil {
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid Authorization header: %s", err)})
 				return
 			}
 
-			receipt, err := m.VerifyCredential(r.Context(), challengeHeader, authHeader)
+			receipt, err := m.VerifyCredentialForRoute(r.Context(), cfg, authHeader)
 			if err != nil {
 				writeJSON(w, paymentErrorStatus(err), map[string]string{"error": fmt.Sprintf("payment verification failed: %s", err)})
 				return
@@ -78,13 +78,13 @@ func SessionMiddleware(m *server.Mpp, cfg server.SessionRouteConfig) func(http.H
 				return
 			}
 
-			challengeHeader, err := server.ChallengeHeaderFromAuth(authHeader)
+			_, err := server.ChallengeHeaderFromAuth(authHeader)
 			if err != nil {
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid Authorization header: %s", err)})
 				return
 			}
 
-			result, err := m.VerifySession(r.Context(), challengeHeader, authHeader)
+			result, err := m.VerifySessionForRoute(r.Context(), cfg, authHeader)
 			if err != nil {
 				writeJSON(w, paymentErrorStatus(err), map[string]string{"error": fmt.Sprintf("session verification failed: %s", err)})
 				return

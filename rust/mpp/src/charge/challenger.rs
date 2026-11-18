@@ -1,6 +1,6 @@
 //! `EvmChargeChallenger` — EVM + SA API implementation of the upstream
 //! `mpp::server::axum::ChargeChallenger` trait. Lets axum handlers use
-//! `MppCharge<C>` extractors and `WithReceipt<T>` response wrappers with
+//! the SDK's `mpp_evm::MppCharge<C>` extractors and `WithReceipt<T>` response wrappers with
 //! zero boilerplate.
 //!
 //! Upstream ships `impl ChargeChallenger for Mpp<TempoChargeMethod<P>, S>`
@@ -17,7 +17,8 @@
 //! # Implementation notes
 //!
 //! - **Holds an internal `Mpp<EvmChargeMethod>`.** `verify_payment`
-//!   delegates to `Mpp::verify_credential`, which automatically does HMAC
+//!   requires route context; `verify_payment_for_amount` delegates to
+//!   `Mpp::verify_credential`, which automatically does HMAC
 //!   verification (preventing challenge_id forgery) and expiry checks —
 //!   the same security guarantees as upstream Tempo / Stripe.
 //! - **EVM-specific fields stored separately.** `currency / recipient /
@@ -80,7 +81,7 @@
 //!     splits: None,
 //!     resource_url: Some("https://api.shop.com/photo".into()),
 //! });
-//! let _: Arc<dyn ChargeChallenger> = Arc::new(challenger);
+//! let _: Arc<EvmChargeChallenger> = Arc::new(challenger);
 //! ```
 //!
 //! ## Builder style
@@ -194,6 +195,24 @@ impl EvmChargeChallenger {
                 resource_url: cfg.resource_url,
             }),
         }
+    }
+
+    /// Check the current route's price and the challenger's configured token
+    /// before the existing payment pipeline.
+    /// The unscoped upstream trait method fails closed because it has no route price.
+    pub async fn verify_payment_for_amount(
+        &self,
+        auth: &str,
+        expected_amount: &str,
+    ) -> Result<Receipt, String> {
+        let credential =
+            parse_authorization(auth).map_err(|e| format!("parse authorization: {e}"))?;
+        crate::amount::check(&credential, expected_amount, &self.inner.currency)?;
+        self.inner
+            .mpp
+            .verify_credential(&credential)
+            .await
+            .map_err(|e| e.to_string())
     }
 
     /// Chained builder constructor.
@@ -318,34 +337,16 @@ impl ChargeChallenger for EvmChargeChallenger {
         )
     }
 
-    /// Parse the credential string → delegate to upstream
-    /// `Mpp::verify_credential` (which **does HMAC verification + expiry
-    /// check + decodes the ChargeRequest + calls method.verify
-    /// automatically**) → return `Receipt`.
-    ///
-    /// Versus the earlier implementation that called `method.verify`
-    /// directly, the HMAC check here **prevents clients from forging
-    /// challenge_ids to bypass server-side issuance constraints**.
-    /// Without it, an attacker could forge any challenge and submit a
-    /// payment credential; SA API only checks the on-chain EIP-3009
-    /// signature and ignores challenge_id, which leaves a replay risk.
+    /// The legacy upstream trait receives no current-route amount and cannot
+    /// safely authorize a paid route. Use `mpp_evm::MppCharge<C>` or
+    /// `verify_payment_for_amount` instead.
     fn verify_payment(
         &self,
         credential_str: &str,
     ) -> Pin<Box<dyn Future<Output = Result<Receipt, String>> + Send>> {
-        // Sync phase: parse the Authorization header into a credential (challenge + payload).
-        let credential = match parse_authorization(credential_str) {
-            Ok(c) => c,
-            Err(e) => {
-                return Box::pin(std::future::ready(Err(format!("parse authorization: {e}"))));
-            }
-        };
-        // Async phase: Mpp::verify_credential runs verify_hmac_and_expiry → method.verify.
-        let mpp = self.inner.mpp.clone();
-        Box::pin(async move {
-            mpp.verify_credential(&credential)
-                .await
-                .map_err(|e| e.to_string())
+        let _ = credential_str;
+        Box::pin(async {
+            Err("current route amount is required; use mpp_evm::MppCharge or verify_payment_for_amount".into())
         })
     }
 }
@@ -393,9 +394,9 @@ mod tests {
         }
         async fn charge_verify_hash(
             &self,
-            _: &serde_json::Value,
+            credential: &serde_json::Value,
         ) -> Result<ChargeReceipt, SaApiError> {
-            unreachable!()
+            self.charge_settle(credential).await
         }
         async fn session_open(&self, _: &serde_json::Value) -> Result<SessionReceipt, SaApiError> {
             unreachable!()
@@ -435,6 +436,158 @@ mod tests {
             splits: None,
             resource_url: None,
         })
+    }
+
+    fn authorization(challenge: &PaymentChallenge, payload: serde_json::Value) -> String {
+        let credential = mpp::protocol::core::PaymentCredential::new(challenge.to_echo(), payload);
+        mpp::protocol::core::format_authorization(&credential).unwrap()
+    }
+
+    fn test_facade(fixture: &EvmChargeChallenger) -> crate::EvmMpp {
+        let sa = Arc::new(StubSa);
+        crate::EvmMpp::builder(crate::EvmConfig {
+            chain_id: fixture.inner.chain_id,
+            recipient: fixture.inner.recipient.clone(),
+            realm: fixture.inner.realm.clone(),
+            secret_key: fixture.inner.secret_key.clone(),
+        })
+        .with_charge(crate::EvmCharge::new(sa.clone()))
+        .with_session(crate::EvmSessionMethod::new(sa))
+        .build()
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn challenger_binds_token_without_changing_extractor_arguments() {
+        use axum::extract::FromRequestParts;
+
+        struct Paid;
+        impl mpp::server::axum::ChargeConfig for Paid {
+            fn amount() -> &'static str {
+                "100"
+            }
+        }
+
+        let mut challenger = test_challenger();
+        let challenge = challenger
+            .challenge("100", ChallengeOptions { description: None })
+            .unwrap();
+        let auth = authorization(&challenge, serde_json::json!({ "type": "hash" }));
+        // Equal addresses with different casing keep the existing verification path.
+        Arc::get_mut(&mut challenger.inner).unwrap().currency =
+            challenger.inner.currency.to_ascii_lowercase();
+        assert!(challenger
+            .verify_payment_for_amount(&auth, "100")
+            .await
+            .is_ok());
+
+        // The challenge remains HMAC-valid but is for another configured token.
+        Arc::get_mut(&mut challenger.inner).unwrap().currency =
+            "0x1111111111111111111111111111111111111111".into();
+        let error = challenger
+            .verify_payment_for_amount(&auth, "100")
+            .await
+            .unwrap_err();
+        assert!(error.contains("currency mismatch"), "{error}");
+
+        let challenger = Arc::new(challenger);
+        let (mut parts, _) = axum::http::Request::builder()
+            .header("authorization", &auth)
+            .body(())
+            .unwrap()
+            .into_parts();
+        assert!(
+            crate::MppCharge::<Paid>::from_request_parts(&mut parts, &challenger)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn facade_rejects_other_tokens_for_charge_and_session_at_the_same_price() {
+        let fixture = test_challenger();
+        let facade = test_facade(&fixture);
+        let other_token = "0x1111111111111111111111111111111111111111";
+        let charge = facade
+            .charge_challenge(crate::ChargeRouteParams {
+                amount: "100",
+                currency: &fixture.inner.currency,
+                description: None,
+                external_id: None,
+            })
+            .unwrap();
+        let session = facade
+            .session_challenge(crate::SessionRouteParams {
+                amount: "100",
+                currency: &fixture.inner.currency,
+                description: None,
+                external_id: None,
+                unit_type: None,
+                suggested_deposit: None,
+                splits: None,
+            })
+            .unwrap();
+
+        for challenge in [charge, session] {
+            let auth = authorization(
+                &challenge,
+                serde_json::json!({
+                    "type": "hash", "action": "voucher", "channelId": "unused",
+                    "cumulativeAmount": "100", "signature": "0x00"
+                }),
+            );
+            let error = if challenge.intent.as_str() == "charge" {
+                facade
+                    .verify_charge(&auth, "100", other_token)
+                    .await
+                    .unwrap_err()
+            } else {
+                facade
+                    .verify_session(&auth, "100", other_token)
+                    .await
+                    .unwrap_err()
+            };
+            assert!(error.contains("currency mismatch"), "{error}");
+
+            // A matching token passes the new gate and reaches the old verifier.
+            let matching = fixture.inner.currency.to_ascii_lowercase();
+            if challenge.intent.as_str() == "charge" {
+                assert!(facade.verify_charge(&auth, "100", &matching).await.is_ok());
+            } else {
+                let error = facade
+                    .verify_session(&auth, "100", &matching)
+                    .await
+                    .unwrap_err();
+                assert!(error.contains("channel not found"), "{error}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn matching_charge_token_keeps_transaction_and_hash_verification() {
+        let fixture = test_challenger();
+        let facade = test_facade(&fixture);
+        let challenge = facade
+            .charge_challenge(crate::ChargeRouteParams {
+                amount: "100",
+                currency: &fixture.inner.currency,
+                description: None,
+                external_id: None,
+            })
+            .unwrap();
+        for payload in [
+            serde_json::json!({ "type": "hash" }),
+            serde_json::json!({ "type": "transaction", "authorization": {
+                "to": fixture.inner.recipient, "value": "100", "validBefore": "9999999999"
+            }}),
+        ] {
+            let auth = authorization(&challenge, payload);
+            let receipt = facade
+                .verify_charge(&auth, "100", &fixture.inner.currency)
+                .await
+                .unwrap();
+            assert!(receipt.reference.contains("MOCK"));
+        }
     }
 
     #[test]
@@ -548,7 +701,10 @@ mod tests {
     #[tokio::test]
     async fn verify_bad_credential_returns_err() {
         let c = test_challenger();
-        let err = c.verify_payment("not-a-payment-header").await.unwrap_err();
+        let err = c
+            .verify_payment_for_amount("not-a-payment-header", "100")
+            .await
+            .unwrap_err();
         assert!(err.contains("parse authorization"));
     }
 
@@ -591,7 +747,10 @@ mod tests {
         };
         let auth_header = format!("Payment {b64}");
 
-        let receipt = c.verify_payment(&auth_header).await.expect("verify ok");
+        let receipt = c
+            .verify_payment_for_amount(&auth_header, "100")
+            .await
+            .expect("verify ok");
         assert_eq!(receipt.method.as_str(), "evm");
         assert!(receipt.reference.contains("MOCK"));
     }
@@ -630,7 +789,7 @@ mod tests {
         let auth_header = format!("Payment {b64}");
 
         let err = c
-            .verify_payment(&auth_header)
+            .verify_payment_for_amount(&auth_header, "100")
             .await
             .expect_err("forged challenge must be rejected by HMAC verify");
         // Upstream Mpp::verify_hmac_and_expiry surfaces "Challenge ID mismatch - not issued by this server".
@@ -640,5 +799,115 @@ mod tests {
                 || err.to_lowercase().contains("not issued by this server"),
             "unexpected error message: {err}"
         );
+    }
+    #[tokio::test]
+    async fn cheap_route_is_rejected_and_matching_route_keeps_payment_pipeline() {
+        use axum::extract::FromRequestParts;
+        use base64::Engine;
+        struct Cheap;
+        impl mpp::server::axum::ChargeConfig for Cheap {
+            fn amount() -> &'static str {
+                "100"
+            }
+        }
+        struct Expensive;
+        impl mpp::server::axum::ChargeConfig for Expensive {
+            fn amount() -> &'static str {
+                "50000"
+            }
+        }
+        let challenger = Arc::new(test_challenger());
+        let challenge = challenger
+            .challenge("100", ChallengeOptions { description: None })
+            .unwrap();
+        let credential = serde_json::json!({
+            "challenge": { "id": challenge.id, "realm": challenge.realm, "method": "evm", "intent": "charge",
+                "request": challenge.request.raw(), "expires": challenge.expires },
+            "payload": { "type": "transaction", "authorization": { "type": "eip-3009", "from": "fixture",
+                "to": "0x4b22fdbc399bd422b6fefcbce95f76642ea29df1", "value": "100",
+                "validAfter": "0", "validBefore": "9999999999", "nonce": "0x01", "signature": "fixture" } }
+        });
+        let auth = format!(
+            "Payment {}",
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .encode(serde_json::to_vec(&credential).unwrap())
+        );
+        let request = axum::http::Request::builder()
+            .header("authorization", &auth)
+            .body(())
+            .unwrap();
+        let (mut parts, _) = request.into_parts();
+        assert!(
+            crate::MppCharge::<Expensive>::from_request_parts(&mut parts, &challenger)
+                .await
+                .is_err()
+        );
+        assert!(
+            crate::MppCharge::<Cheap>::from_request_parts(&mut parts, &challenger)
+                .await
+                .is_ok()
+        );
+        assert!(challenger.verify_payment(&auth).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn facade_rejects_cross_price_charge_and_session_before_existing_verifiers() {
+        use base64::Engine;
+        let fixture = test_challenger();
+        let sa = Arc::new(StubSa);
+        let facade = crate::EvmMpp::builder(crate::EvmConfig {
+            chain_id: 196,
+            recipient: fixture.inner.recipient.clone(),
+            realm: fixture.inner.realm.clone(),
+            secret_key: fixture.inner.secret_key.clone(),
+        })
+        .with_charge(crate::EvmCharge::new(sa.clone()))
+        .with_session(crate::EvmSessionMethod::new(sa))
+        .build()
+        .unwrap();
+        let charge = facade
+            .charge_challenge(crate::ChargeRouteParams {
+                amount: "100",
+                currency: &fixture.inner.currency,
+                description: None,
+                external_id: None,
+            })
+            .unwrap();
+        let session = facade
+            .session_challenge(crate::SessionRouteParams {
+                amount: "100",
+                currency: &fixture.inner.currency,
+                description: None,
+                external_id: None,
+                unit_type: None,
+                suggested_deposit: None,
+                splits: None,
+            })
+            .unwrap();
+        for challenge in [charge, session] {
+            let intent = challenge.intent.to_string();
+            let body = serde_json::json!({
+                "challenge": { "id": challenge.id, "realm": challenge.realm, "method": "evm", "intent": intent,
+                    "request": challenge.request.raw(), "expires": challenge.expires },
+                "payload": { "action": "voucher", "channelId": "unused", "cumulativeAmount": "100", "signature": "fixture" }
+            });
+            let auth = format!(
+                "Payment {}",
+                base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .encode(serde_json::to_vec(&body).unwrap())
+            );
+            let error = if intent == "charge" {
+                facade
+                    .verify_charge(&auth, "50000", &fixture.inner.currency)
+                    .await
+                    .unwrap_err()
+            } else {
+                facade
+                    .verify_session(&auth, "50000", &fixture.inner.currency)
+                    .await
+                    .unwrap_err()
+            };
+            assert!(error.contains("amount mismatch"), "{error}");
+        }
     }
 }

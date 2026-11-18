@@ -7,6 +7,7 @@
 
 pub mod challenge;
 pub mod challenger;
+pub mod extractor;
 pub mod method;
 
 pub use challenger::{EvmChargeChallenger, EvmChargeChallengerConfig};

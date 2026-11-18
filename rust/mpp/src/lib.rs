@@ -38,6 +38,7 @@
 //! [`ChargeMethod`]: mpp::protocol::traits::ChargeMethod
 //! [`SessionMethod`]: mpp::protocol::traits::SessionMethod
 
+mod amount;
 #[cfg(feature = "handlers")]
 pub mod axum;
 pub mod charge;
@@ -60,10 +61,9 @@ pub mod types;
 /// ```
 pub use ::mpp;
 
+pub use amount::{check_amount, check_currency};
+pub use charge::extractor::MppCharge;
 pub use charge::{EvmChargeChallenger, EvmChargeChallengerConfig, EvmChargeMethod};
-pub use evm_mpp::{
-    ChargeRouteParams, EvmCharge, EvmConfig, EvmMpp, EvmMppBuilder, SessionRouteParams,
-};
 pub use credential_ext::CredentialExt;
 pub use eip712::{
     build_domain, sign_close_authorization, sign_settle_authorization, verify_voucher,
@@ -71,6 +71,9 @@ pub use eip712::{
     VOUCHER_DOMAIN_NAME, VOUCHER_DOMAIN_VERSION,
 };
 pub use error::SaApiError;
+pub use evm_mpp::{
+    ChargeRouteParams, EvmCharge, EvmConfig, EvmMpp, EvmMppBuilder, SessionRouteParams,
+};
 pub use nonce::{NonceProvider, UuidNonceProvider};
 pub use sa_client::{OkxSaApiClient, SaApiClient};
 pub use session_method::EvmSessionMethod;

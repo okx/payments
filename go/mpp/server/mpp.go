@@ -147,6 +147,7 @@ func (m *Mpp) ChargeWithOptions(ctx context.Context, req protocol.ChargeRequest,
 
 // VerifyCredential verifies a charge credential presented in authHeader against
 // the challenge in challengeHeader. On success it returns the payment receipt.
+// For a priced HTTP route, use VerifyCredentialForRoute with server-owned config.
 func (m *Mpp) VerifyCredential(ctx context.Context, challengeHeader string, authHeader string) (*protocol.Receipt, error) {
 	if m.chargeVerifier == nil {
 		return nil, fmt.Errorf("Mpp.VerifyCredential: charge verifier not configured")
@@ -297,6 +298,7 @@ func (m *Mpp) SessionChallengeWithDetails(ctx context.Context, req protocol.Sess
 
 // VerifySession verifies a session credential presented in authHeader against
 // the challenge in challengeHeader. On success it returns the payment receipt.
+// For a priced HTTP route, use VerifySessionForRoute with server-owned config.
 func (m *Mpp) VerifySession(ctx context.Context, challengeHeader string, authHeader string) (*protocol.SessionVerifyResult, error) {
 	if m.sessionVerifier == nil {
 		return nil, fmt.Errorf("Mpp.VerifySession: session verifier not configured")

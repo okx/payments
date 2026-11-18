@@ -81,6 +81,25 @@ func (m *EVMChargeMethod) Verify(ctx context.Context, cred *protocol.PaymentCred
 		return nil, protocol.VerificationErrorInvalidCredential("missing payload")
 	}
 
+	if request == nil {
+		return nil, protocol.ErrAmount("expected route amount is required")
+	}
+	expectedCopy := *request
+	expected, err := expectedCopy.WithBaseUnits()
+	if err != nil {
+		return nil, protocol.ErrAmount(err.Error())
+	}
+	var echoed protocol.ChargeRequest
+	if err := protocol.DeserializeRequestTyped(cred.Echo.Request, &echoed); err != nil {
+		return nil, protocol.ErrAmount("invalid echoed amount")
+	}
+	actual, err := echoed.WithBaseUnits()
+	if err != nil {
+		return nil, protocol.ErrAmount(err.Error())
+	}
+	if err := protocol.CheckAmount(actual.Amount, expected.Amount); err != nil {
+		return nil, err
+	}
 	challengeID := cred.Echo.ID
 
 	switch cred.Payload.Type {
