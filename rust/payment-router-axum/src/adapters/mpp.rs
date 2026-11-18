@@ -121,9 +121,8 @@ impl ProtocolAdapter for MppAdapter {
         let mpp = self.mpp.clone();
         let cfg = route_cfg.downcast_ref::<MppRouteConfig>().cloned();
         Box::pin(async move {
-            let cfg = cfg.ok_or_else(|| {
-                "mpp adapter: route config is not MppRouteConfig".to_string()
-            })?;
+            let cfg =
+                cfg.ok_or_else(|| "mpp adapter: route config is not MppRouteConfig".to_string())?;
             if cfg.amount.is_empty() {
                 return Err("mpp route config missing `amount`".to_string());
             }
@@ -161,6 +160,20 @@ impl ProtocolAdapter for MppAdapter {
             );
             Ok(Some(ChallengeResponse::headers_only(map)))
         })
+    }
+
+    fn enrich_request_extensions(
+        &self,
+        extensions: &mut http::Extensions,
+        route: &crate::UnifiedRouteConfig,
+    ) {
+        if let Some(cfg) = route
+            .adapter_configs
+            .get("mpp")
+            .and_then(|c| c.downcast_ref::<MppRouteConfig>())
+        {
+            extensions.insert(cfg.clone());
+        }
     }
 
     fn make_service(&self, inner: InnerService) -> InnerService {
@@ -232,17 +245,33 @@ impl Service<Request<Body>> for MppVerifyService {
             // Charge and session both carry their intent inside the b64
             // ChallengeEcho; we read it once before re-running the same string
             // through the dedicated verifier.
+            let (expected_amount, expected_currency) =
+                match req.extensions().get::<MppRouteConfig>() {
+                    Some(cfg) => (cfg.amount.clone(), cfg.currency.clone()),
+                    None => {
+                        return Ok(error_response(
+                            StatusCode::PAYMENT_REQUIRED,
+                            "missing MPP route payment requirements",
+                        ))
+                    }
+                };
             let intent_from_credential = intent_from_authorization(&auth);
 
             let receipt = match intent_from_credential.as_deref() {
-                Some("session") => match mpp.verify_session(&auth).await {
+                Some("session") => match mpp
+                    .verify_session(&auth, &expected_amount, &expected_currency)
+                    .await
+                {
                     Ok(result) => result.receipt,
                     Err(e) => {
                         return Ok(error_response(StatusCode::PAYMENT_REQUIRED, &e));
                     }
                 },
                 // Default to charge for "charge" or missing/unknown intent.
-                _ => match mpp.verify_charge(&auth).await {
+                _ => match mpp
+                    .verify_charge(&auth, &expected_amount, &expected_currency)
+                    .await
+                {
                     Ok(r) => r,
                     Err(e) => {
                         return Ok(error_response(StatusCode::PAYMENT_REQUIRED, &e));
@@ -305,6 +334,7 @@ mod tests {
         ChannelStatus, ChargeReceipt, CloseRequestPayload, SessionReceipt, SettleRequestPayload,
     };
     use mpp_evm::{EvmCharge, EvmConfig, EvmMpp, EvmSessionMethod, SaApiError};
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn parts_with_header(name: &str, val: &str) -> Parts {
         let req = Request::builder()
@@ -324,52 +354,60 @@ mod tests {
     /// the SA backend; methods are wired only to fail loudly so a future
     /// mistake doesn't silently exercise them.
     #[derive(Debug, Default)]
-    struct StubSa;
+    struct StubSa {
+        calls: AtomicUsize,
+    }
+
+    impl StubSa {
+        fn unexpected_call(&self, operation: &str) -> ! {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            panic!("StubSa: unexpected {operation}")
+        }
+    }
+
     #[async_trait::async_trait]
     impl SaApiClient for StubSa {
-        async fn charge_settle(
-            &self,
-            _: &serde_json::Value,
-        ) -> Result<ChargeReceipt, SaApiError> {
-            unreachable!("StubSa: charge_settle")
+        async fn charge_settle(&self, _: &serde_json::Value) -> Result<ChargeReceipt, SaApiError> {
+            self.unexpected_call("charge_settle")
         }
         async fn charge_verify_hash(
             &self,
             _: &serde_json::Value,
         ) -> Result<ChargeReceipt, SaApiError> {
-            unreachable!("StubSa: charge_verify_hash")
+            self.unexpected_call("charge_verify_hash")
         }
-        async fn session_open(
-            &self,
-            _: &serde_json::Value,
-        ) -> Result<SessionReceipt, SaApiError> {
-            unreachable!("StubSa: session_open")
+        async fn session_open(&self, _: &serde_json::Value) -> Result<SessionReceipt, SaApiError> {
+            self.unexpected_call("session_open")
         }
         async fn session_top_up(
             &self,
             _: &serde_json::Value,
         ) -> Result<SessionReceipt, SaApiError> {
-            unreachable!("StubSa: session_top_up")
+            self.unexpected_call("session_top_up")
         }
         async fn session_settle(
             &self,
             _: &SettleRequestPayload,
         ) -> Result<SessionReceipt, SaApiError> {
-            unreachable!("StubSa: session_settle")
+            self.unexpected_call("session_settle")
         }
         async fn session_close(
             &self,
             _: &CloseRequestPayload,
         ) -> Result<SessionReceipt, SaApiError> {
-            unreachable!("StubSa: session_close")
+            self.unexpected_call("session_close")
         }
         async fn session_status(&self, _: &str) -> Result<ChannelStatus, SaApiError> {
-            unreachable!("StubSa: session_status")
+            self.unexpected_call("session_status")
         }
     }
 
     fn fixture_mpp(with_session: bool) -> Arc<EvmMpp> {
-        let sa: Arc<dyn SaApiClient> = Arc::new(StubSa);
+        fixture_mpp_with_sa(with_session).0
+    }
+
+    fn fixture_mpp_with_sa(with_session: bool) -> (Arc<EvmMpp>, Arc<StubSa>) {
+        let sa = Arc::new(StubSa::default());
         let mut builder = EvmMpp::builder(EvmConfig {
             chain_id: 196,
             recipient: "0x4b22fdbc399bd422b6fefcbce95f76642ea29df1".into(),
@@ -378,13 +416,314 @@ mod tests {
         })
         .with_charge(EvmCharge::new(sa.clone()).with_fee_payer(true));
         if with_session {
-            builder = builder.with_session(EvmSessionMethod::new(sa));
+            builder = builder.with_session(EvmSessionMethod::new(sa.clone()));
         }
-        Arc::new(builder.build().expect("build EvmMpp"))
+        (Arc::new(builder.build().expect("build EvmMpp")), sa)
     }
 
     fn adapter() -> MppAdapter {
         MppAdapter::new(fixture_mpp(false))
+    }
+
+    /// Real loopback HTTP requests through PaymentRouterLayer and EvmMpp.
+    /// Seed an already-accepted voucher fixture to exercise the existing reuse
+    /// and accounting path without wallet keys, signing, an RPC, or a live SA backend.
+    #[tokio::test]
+    async fn session_http_amount_currency_regression() {
+        use mpp::protocol::core::{
+            format_authorization, parse_www_authenticate, PaymentCredential,
+        };
+        use mpp_evm::ChannelRecord;
+
+        let (mpp, sa) = fixture_mpp_with_sa(true);
+        let store = mpp.session_method().unwrap().store();
+        let channel_id = format!("0x{}", "ab".repeat(32));
+        let account = mpp.config().recipient.parse().unwrap();
+        store
+            .put(ChannelRecord {
+                channel_id: channel_id.clone(),
+                chain_id: 196,
+                escrow_contract: mpp_evm::DEFAULT_ESCROW_CONTRACT.parse().unwrap(),
+                payer: account,
+                payee: account,
+                authorized_signer: account,
+                deposit: 1_000,
+                highest_voucher_amount: 1_000,
+                highest_voucher_signature: Some(vec![1u8; 65].into()),
+                min_voucher_delta: None,
+                spent: 0,
+                units: 0,
+            })
+            .await;
+
+        let hits = Arc::new(AtomicUsize::new(0));
+        let mut app = axum::Router::new();
+        let mut routes = Vec::new();
+        for (path, amount, currency) in [
+            (
+                "/session/base",
+                "100",
+                "0x74b7F16337b8972027F6196A17a631aC6dE26d22",
+            ),
+            (
+                "/session/expensive",
+                "200",
+                "0x74b7F16337b8972027F6196A17a631aC6dE26d22",
+            ),
+            (
+                "/session/other-token",
+                "100",
+                "0x1111111111111111111111111111111111111111",
+            ),
+            (
+                "/session/token-case",
+                "100",
+                "0x74b7f16337b8972027f6196a17a631ac6de26d22",
+            ),
+            (
+                "/session/leading-zero",
+                "000100",
+                "0x74b7F16337b8972027F6196A17a631aC6dE26d22",
+            ),
+        ] {
+            let handler_hits = hits.clone();
+            app = app.route(
+                path,
+                axum::routing::post(move || {
+                    let handler_hits = handler_hits.clone();
+                    async move {
+                        handler_hits.fetch_add(1, Ordering::SeqCst);
+                        axum::Json(serde_json::json!({ "service": "local fixture resource" }))
+                    }
+                }),
+            );
+            routes.push((
+                format!("POST {path}"),
+                crate::UnifiedRouteConfig::builder()
+                    .adapter(
+                        "mpp",
+                        MppRouteConfig {
+                            intent: "session".into(),
+                            amount: amount.into(),
+                            currency: currency.into(),
+                            ..Default::default()
+                        },
+                    )
+                    .build(),
+            ));
+        }
+        let layer = crate::PaymentRouterLayer::new(crate::PaymentRouterConfig {
+            routes,
+            protocols: vec![Arc::new(MppAdapter::new(mpp))],
+            on_error: None,
+        })
+        .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app.layer(layer)).await.unwrap();
+        });
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap();
+
+        // Obtain a fresh, HMAC-authenticated challenge over HTTP. Its contents
+        // stay unchanged for all price/token cases below.
+        let response = client
+            .post(format!("{base_url}/session/base"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::PAYMENT_REQUIRED);
+        let challenge = parse_www_authenticate(
+            response
+                .headers()
+                .get(header::WWW_AUTHENTICATE)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+        )
+        .unwrap();
+        let credential = PaymentCredential::new(
+            challenge.to_echo(),
+            serde_json::json!({
+                "action": "voucher", "channelId": channel_id,
+                "cumulativeAmount": "1000", "signature": format!("0x{}", "01".repeat(65))
+            }),
+        );
+        let auth = format_authorization(&credential).unwrap();
+        println!("PASS challenge: HTTP=402; isolated server={base_url}");
+
+        // The same credential must fail for amount/token mismatches before
+        // business execution, voucher accounting, or any SA call.
+        for (name, path, expected_error) in [
+            ("wrong_amount", "/session/expensive", "amount mismatch"),
+            (
+                "wrong_currency",
+                "/session/other-token",
+                "currency mismatch",
+            ),
+        ] {
+            let before = store.get(&channel_id).await.unwrap();
+            let response = client
+                .post(format!("{base_url}{path}"))
+                .header(header::AUTHORIZATION, &auth)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::PAYMENT_REQUIRED);
+            let body: serde_json::Value = response.json().await.unwrap();
+            let detail = body["detail"].as_str().unwrap();
+            assert!(detail.contains(expected_error), "{body}");
+            assert_eq!(store.get(&channel_id).await.unwrap(), before);
+            assert_eq!(hits.load(Ordering::SeqCst), 0);
+            assert_eq!(sa.calls.load(Ordering::SeqCst), 0);
+            println!("PASS {name}: HTTP=402; detail={detail}; spent=0; units=0; handler_calls=0; sa_calls=0");
+        }
+
+        let mut forged = credential.clone();
+        forged.challenge.id.push('x');
+        let response = client
+            .post(format!("{base_url}/session/base"))
+            .header(
+                header::AUTHORIZATION,
+                format_authorization(&forged).unwrap(),
+            )
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::PAYMENT_REQUIRED);
+        let body: serde_json::Value = response.json().await.unwrap();
+        assert!(
+            body["detail"]
+                .as_str()
+                .unwrap()
+                .contains("Challenge ID mismatch"),
+            "{body}"
+        );
+        assert_eq!(store.get(&channel_id).await.unwrap().spent, 0);
+        assert_eq!(store.get(&channel_id).await.unwrap().units, 0);
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+        println!(
+            "PASS forged_challenge: HTTP=402; HMAC rejection; spent=0; units=0; handler_calls=0"
+        );
+
+        // Positive controls also prove the fixture can access the resource;
+        // the negative cases did not merely hit an invalid/closed channel.
+        for (name, path, expected_spent, expected_units) in [
+            ("matching_currency", "/session/base", 100, 1),
+            ("currency_case", "/session/token-case", 200, 2),
+            ("leading_zero_amount", "/session/leading-zero", 300, 3),
+            ("voucher_reuse", "/session/base", 400, 4),
+        ] {
+            let response = client
+                .post(format!("{base_url}{path}"))
+                .header(header::AUTHORIZATION, &auth)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            assert!(response.headers().contains_key(PAYMENT_RECEIPT_HEADER));
+            let body: serde_json::Value = response.json().await.unwrap();
+            assert_eq!(body["service"], "local fixture resource");
+            let channel = store.get(&channel_id).await.unwrap();
+            assert_eq!(channel.spent, expected_spent);
+            assert_eq!(channel.units, expected_units);
+            assert_eq!(channel.highest_voucher_amount, 1_000);
+            assert_eq!(channel.deposit, 1_000);
+            assert_eq!(hits.load(Ordering::SeqCst), expected_units as usize);
+            assert_eq!(sa.calls.load(Ordering::SeqCst), 0);
+            println!(
+                "PASS {name}: HTTP=200; spent={expected_spent}; units={expected_units}; sa_calls=0"
+            );
+        }
+        server.abort();
+        let _ = server.await;
+    }
+
+    #[tokio::test]
+    async fn matched_route_currency_rejects_other_tokens_before_the_handler() {
+        use mpp::protocol::core::{format_authorization, PaymentCredential};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        for intent in ["charge", "session"] {
+            let mpp = fixture_mpp(true);
+            let currency = "0x74b7F16337b8972027F6196A17a631aC6dE26d22";
+            let challenge = if intent == "charge" {
+                mpp.charge_challenge(ChargeRouteParams {
+                    amount: "100",
+                    currency,
+                    description: None,
+                    external_id: None,
+                })
+                .unwrap()
+            } else {
+                mpp.session_challenge(SessionRouteParams {
+                    amount: "100",
+                    currency,
+                    description: None,
+                    external_id: None,
+                    unit_type: None,
+                    suggested_deposit: None,
+                    splits: None,
+                })
+                .unwrap()
+            };
+            let auth = format_authorization(&PaymentCredential::new(
+                challenge.to_echo(),
+                serde_json::json!({ "type": "hash", "action": "voucher" }),
+            ))
+            .unwrap();
+            let hits = Arc::new(AtomicUsize::new(0));
+            let handler_hits = hits.clone();
+            let route = crate::UnifiedRouteConfig::builder()
+                .adapter(
+                    "mpp",
+                    MppRouteConfig {
+                        intent: intent.into(),
+                        amount: "100".into(),
+                        currency: "0x1111111111111111111111111111111111111111".into(),
+                        ..Default::default()
+                    },
+                )
+                .build();
+            let layer = crate::PaymentRouterLayer::new(crate::PaymentRouterConfig {
+                routes: vec![("GET /paid".into(), route)],
+                protocols: vec![Arc::new(MppAdapter::new(mpp))],
+                on_error: None,
+            })
+            .unwrap();
+            let app = axum::Router::new()
+                .route(
+                    "/paid",
+                    axum::routing::get(move || {
+                        let hits = handler_hits.clone();
+                        async move {
+                            hits.fetch_add(1, Ordering::SeqCst);
+                            "paid"
+                        }
+                    }),
+                )
+                .layer(layer);
+            let response = app
+                .oneshot(
+                    Request::builder()
+                        .uri("/paid")
+                        .header(header::AUTHORIZATION, auth)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::PAYMENT_REQUIRED);
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            assert!(String::from_utf8_lossy(&body).contains("currency mismatch"));
+            assert_eq!(hits.load(Ordering::SeqCst), 0);
+        }
     }
 
     #[test]
@@ -483,10 +822,7 @@ mod tests {
             .get_challenge(&parts_no_auth(), &cfg)
             .await
             .expect_err("session intent without session method must error");
-        assert!(
-            err.contains("session method not registered"),
-            "got: {err}"
-        );
+        assert!(err.contains("session method not registered"), "got: {err}");
     }
 
     #[tokio::test]

@@ -724,8 +724,8 @@ class PayPerCallController {
             @RequestHeader(value = "Authorization", required = false) String auth,
             @RequestBody MyBusinessRequest body) {
 
-        if (auth == null || !auth.toLowerCase().startsWith("payment ")) {
-            ChargeRequest req = new ChargeRequest(
+        // Build expected terms from merchant configuration, never from buyer echo.
+        ChargeRequest req = new ChargeRequest(
                     "10000",                                            // 0.01 USDT (6 decimals)
                     "0x779ded0c9e1022225f8e0630b35a9b54be713736",       // currency
                     "0xYourTreasuryWallet",                             // recipient
@@ -733,6 +733,7 @@ class PayPerCallController {
                     body.orderId(),                                     // externalId — echoed in receipt
                     new ChargeMethodDetails(196L, false, null, null, null,
                             "/pay-once"));                              // resourceUrl — see below
+        if (auth == null || !auth.toLowerCase().startsWith("payment ")) {
             Challenge challenge = mpp.request("my-realm", Intent.CHARGE, req);
             return ResponseEntity.status(402)
                     .header("WWW-Authenticate", MppAdapter.serializeWwwAuth(challenge))
@@ -740,7 +741,6 @@ class PayPerCallController {
         }
 
         Credential cred = codec.decode(auth.substring("Payment ".length()).trim(), Credential.class);
-        ChargeRequest req = codec.decode(cred.challenge().request(), ChargeRequest.class);
         Receipt.ChargeReceipt receipt = mpp.evmChargeMethod().verifyCharge(cred, req);
 
         MyBusinessResponse resp = doTheActualWork(body);

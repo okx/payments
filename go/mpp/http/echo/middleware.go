@@ -35,12 +35,12 @@ func ChargeMiddleware(m *server.Mpp, cfg server.ChargeRouteConfig) echo.Middlewa
 				return c.JSON(http.StatusPaymentRequired, map[string]string{"error": "Payment required"})
 			}
 
-			challengeHeader, err := server.ChallengeHeaderFromAuth(authHeader)
+			_, err := server.ChallengeHeaderFromAuth(authHeader)
 			if err != nil {
 				return c.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid Authorization header: %s", err)})
 			}
 
-			receipt, err := m.VerifyCredential(c.Request().Context(), challengeHeader, authHeader)
+			receipt, err := m.VerifyCredentialForRoute(c.Request().Context(), cfg, authHeader)
 			if err != nil {
 				return c.JSON(paymentErrorStatus(err), map[string]string{"error": fmt.Sprintf("payment verification failed: %s", err)})
 			}
@@ -69,12 +69,12 @@ func SessionMiddleware(m *server.Mpp, cfg server.SessionRouteConfig) echo.Middle
 				return c.JSON(http.StatusPaymentRequired, map[string]string{"error": "Payment required"})
 			}
 
-			challengeHeader, err := server.ChallengeHeaderFromAuth(authHeader)
+			_, err := server.ChallengeHeaderFromAuth(authHeader)
 			if err != nil {
 				return c.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid Authorization header: %s", err)})
 			}
 
-			result, err := m.VerifySession(c.Request().Context(), challengeHeader, authHeader)
+			result, err := m.VerifySessionForRoute(c.Request().Context(), cfg, authHeader)
 			if err != nil {
 				return c.JSON(paymentErrorStatus(err), map[string]string{"error": fmt.Sprintf("session verification failed: %s", err)})
 			}

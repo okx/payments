@@ -6,7 +6,7 @@
 //! `Eip3009Authorization` per split.
 //!
 //! Bypasses the `MppCharge<C>` extractor and calls
-//! `challenger.verify_payment()` manually so verification errors propagate
+//! `challenger.verify_payment_for_amount()` manually so verification errors propagate
 //! into the 402 response instead of being swallowed.
 //!
 //! # Split rules (per spec)
@@ -52,10 +52,7 @@ const PHOTO_DESCRIPTION: &str = "One photo (split across partners)";
 /// Manual /photo handler — skips `MppCharge<C>` extractor so the seller can
 /// surface verification errors verbatim to the client (extractor swallows
 /// them).
-async fn photo(
-    State(challenger): State<Arc<dyn ChargeChallenger>>,
-    headers: HeaderMap,
-) -> Response {
+async fn photo(State(challenger): State<Arc<EvmChargeChallenger>>, headers: HeaderMap) -> Response {
     let auth_raw = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok());
@@ -69,7 +66,10 @@ async fn photo(
             }
             // Pass the full header (including `Payment ` scheme) — upstream
             // strips it itself; double-stripping returns "Expected 'Payment'".
-            match challenger.verify_payment(trimmed).await {
+            match challenger
+                .verify_payment_for_amount(trimmed, PHOTO_AMOUNT)
+                .await
+            {
                 Ok(receipt) => WithReceipt {
                     receipt,
                     body: Json(json!({ "url": "https://picsum.photos/id/42/1024/1024.jpg" })),
@@ -117,7 +117,7 @@ async fn main() {
         },
     ];
 
-    let challenger: Arc<dyn ChargeChallenger> =
+    let challenger: Arc<EvmChargeChallenger> =
         Arc::new(EvmChargeChallenger::new(EvmChargeChallengerConfig {
             charge_method: EvmChargeMethod::new(sa_client),
             currency: env.currency.clone(),

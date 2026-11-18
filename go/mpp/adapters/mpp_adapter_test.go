@@ -187,7 +187,7 @@ func TestMppAdapter_Handle_MissingAuth(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/resource", nil)
 	w := httptest.NewRecorder()
 
-	err := a.Handle(w, r, nil)
+	err := a.Handle(w, r, MppRouteConfig{Amount: "1.00", Decimals: 6})
 	if err == nil {
 		t.Fatal("Handle with missing auth header expected error, got nil")
 	}
@@ -202,7 +202,7 @@ func TestMppAdapter_Handle_InvalidAuthHeader(t *testing.T) {
 	r.Header.Set(protocol.AuthorizationHeader, "Payment invalid-garbage")
 	w := httptest.NewRecorder()
 
-	err := a.Handle(w, r, nil)
+	err := a.Handle(w, r, MppRouteConfig{Amount: "1.00", Decimals: 6})
 	if err == nil {
 		t.Fatal("Handle with invalid auth header expected error, got nil")
 	}

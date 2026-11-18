@@ -133,10 +133,33 @@ public final class MppAdapter implements ProtocolAdapter {
                        FilterChain chain, Object cfg) throws IOException, ServletException {
         MppRouteConfig.Entry entry = coerceEntry(cfg);
         if (entry == null) {
-            // Backward-compat path: cfg is legacy Map/MppRouteConfigLegacy. Best-effort
-            // pass through to the merchant chain so the legacy MppAdapterTest assertion
-            // (X-Mpp-Detected header) holds for callers that haven't migrated to MppRouteConfig.
-            response.setHeader("X-Mpp-Detected", "true");
+            // Legacy charge routes must also reach the existing verifier, with
+            // the amount taken from server config rather than the buyer echo.
+            if (cfg == null) {
+                writeProblem(response, 402, "https://paymentauth.org/problems/payment-required",
+                    "Payment Required", "missing MPP route amount");
+                return;
+            }
+            MppRouteConfigLegacy legacy = MppRouteConfigLegacy.from(cfg);
+            if (legacy.intent() != Intent.CHARGE) {
+                writeProblem(response, 402, "https://paymentauth.org/problems/payment-required",
+                    "Payment Required", "typed configuration required for session routes");
+                return;
+            }
+            try {
+                Credential credential = decodeAuthHeader(request);
+                com.okx.payments.mpp.protocol.charge.ChargeRequest expected = mapper.convertValue(
+                    legacy.requestPayload(), com.okx.payments.mpp.protocol.charge.ChargeRequest.class);
+                Receipt.ChargeReceipt receipt = mppServer.evmChargeMethod().verifyCharge(credential, expected);
+                response.setHeader(PAYMENT_RECEIPT_HEADER, base64UrlJson.encode(receipt));
+            } catch (MppError e) {
+                writeProblem(response, e.status(), e.type(), e.title(), e.getMessage());
+                return;
+            } catch (IllegalArgumentException e) {
+                writeProblem(response, 400, "https://paymentauth.org/problems/bad-request",
+                    "Bad Request", "invalid MPP charge request");
+                return;
+            }
             chain.doFilter(request, response);
             return;
         }
@@ -195,7 +218,13 @@ public final class MppAdapter implements ProtocolAdapter {
                 throw new IllegalArgumentException("echoed challenge has no request payload");
             }
             try {
-                return base64UrlJson.decode(requestB64, SessionRequest.class);
+                SessionRequest echoed = base64UrlJson.decode(requestB64, SessionRequest.class);
+                MppRouteConfig.Option selected = entry.findOptionByToken(echoed.currency());
+                if (selected == null || echoed.amount() == null || !echoed.amount().matches("[0-9]+")
+                        || !selected.price().equals(new java.math.BigInteger(echoed.amount()))) {
+                    throw new IllegalArgumentException("credential amount does not match current route");
+                }
+                return echoed;
             } catch (RuntimeException e) {
                 throw new IllegalArgumentException(
                     "malformed SessionRequest inside echoed challenge: " + e.getMessage(), e);

@@ -89,7 +89,7 @@ class EvmSessionMethodTest {
             + "\"nonce\":\"0x" + "11".repeat(32) + "\","
             + "\"signature\":\"0x" + "22".repeat(65) + "\"},"
             + "\"cumulativeAmount\":\"0\",\"voucherSignature\":\"0x" + "33".repeat(65) + "\"}";
-        Credential credential = new Credential(null, mapper.readTree(body), null);
+        Credential credential = new Credential(openChallenge("100"), mapper.readTree(body), null);
 
         SessionResult r = method.verifySession(credential, sessionRequest("100"));
 
@@ -210,7 +210,7 @@ class EvmSessionMethodTest {
             BigInteger.ZERO, SessionStore.ChannelStatus.OPEN));
 
         Challenge challenge = new Challenge(
-            "ch-id-1", "realm", Method.EVM, Intent.SESSION, "eyJhbW91bnQiOiIxIn0",
+            "ch-id-1", "realm", Method.EVM, Intent.SESSION, new Base64UrlJson(mapper).encode(sessionRequest("0")),
             "2030-01-01T00:00:00Z", null, null, null);
         String body = "{\"action\":\"topUp\",\"type\":\"transaction\",\"channelId\":\"" + CHANNEL_ID + "\","
             + "\"authorization\":{\"type\":\"eip-3009\",\"from\":\"" + payerAddr
@@ -301,7 +301,7 @@ class EvmSessionMethodTest {
 
         // Forged challenge id — HMAC fails
         Challenge bogus = new Challenge(
-            "FORGED-ID", "realm", Method.EVM, Intent.SESSION, "eyJhbW91bnQiOiIxIn0",
+            "FORGED-ID", "realm", Method.EVM, Intent.SESSION, new Base64UrlJson(mapper).encode(sessionRequest("0")),
             "2030-01-01T00:00:00Z", null, null, null);
         String body = "{\"action\":\"voucher\",\"channelId\":\"" + CHANNEL_ID + "\","
             + "\"cumulativeAmount\":\"100\",\"signature\":\"0x" + "00".repeat(65) + "\"}";
@@ -323,7 +323,7 @@ class EvmSessionMethodTest {
             BigInteger.ZERO, SessionStore.ChannelStatus.OPEN));
 
         Challenge bogus = new Challenge(
-            "FORGED-ID", "realm", Method.EVM, Intent.SESSION, "eyJhbW91bnQiOiIxIn0",
+            "FORGED-ID", "realm", Method.EVM, Intent.SESSION, new Base64UrlJson(mapper).encode(sessionRequest("0")),
             "2030-01-01T00:00:00Z", null, null, null);
         BigInteger cum = BigInteger.valueOf(500);
         String sigHex = "0x" + bytesToHex(signVoucher(cum));
@@ -338,7 +338,7 @@ class EvmSessionMethodTest {
 
     @Test
     void open_missing_authorization_from_throws_invalid_payload() throws Exception {
-        Credential credential = new Credential(null,
+        Credential credential = new Credential(openChallenge("100"),
             mapper.readTree("{\"action\":\"open\",\"channelId\":\"" + CHANNEL_ID
                 + "\",\"authorization\":{\"type\":\"eip-3009\"}}"), null);
         assertThatThrownBy(() -> method.verifySession(credential, sessionRequest("100")))
@@ -347,6 +347,20 @@ class EvmSessionMethodTest {
     }
 
     // ── helpers ────────────────────────────────────────────────────────────────
+
+    private Challenge openChallenge(String amount) {
+        String encoded = new Base64UrlJson(mapper).encode(sessionRequest(amount));
+        return new Challenge("fixture", "fixture", Method.EVM, Intent.SESSION,
+            encoded, null, null, null, null);
+    }
+
+    @Test
+    void open_low_price_is_rejected_before_sa() throws Exception {
+        Credential credential = new Credential(openChallenge("10"), mapper.readTree("{\"action\":\"open\"}"), null);
+        assertThatThrownBy(() -> method.verifySession(credential, sessionRequest("100")))
+            .isInstanceOf(InvalidChallengeError.class);
+        org.mockito.Mockito.verifyNoInteractions(sa);
+    }
 
     private byte[] signVoucher(BigInteger cum) {
         byte[] digest = Eip712Hashing.digest(

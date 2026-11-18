@@ -120,6 +120,12 @@ func (a *MppAdapter) GetChallenge(ctx context.Context, r *http.Request, cfg any)
 // the Payment-Receipt header on success. Returns an error on failure after
 // writing an error JSON body to w.
 func (a *MppAdapter) Handle(w http.ResponseWriter, r *http.Request, cfg any) error {
+	route, ok := cfg.(MppRouteConfig)
+	if !ok {
+		writeErrorJSON(w, http.StatusPaymentRequired, "missing MPP route amount")
+		return fmt.Errorf("mpp: route amount is required")
+	}
+
 	authHeader := r.Header.Get(protocol.AuthorizationHeader)
 	if authHeader == "" {
 		writeErrorJSON(w, http.StatusUnauthorized, "missing Authorization header")
@@ -141,7 +147,9 @@ func (a *MppAdapter) Handle(w http.ResponseWriter, r *http.Request, cfg any) err
 
 	switch challenge.Intent {
 	case protocol.IntentCharge:
-		receipt, err := a.mpp.VerifyCredential(r.Context(), challengeHeader, authHeader)
+		receipt, err := a.mpp.VerifyCredentialForRoute(r.Context(), server.ChargeRouteConfig{
+			Amount: route.Amount, Decimals: route.Decimals,
+		}, authHeader)
 		if err != nil {
 			writeErrorJSON(w, http.StatusUnauthorized, "payment verification failed")
 			return fmt.Errorf("mpp: verify charge: %w", err)
@@ -151,7 +159,9 @@ func (a *MppAdapter) Handle(w http.ResponseWriter, r *http.Request, cfg any) err
 		}
 
 	case protocol.IntentSession:
-		result, err := a.mpp.VerifySession(r.Context(), challengeHeader, authHeader)
+		result, err := a.mpp.VerifySessionForRoute(r.Context(), server.SessionRouteConfig{
+			Amount: route.Amount, Decimals: route.Decimals,
+		}, authHeader)
 		if err != nil {
 			writeErrorJSON(w, http.StatusUnauthorized, "payment verification failed")
 			return fmt.Errorf("mpp: verify session: %w", err)

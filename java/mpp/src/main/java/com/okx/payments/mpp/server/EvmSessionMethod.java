@@ -83,7 +83,7 @@ public final class EvmSessionMethod {
      * Auto-dispatch a session credential by {@code payload.action}.
      *
      * @param credential decoded {@code Authorization: Payment} body
-     * @param request    decoded {@code Challenge.request} (Base64UrlJson → SessionRequest);
+     * @param request    server-owned request for the current route;
      *                   used for open (channel init fields) and voucher (per-unit deduct amount)
      */
     public SessionResult verifySession(Credential credential, SessionRequest request) {
@@ -103,6 +103,23 @@ public final class EvmSessionMethod {
                 "challenge failed HMAC verification or has expired");
         }
         String action = payload.path("action").asText("");
+        if ("open".equals(action) || ("voucher".equals(action) && credential.challenge() != null)) {
+            if (request == null || credential.challenge() == null) {
+                throw new InvalidChallengeError("expected route amount and challenge are required");
+            }
+            SessionRequest echoed;
+            try {
+                echoed = new com.okx.payments.mpp.protocol.encoding.Base64UrlJson(mapper)
+                    .decode(credential.challenge().request(), SessionRequest.class);
+            } catch (RuntimeException e) {
+                throw new InvalidChallengeError("invalid echoed session request");
+            }
+            if (request.amount() == null || echoed.amount() == null
+                    || !request.amount().matches("[0-9]+") || !echoed.amount().matches("[0-9]+")
+                    || !new java.math.BigInteger(request.amount()).equals(new java.math.BigInteger(echoed.amount()))) {
+                throw new InvalidChallengeError("credential amount does not match current route");
+            }
+        }
         return switch (action) {
             case "open" -> handleOpen(credential, request);
             case "topUp", "topup" -> handleTopUp(credential, request);

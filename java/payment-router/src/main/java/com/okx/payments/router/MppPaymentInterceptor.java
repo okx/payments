@@ -358,7 +358,13 @@ public final class MppPaymentInterceptor implements HandlerInterceptor {
                 throw new IllegalArgumentException("echoed challenge has no request payload");
             }
             try {
-                return base64UrlJson.decode(requestB64, SessionRequest.class);
+                SessionRequest echoed = base64UrlJson.decode(requestB64, SessionRequest.class);
+                MppRouteConfig.Option selected = entry.findOptionByToken(echoed.currency());
+                if (selected == null || echoed.amount() == null || !echoed.amount().matches("[0-9]+")
+                        || !selected.price().equals(new java.math.BigInteger(echoed.amount()))) {
+                    throw new IllegalArgumentException("credential amount does not match current route");
+                }
+                return echoed;
             } catch (RuntimeException e) {
                 throw new IllegalArgumentException(
                     "malformed SessionRequest inside echoed challenge: " + e.getMessage(), e);

@@ -59,14 +59,14 @@ with either:
 
 ## Quick start — Charge
 
-Use upstream `MppCharge<C>` extractor + `WithReceipt<T>` response wrapper + our
+Use SDK `mpp_evm::MppCharge<C>` extractor + `WithReceipt<T>` response wrapper + our
 `EvmChargeChallenger` (`impl ChargeChallenger` for EVM + SA API). Handler
 boilerplate is near zero.
 
 ```rust,no_run
 use axum::{routing::get, Json, Router};
-use mpp::server::axum::{ChargeChallenger, ChargeConfig, MppCharge, WithReceipt};
-use mpp_evm::{EvmChargeChallenger, EvmChargeMethod, OkxSaApiClient};
+use mpp::server::axum::{ChargeConfig, WithReceipt};
+use mpp_evm::{MppCharge, EvmChargeChallenger, EvmChargeMethod, OkxSaApiClient};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -94,7 +94,7 @@ async fn main() {
         "OK-ACCESS-SECRET".into(),
         "OK-ACCESS-PASSPHRASE".into(),
     ));
-    let challenger: Arc<dyn ChargeChallenger> = Arc::new(
+    let challenger: Arc<EvmChargeChallenger> = Arc::new(
         EvmChargeChallenger::builder(EvmChargeMethod::new(sa), "api.example.com", "HMAC-SECRET")
             .currency("0x74b7F16337b8972027F6196A17a631aC6dE26d22")
             .recipient("0x4b22fdbc399bd422b6fefcbce95f76642ea29df1")
@@ -425,6 +425,48 @@ Sandbox tests require: `MPP_SA_SANDBOX_URL / _KEY / _SECRET / _PASSPHRASE`.
 
 - mpp-rs upstream — https://github.com/tempoxyz/mpp-rs (v0.10)
 - mpp-specs — https://github.com/okx/mpp-specs
+
+## Route amount and currency verification migration
+
+Use `mpp_evm::MppCharge<C>` and `Arc<EvmChargeChallenger>` state. The upstream
+`mpp::server::axum::MppCharge<C>` cannot pass the route price into verification;
+its legacy unscoped `verify_payment` path now fails closed.
+
+Manual charge handlers call `verify_payment_for_amount(auth, server_amount)`.
+The challenger also checks the credential currency against its configured token;
+this method's arguments do not change.
+`EvmMpp::verify_charge` and `verify_session` take
+`(auth, server_amount, server_currency)`. The amount is in base units and the
+currency is the EVM token contract address (casing differences are accepted).
+The payment-router supplies both from its matched `MppRouteConfig`; applications
+using that adapter need no call-site changes. Direct facade callers must supply
+the currency as the third argument. Never derive expected values from the buyer
+credential.
+
+Only the route amount/currency comparison is added. Credentials, HMAC/expiry, SA calls,
+session channel storage, accounting and receipt processing retain their existing
+formats and behavior. This check does not bind the session channel's token to the
+route; that is a separate change requiring channel-state migration.
+
+### Local HTTP regression test
+
+From the `rust` workspace directory, run:
+
+```bash
+cargo test --locked --offline -p okxweb3-app-payment-router-axum \
+  session_http_amount_currency_regression -- --nocapture
+```
+
+This starts an isolated server on a random loopback port and sends real HTTP
+requests through `PaymentRouterLayer` and `EvmMpp`. It checks amount/token
+mismatches and a forged challenge, including unchanged channel state and zero
+business/SA calls on rejection. Positive controls cover matching tokens, address
+casing, leading-zero amounts, and per-request deduction on voucher reuse.
+
+The channel is seeded with an already-accepted voucher fixture; this test does
+not verify a new ECDSA signature or an on-chain transaction. It requires no
+wallet/API credentials, makes no SA calls, and does not restart an existing
+example server or modify real channels.
 
 ## License
 

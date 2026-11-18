@@ -254,6 +254,29 @@ class MppAdapterWrapTest {
         assertThat(s).contains("description=\"Test\"");
     }
 
+    @Test
+    void management_price_is_selected_by_currency_not_any_other_option() throws Exception {
+        SessionMethodDetails details = new SessionMethodDetails(domain.chainId(), domain.escrowAddress(), null, "0", null);
+        MppRouteConfig.Entry current = new MppRouteConfig.Entry(MppRouteConfig.Kind.SESSION_MANAGE, "demo.realm", null,
+            java.util.List.of(MppRouteConfig.Option.of(BigInteger.valueOf(50000), TOKEN, payeeAddr, details),
+                MppRouteConfig.Option.of(BigInteger.valueOf(100), "0x" + "cd".repeat(20), payeeAddr, details)));
+        Challenge cheap = server.request("demo.realm", Intent.SESSION,
+            new SessionRequest("100", TOKEN, payeeAddr, "request", null, null, null, details));
+        com.okx.payments.mpp.protocol.Credential credential = new com.okx.payments.mpp.protocol.Credential(
+            cheap, mapper.readTree("{\"action\":\"voucher\"}"), null);
+        HttpServletRequest req = mock(HttpServletRequest.class);
+        when(req.getHeader("Authorization")).thenReturn("Payment " + b64j.encode(credential));
+        HttpServletResponse resp = mock(HttpServletResponse.class);
+        StringWriter sw = new StringWriter();
+        when(resp.getWriter()).thenReturn(new PrintWriter(sw));
+        FilterChain chain = mock(FilterChain.class);
+        adapter.handle(req, resp, chain, current);
+        verify(resp).setStatus(400);
+        assertThat(sw.toString()).contains("amount does not match current route");
+        verify(chain, never()).doFilter(any(), any());
+        org.mockito.Mockito.verifyNoInteractions(sa);
+    }
+
     private byte[] signVoucher(BigInteger cum) {
         byte[] digest = Eip712Hashing.digest(
             Eip712Hashing.domainSeparator(domain),

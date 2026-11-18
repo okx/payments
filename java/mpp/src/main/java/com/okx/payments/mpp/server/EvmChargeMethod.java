@@ -60,9 +60,7 @@ public final class EvmChargeMethod {
      * Auto-dispatch a charge credential by {@code payload.type}.
      *
      * @param credential decoded {@code Authorization: Payment} body
-     * @param request    decoded {@code Challenge.request} (Base64UrlJson → ChargeRequest);
-     *                   currently unused for dispatch (SA validates) but exposed for parity
-     *                   with Rust signature and future binding-check (C1 guard)
+     * @param request    server-owned request for the current route; its amount is required
      */
     public Receipt.ChargeReceipt verifyCharge(Credential credential, ChargeRequest request) {
         Objects.requireNonNull(credential, "credential");
@@ -77,6 +75,23 @@ public final class EvmChargeMethod {
                 && !challengeBuilder.verifyAlive(credential.challenge())) {
             throw new InvalidChallengeError(
                 "challenge failed HMAC verification or has expired");
+        }
+        if (request == null || credential.challenge() == null) {
+            throw new InvalidChallengeError("expected route amount and challenge are required");
+        }
+        ChargeRequest echoed;
+        try {
+            echoed = new com.okx.payments.mpp.protocol.encoding.Base64UrlJson(mapper)
+                .decode(credential.challenge().request(), ChargeRequest.class);
+        } catch (RuntimeException e) {
+            throw new InvalidChallengeError("invalid echoed charge request");
+        }
+        String expectedAmount = request.amount();
+        String actualAmount = echoed.amount();
+        if (expectedAmount == null || actualAmount == null
+                || !expectedAmount.matches("[0-9]+") || !actualAmount.matches("[0-9]+")
+                || !new java.math.BigInteger(expectedAmount).equals(new java.math.BigInteger(actualAmount))) {
+            throw new InvalidChallengeError("credential amount does not match current route");
         }
         String type = payload.path("type").asText("");
         Object body = mapper.convertValue(credential, java.util.Map.class);

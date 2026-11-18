@@ -38,7 +38,7 @@ func ChargeMiddleware(m *server.Mpp, cfg server.ChargeRouteConfig) gin.HandlerFu
 			return
 		}
 
-		challengeHeader, err := server.ChallengeHeaderFromAuth(authHeader)
+		_, err := server.ChallengeHeaderFromAuth(authHeader)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
 				"error": fmt.Sprintf("invalid Authorization header: %s", err),
@@ -46,7 +46,7 @@ func ChargeMiddleware(m *server.Mpp, cfg server.ChargeRouteConfig) gin.HandlerFu
 			return
 		}
 
-		receipt, err := m.VerifyCredential(c.Request.Context(), challengeHeader, authHeader)
+		receipt, err := m.VerifyCredentialForRoute(c.Request.Context(), cfg, authHeader)
 		if err != nil {
 			c.AbortWithStatusJSON(paymentErrorStatus(err), gin.H{
 				"error": fmt.Sprintf("payment verification failed: %s", err),
@@ -80,7 +80,7 @@ func SessionMiddleware(m *server.Mpp, cfg server.SessionRouteConfig) gin.Handler
 			return
 		}
 
-		challengeHeader, err := server.ChallengeHeaderFromAuth(authHeader)
+		_, err := server.ChallengeHeaderFromAuth(authHeader)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
 				"error": fmt.Sprintf("invalid Authorization header: %s", err),
@@ -88,7 +88,7 @@ func SessionMiddleware(m *server.Mpp, cfg server.SessionRouteConfig) gin.Handler
 			return
 		}
 
-		result, err := m.VerifySession(c.Request.Context(), challengeHeader, authHeader)
+		result, err := m.VerifySessionForRoute(c.Request.Context(), cfg, authHeader)
 		if err != nil {
 			c.AbortWithStatusJSON(paymentErrorStatus(err), gin.H{
 				"error": fmt.Sprintf("session verification failed: %s", err),
