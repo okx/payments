@@ -26,11 +26,14 @@ Target chain: **X Layer (chainId 196)**. ERC-20 tokens with EIP-3009
 ## Install
 
 Published as `okxweb3-app-mpp`; `use` path is `mpp_evm::*`.
+Requires Rust 1.91 or newer. See [CHANGELOG.md](CHANGELOG.md) and the
+[0.2 to 0.3 migration notes](#route-amount-and-currency-verification-migration)
+before upgrading an existing integration.
 
 ```toml
 # Cargo.toml
 [dependencies]
-okxweb3-app-mpp = "0.2"
+okxweb3-app-mpp = "0.3"
 mpp = { version = "0.10", features = ["server", "evm", "tower", "axum"] }
 ```
 
@@ -365,7 +368,7 @@ SA API error codes → RFC 9457 Problem Details (`error::SaApiError::to_problem_
   Merchant drives settle/close lifecycle explicitly via
   `settle_with_authorization()` / `close_with_authorization()`; no idle timer.
 - `challenger` — `EvmChargeChallenger` (`impl mpp::server::axum::ChargeChallenger`) for
-  use with the upstream `MppCharge<C>` extractor.
+  use with the SDK's `mpp_evm::MppCharge<C>` extractor.
 - `store` — `SessionStore` trait + `InMemorySessionStore` default.
   Name intentionally distinct from upstream `tempo::session_method::ChannelStore`
   (different model: we store last-receipt summary, not on-chain channel state).
@@ -427,6 +430,11 @@ Sandbox tests require: `MPP_SA_SANDBOX_URL / _KEY / _SECRET / _PASSPHRASE`.
 - mpp-specs — https://github.com/okx/mpp-specs
 
 ## Route amount and currency verification migration
+
+For a direct dependency, change `okxweb3-app-mpp = "0.2"` to `"0.3"` and use
+Rust 1.91 or newer. Existing `"0.2"` requirements do not select this breaking
+release automatically. Consumers of the unified router should use
+`okxweb3-app-payment-router-axum = "0.4"` together with MPP 0.3.
 
 Use `mpp_evm::MppCharge<C>` and `Arc<EvmChargeChallenger>` state. The upstream
 `mpp::server::axum::MppCharge<C>` cannot pass the route price into verification;

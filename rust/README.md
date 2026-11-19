@@ -33,7 +33,7 @@ okxweb3-app-x402-axum = "0.2"
 
 ```toml
 [dependencies]
-okxweb3-app-mpp = "0.2"
+okxweb3-app-mpp = "0.3"
 ```
 
 **Both protocols** — let HTTP clients pick whichever they support; the
@@ -42,10 +42,13 @@ backend:
 
 ```toml
 [dependencies]
-okxweb3-app-payment-router-axum = "0.2"
+okxweb3-app-payment-router-axum = "0.4"
 ```
 
 See each crate's own README for usage examples.
+MPP 0.3 and payment-router-axum 0.4 require Rust 1.91 or newer. For existing
+integrations, read the [MPP migration notes](mpp/README.md#route-amount-and-currency-verification-migration)
+and [router upgrade notes](payment-router-axum/README.md#upgrading-from-03).
 
 ## Examples
 
