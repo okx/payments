@@ -282,6 +282,15 @@ where
             // the payment flow — verify it, confirm the sub is active, then serve.
             if let Some(support) = &state.subscription {
                 if let Some(app_access) = adapter::extract_app_access_header(&req) {
+                    let context = x402_core::http::RequestContext {
+                        method: method.clone(),
+                        path: path.clone(),
+                        headers: headers_map.clone().unwrap_or_default(),
+                    };
+                    let route_config =
+                        resolve_route_config(&route_config, &context, &state.resolver).await;
+                    // Reuse this exact resolution for authorization and any resulting offer.
+                    let no_resolver = None;
                     // Change-plan route: an APP-Access proof means "show me the
                     // plans I can switch to". Return the candidate plans annotated
                     // with `extra.changeFrom` (current plan dropped).
@@ -291,10 +300,11 @@ where
                             path: path.clone(),
                             headers: headers_map.clone().unwrap_or_default(),
                         };
-                        return match crate::subscription::verify_access(
+                        return match crate::subscription::verify_access_for_change(
                             support,
                             &app_access,
                             crate::subscription::now_unix(),
+                            &route_config.accepts,
                         )
                         .await
                         {
@@ -318,7 +328,7 @@ where
                                     &rc,
                                     &uri_string,
                                     &request_context,
-                                    &state.resolver,
+                                    &no_resolver,
                                 )
                                 .await)
                             }
@@ -333,7 +343,7 @@ where
                                 &route_config,
                                 &uri_string,
                                 &request_context,
-                                &state.resolver,
+                                &no_resolver,
                             )
                             .await),
                         };
@@ -344,6 +354,7 @@ where
                         support,
                         &app_access,
                         crate::subscription::now_unix(),
+                        &route_config.accepts,
                     )
                     .await;
 
@@ -399,7 +410,7 @@ where
                                 &route_config,
                                 &uri_string,
                                 &request_context,
-                                &state.resolver,
+                                &no_resolver,
                                 &reason,
                             )
                             .await)
@@ -956,6 +967,27 @@ fn find_matching_requirements(
         }
     }
     None
+}
+
+/// Resolve the current request's payment fields before authorizing subscription access.
+async fn resolve_route_config(
+    route: &RoutePaymentConfig,
+    context: &x402_core::http::RequestContext,
+    resolver: &Option<PaymentResolverFn>,
+) -> RoutePaymentConfig {
+    let mut resolved = route.clone();
+    if let Some(resolve) = resolver {
+        for (accept, original) in resolved.accepts.iter_mut().zip(&route.accepts) {
+            let value = resolve(context, original).await;
+            accept.scheme = value.scheme;
+            accept.price = value.price;
+            accept.network = value.network;
+            accept.pay_to = value.pay_to;
+            accept.max_timeout_seconds = value.max_timeout_seconds;
+            accept.extra = value.extra;
+        }
+    }
+    resolved
 }
 
 /// Build the `PaymentRequired` (402 offer) from a route config, resolving

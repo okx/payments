@@ -38,6 +38,8 @@ import static org.mockito.Mockito.*;
 class AccessProofHookPeriodTest {
 
     private static final String SUB_ID = "0x" + "ab".repeat(32);
+    private static final String MERCHANT = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    private static final String OTHER_MERCHANT = "0xcccccccccccccccccccccccccccccccccccccccc";
     private static final long PERIOD_SEC = 2_592_000L;
 
     private ECKeyPair keyPair;
@@ -59,6 +61,7 @@ class AccessProofHookPeriodTest {
         StoredSubscription sub = new StoredSubscription();
         sub.subId = SUB_ID;
         sub.payer = payer;
+        sub.merchant = MERCHANT;
         sub.periodSec = PERIOD_SEC;
         sub.periodMode = 0;
         sub.maxPeriods = 12;
@@ -96,6 +99,7 @@ class AccessProofHookPeriodTest {
 
     private static PaymentProcessor.RouteConfig routeAccepting(String... planIds) {
         PaymentProcessor.RouteConfig config = new PaymentProcessor.RouteConfig();
+        config.payTo = MERCHANT;
         config.accepts = new java.util.ArrayList<>();
         for (String planId : planIds) {
             AcceptOption option = AcceptOption.builder()
@@ -265,6 +269,7 @@ class AccessProofHookPeriodTest {
         latest.subId = SUB_ID;
         latest.state = 1;
         latest.payer = payer;
+        latest.merchant = MERCHANT;
         latest.lastChargedPeriod = 1;
         latest.elapsedPeriods = 1;
         latest.startAt = now - 100;
@@ -530,4 +535,94 @@ class AccessProofHookPeriodTest {
         assertEquals(PaymentHooks.ProtectedRequestResult.Decision.ABORT, result.decision);
         assertEquals(SubscriptionErrorCodes.PLAN_MISMATCH, result.reason);
     }
+    @Test
+    void warmSubscriptionCannotAccessAnotherMerchantWithSamePlan() throws Exception {
+        putSub(System.currentTimeMillis() / 1000 - 100, 1);
+        PaymentProcessor.RouteConfig route = routeAccepting("plan_basic");
+        route.payTo = OTHER_MERCHANT;
+        assertMerchantDenied(hook.onProtectedRequest(requestWithProof(), route));
+        verifyNoInteractions(facilitator);
+    }
+
+    @Test
+    void coldSubscriptionCannotAccessAnotherMerchantWithSamePlan() throws Exception {
+        QueryResp detail = paidDetail(MERCHANT);
+        when(facilitator.getSubscription(SUB_ID)).thenReturn(detail);
+        PaymentProcessor.RouteConfig route = routeAccepting("plan_basic");
+        route.payTo = OTHER_MERCHANT;
+        assertMerchantDenied(hook.onProtectedRequest(requestWithProof(), route));
+    }
+
+    @Test
+    void legacyMerchantIsLoadedBeforeGrantingAccess() throws Exception {
+        StoredSubscription sub = putSub(System.currentTimeMillis() / 1000 - 100, 1);
+        sub.merchant = null;
+        store.put(sub);
+        when(facilitator.getSubscription(SUB_ID)).thenReturn(paidDetail(MERCHANT));
+        assertEquals(PaymentHooks.ProtectedRequestResult.Decision.GRANT_ACCESS,
+                hook.onProtectedRequest(requestWithProof(), routeAccepting("plan_basic")).decision);
+        assertEquals(MERCHANT, store.get(SUB_ID).merchant);
+        verify(facilitator).getSubscription(SUB_ID);
+    }
+
+    @Test
+    void legacyMerchantMissingFromDetailFailsClosed() throws Exception {
+        StoredSubscription sub = putSub(System.currentTimeMillis() / 1000 - 100, 1);
+        sub.merchant = null;
+        store.put(sub);
+        when(facilitator.getSubscription(SUB_ID)).thenReturn(paidDetail(null));
+        assertMerchantDenied(hook.onProtectedRequest(requestWithProof(), routeAccepting("plan_basic")));
+    }
+
+    @Test
+    void refreshedMerchantIsCheckedAgainBeforePeriodGrant() throws Exception {
+        putSub(System.currentTimeMillis() / 1000 - PERIOD_SEC - 10, 1);
+        QueryResp detail = paidDetail(OTHER_MERCHANT);
+        detail.lastChargedPeriod = 2;
+        detail.elapsedPeriods = 2;
+        when(facilitator.getSubscription(SUB_ID)).thenReturn(detail);
+        assertMerchantDenied(hook.onProtectedRequest(requestWithProof(), routeAccepting("plan_basic")));
+    }
+
+    @Test
+    void merchantAndPlanMustMatchTheSameAccept() throws Exception {
+        putSub(System.currentTimeMillis() / 1000 - 100, 1);
+        PaymentProcessor.RouteConfig route = routeAccepting("plan_other", "plan_basic");
+        route.accepts.set(1, AcceptOption.builder().scheme("period").payTo(OTHER_MERCHANT)
+                .extra(Map.of("plan", Map.of("id", "plan_basic", "tier", 1))).build());
+        assertMerchantDenied(hook.onProtectedRequest(requestWithProof(), route));
+    }
+
+    @Test
+    void merchantComparisonIgnoresAddressCase() throws Exception {
+        putSub(System.currentTimeMillis() / 1000 - 100, 1);
+        PaymentProcessor.RouteConfig route = routeAccepting("plan_basic");
+        route.payTo = MERCHANT.toUpperCase();
+        assertEquals(PaymentHooks.ProtectedRequestResult.Decision.GRANT_ACCESS,
+                hook.onProtectedRequest(requestWithProof(), route).decision);
+        verifyNoInteractions(facilitator);
+    }
+
+    private QueryResp paidDetail(String merchant) {
+        QueryResp detail = new QueryResp();
+        detail.subId = SUB_ID;
+        detail.payer = payer;
+        detail.merchant = merchant;
+        detail.state = 1;
+        detail.planId = "plan_basic";
+        detail.planTier = 1;
+        detail.startAt = System.currentTimeMillis() / 1000 - 100;
+        detail.billingAnchorAt = detail.startAt;
+        detail.periodSec = PERIOD_SEC;
+        detail.lastChargedPeriod = 1;
+        detail.elapsedPeriods = 1;
+        return detail;
+    }
+
+    private static void assertMerchantDenied(PaymentHooks.ProtectedRequestResult result) {
+        assertEquals(PaymentHooks.ProtectedRequestResult.Decision.ABORT, result.decision);
+        assertEquals(SubscriptionErrorCodes.MERCHANT_MISMATCH, result.reason);
+        assertEquals(PaymentHooks.ProtectedRequestResult.AbortClass.DENIED, result.abortClass);
+    }
+
 }

@@ -332,12 +332,34 @@ pub type OnBeforeAccessHook = Arc<
 
 /// Verify an `APP-Access` AccessProof and confirm the buyer's current period is
 /// charged (via the merchant veto, then the period gate). Returns `(subId,
-/// planId, planTier)` on success, or an [`AccessError`]. Plan-level gating is
-/// applied by the caller.
+/// planId, planTier)` on success, or an [`AccessError`]. Merchant and plan must
+/// match the same current, request-resolved payment option.
 pub async fn verify_access(
     support: &SubscriptionSupport,
     app_access_header: &str,
     now: u64,
+    accepts: &[AcceptConfig],
+) -> Result<(String, String, u8), AccessError> {
+    verify_access_inner(support, app_access_header, now, accepts, true).await
+}
+
+/// Verify ownership and merchant for a change offer. The current plan need not
+/// appear among the target plans, but it must belong to the same merchant.
+pub async fn verify_access_for_change(
+    support: &SubscriptionSupport,
+    app_access_header: &str,
+    now: u64,
+    accepts: &[AcceptConfig],
+) -> Result<(String, String, u8), AccessError> {
+    verify_access_inner(support, app_access_header, now, accepts, false).await
+}
+
+async fn verify_access_inner(
+    support: &SubscriptionSupport,
+    app_access_header: &str,
+    now: u64,
+    accepts: &[AcceptConfig],
+    check_plan: bool,
 ) -> Result<(String, String, u8), AccessError> {
     let verified = verify_access_proof(app_access_header, now, support.access_window_secs)
         .map_err(|e| AccessError::Unauthorized(format!("{e}")))?;
@@ -375,7 +397,9 @@ pub async fn verify_access(
                 // month-end rhythm and mis-count the period.
                 let anchor_known =
                     rec.period_mode != PERIOD_MODE_CALENDAR_MONTH || rec.billing_anchor_at > 0;
-                if fresh && owner_ok && !rec.plan_id.is_empty() && rec.start_at > 0 && anchor_known {
+                if fresh && owner_ok && !rec.merchant.is_empty() && !rec.plan_id.is_empty()
+                    && rec.start_at > 0 && anchor_known
+                {
                     if let Some(lcp) = rec.last_charged_period {
                         let current = elapsed_periods(
                             rec.period_mode,
@@ -385,6 +409,7 @@ pub async fn verify_access(
                             now,
                         );
                         if current > 0 && (lcp as u64) >= current {
+                            check_access_route(&rec.merchant, &rec.plan_id, accepts, check_plan)?;
                             return Ok((verified.sub_id, rec.plan_id, rec.plan_tier));
                         }
                     }
@@ -413,6 +438,8 @@ pub async fn verify_access(
     let (plan_id, plan_tier) =
         record_status(support, &verified.sub_id, &status, &verified.payer, now).await;
 
+    check_access_route(&status.merchant, &plan_id, accepts, check_plan)?;
+
     // Period gate on fresh data.
     if !current_period_charged(&status, now) {
         return Err(AccessError::NotActive(format!(
@@ -421,6 +448,32 @@ pub async fn verify_access(
         )));
     }
     Ok((verified.sub_id, plan_id, plan_tier))
+}
+
+fn access_plan_id(accept: &AcceptConfig) -> Option<&str> {
+    accept.extra.as_ref()?.get("plan")?.get("id")?.as_str()
+}
+
+fn check_access_route(
+    merchant: &str,
+    plan_id: &str,
+    accepts: &[AcceptConfig],
+    check_plan: bool,
+) -> Result<(), AccessError> {
+    let merchant_accepts: Vec<_> = accepts.iter().filter(|a| {
+        is_subscription_scheme(&a.scheme) && !merchant.is_empty()
+            && a.pay_to.eq_ignore_ascii_case(merchant)
+    }).collect();
+    if merchant_accepts.is_empty() {
+        return Err(AccessError::Denied("subscription merchant does not match this resource".into()));
+    }
+    let gated = accepts.iter().any(|a| is_subscription_scheme(&a.scheme) && access_plan_id(a).is_some());
+    if check_plan && gated && !merchant_accepts.iter().any(|a| {
+        access_plan_id(a).map(|id| plan_id_accepted(&[id.to_string()], plan_id)).unwrap_or(false)
+    }) {
+        return Err(AccessError::NotActive("subscription plan is not accepted for this merchant".into()));
+    }
+    Ok(())
 }
 
 /// Write a facilitator [`SubscriptionStatus`] through to the store, preserving a
@@ -465,6 +518,7 @@ async fn record_status(
                 sub_id: sub_id.to_string(),
                 state: status.state,
                 payer,
+                merchant: status.merchant.clone(),
                 plan_id: plan_id.clone(),
                 plan_tier,
                 next_chargeable_at: status.next_chargeable_at,
@@ -773,6 +827,7 @@ pub(crate) async fn settle_subscription(
     let inner = verified.inner;
     // Capture before `inner` is moved into the request builder.
     let payer = inner.terms.payer.clone();
+    let merchant = inner.terms.merchant.clone();
     let plan_id = inner.terms.plan_id.clone();
     let plan_tier = inner.terms.plan_tier;
     // Period params come from the signed terms. `start_at` may be 0 (chain uses
@@ -816,6 +871,7 @@ pub(crate) async fn settle_subscription(
                 sub_id: outcome.sub_id.clone(),
                 state: outcome.state,
                 payer,
+                merchant,
                 plan_id,
                 plan_tier,
                 next_chargeable_at: None,
@@ -873,6 +929,7 @@ mod tests {
             sub_id: "0x1".into(),
             state: 1,
             payer: "0xp".into(),
+            merchant: String::new(),
             plan_id: String::new(),
             plan_tier: 0,
             next_chargeable_at: Some(1_000),
@@ -1161,4 +1218,21 @@ mod tests {
         no_new.new_sub_id = String::new();
         assert!(validate_pending_cancel_auth(&no_new).is_err());
     }
+    #[test]
+    fn access_binds_merchant_and_plan_on_one_option() {
+        let a = offer_accept();
+        let mut b = offer_accept();
+        b.pay_to = "0xOther".into();
+        b.extra.as_mut().unwrap().insert("plan".into(), json!({"id": "enterprise", "tier": 3}));
+        let accepts = vec![a, b];
+        assert!(check_access_route("0xMerchant", "pro_monthly", &accepts, true).is_ok());
+        assert!(check_access_route("0xMERCHANT", "pro_monthly", &accepts, true).is_ok());
+        assert!(check_access_route("0xMerchant", "enterprise", &accepts, true).is_err());
+        assert!(check_access_route("", "pro_monthly", &accepts, true).is_err());
+        assert!(check_access_route("0xMerchant", "pro_monthly", &[], true).is_err());
+        // Change offers can list only target plans, but still require the same merchant.
+        assert!(check_access_route("0xMerchant", "old_plan", &accepts, false).is_ok());
+        assert!(check_access_route("0xUnknown", "old_plan", &accepts, false).is_err());
+    }
+
 }

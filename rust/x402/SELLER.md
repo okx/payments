@@ -11,9 +11,9 @@ x402 is the HTTP 402 Payment Required protocol. It lets you charge for API acces
 
 ```toml
 [dependencies]
-okxweb3-app-x402-core = "0.2"
-okxweb3-app-x402-axum = "0.2"
-okxweb3-app-x402-evm  = "0.2"
+okxweb3-app-x402-core = "0.4"
+okxweb3-app-x402-axum = "0.4"
+okxweb3-app-x402-evm  = "0.4"
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 serde_json = "1"

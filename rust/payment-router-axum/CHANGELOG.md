@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improve MPP payment verification robustness.
 - Update `okxweb3-app-mpp` to 0.3. Upgrade any direct MPP dependency to 0.3 as well.
   See the README upgrade guide before upgrading.
+- Update x402 dependencies to 0.4. Upgrade any direct x402 core, evm, and axum
+  dependencies to 0.4 as well.
 - Require Rust 1.91 or newer.
 
 ## [0.3.0] - 2026-07-03

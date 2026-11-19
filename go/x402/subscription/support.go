@@ -34,6 +34,7 @@ func (e *AccessError) Error() string { return e.Message }
 
 // AccessResult is the outcome of a granted access check.
 type AccessResult struct {
+	Merchant string
 	SubID    string
 	PlanID   string
 	PlanTier uint8
@@ -230,6 +231,7 @@ func (s *SubscriptionSupport) SettleSubscription(ctx context.Context, verified *
 			SubID:      outcome.SubID,
 			State:      outcome.State,
 			Payer:      terms.Payer,
+			Merchant:   terms.Merchant,
 			PlanID:     terms.PlanID,
 			PlanTier:   terms.PlanTier,
 			StartAt:    terms.StartAt,
@@ -352,6 +354,7 @@ func (s *SubscriptionSupport) recordStatus(ctx context.Context, subID string, st
 		SubID:             subID,
 		State:             status.State,
 		Payer:             payer,
+		Merchant:          status.Merchant,
 		PlanID:            planID,
 		PlanTier:          planTier,
 		NextChargeableAt:  status.NextChargeableAt,
@@ -397,6 +400,9 @@ func (s *SubscriptionSupport) VerifyAccess(ctx context.Context, header string, a
 	}
 
 	if r := s.accessCacheHit(ctx, verified, now); r != nil {
+		if !MerchantAccepted(accepts, r.Merchant) {
+			return nil, &AccessError{Kind: AccessDenied, Message: "subscription merchant does not match this resource"}
+		}
 		return r, nil
 	}
 
@@ -409,12 +415,15 @@ func (s *SubscriptionSupport) VerifyAccess(ctx context.Context, header string, a
 	}
 
 	planID, planTier := s.recordStatus(ctx, verified.SubID, status, verified.Payer, now)
+	if !MerchantAccepted(accepts, status.Merchant) {
+		return nil, &AccessError{Kind: AccessDenied, Message: "subscription merchant does not match this resource"}
+	}
 
 	if !CurrentPeriodCharged(status, now) {
 		return nil, &AccessError{Kind: AccessNotActive, Message: fmt.Sprintf("subscription %s current period not charged (lastCharged=%d elapsed=%d)", verified.SubID, status.LastChargedPeriod, status.ElapsedPeriods)}
 	}
 
-	return &AccessResult{SubID: verified.SubID, PlanID: planID, PlanTier: planTier}, nil
+	return &AccessResult{SubID: verified.SubID, Merchant: status.Merchant, PlanID: planID, PlanTier: planTier}, nil
 }
 
 // accessCacheHit returns a granted AccessResult from a fresh, owned, fully-known
@@ -424,7 +433,7 @@ func (s *SubscriptionSupport) accessCacheHit(ctx context.Context, verified *Veri
 		return nil
 	}
 	rec, _ := s.store.Get(ctx, verified.SubID)
-	if rec == nil || rec.LastChargedPeriod == nil {
+	if rec == nil || rec.LastChargedPeriod == nil || rec.Merchant == "" {
 		return nil
 	}
 	fresh := now-int64(rec.UpdatedAt) <= s.accessCacheTTL
@@ -435,7 +444,7 @@ func (s *SubscriptionSupport) accessCacheHit(ctx context.Context, verified *Veri
 	}
 	current := ElapsedPeriods(rec.PeriodMode, int64(rec.StartAt), int64(rec.BillingAnchorAt), int64(rec.PeriodSec), now)
 	if current > 0 && int64(*rec.LastChargedPeriod) >= current {
-		return &AccessResult{SubID: verified.SubID, PlanID: rec.PlanID, PlanTier: rec.PlanTier}
+		return &AccessResult{SubID: verified.SubID, Merchant: rec.Merchant, PlanID: rec.PlanID, PlanTier: rec.PlanTier}
 	}
 	return nil
 }

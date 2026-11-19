@@ -21,7 +21,7 @@ Published as `okxweb3-app-x402-core`; `use` path is `x402_core::*`.
 
 ```toml
 [dependencies]
-okxweb3-app-x402-core = "0.2"
+okxweb3-app-x402-core = "0.4"
 ```
 
 ```rust
@@ -43,6 +43,17 @@ use x402_core::server::X402ResourceServer;
 
 See [`docs.rs`](https://docs.rs/x402-core) (when published) or
 `cargo doc --open -p x402-core` for the full module tree.
+
+## Subscription cache compatibility
+
+When upgrading to 0.4, update any direct x402 core, evm, and axum dependencies
+together; types from 0.3 and 0.4 are not interchangeable.
+
+`SubscriptionRecord` includes the authoritative `merchant`. Custom stores must
+persist this field, and Rust struct literals must initialize it. Existing JSON
+records without it still deserialize, but the axum access flow refreshes them
+from the facilitator before granting access. An unknown merchant cannot
+authorize a resource; do not populate it from the requested route's `pay_to`.
 
 ## License
 

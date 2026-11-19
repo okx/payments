@@ -103,3 +103,15 @@ func TestPlanIDGatingHelpers(t *testing.T) {
 	assert.True(t, PlanIDAccepted(ids, "pro"))
 	assert.False(t, PlanIDAccepted(ids, "enterprise"))
 }
+
+func TestAccessAcceptedBindsMerchantAndPlanOnSameOption(t *testing.T) {
+	a := planAccept("basic", 1, false)
+	b := planAccept("pro", 2, false)
+	b.PayTo = "0xother"
+	accepts := []types.PaymentRequirements{a, b}
+	assert.False(t, AccessAccepted(accepts, &AccessResult{Merchant: "0xmerchant", PlanID: "pro"}))
+	assert.True(t, AccessAccepted(accepts, &AccessResult{Merchant: "0xMERCHANT", PlanID: "basic"}))
+	assert.True(t, AccessAccepted(accepts, &AccessResult{Merchant: "0xother", PlanID: "pro"}))
+	assert.False(t, AccessAccepted(accepts, &AccessResult{PlanID: "pro"}))
+	assert.False(t, AccessAccepted(nil, &AccessResult{Merchant: "0xmerchant", PlanID: "basic"}))
+}

@@ -34,7 +34,8 @@ import {
   type Subscription,
 } from "@okxweb3/app-x402-core/subscription";
 import type { PaymentRequirements } from "@okxweb3/app-x402-core/types";
-import { HTTPFacilitatorClient } from "@okxweb3/app-x402-core/server";
+import { HTTPFacilitatorClient, x402ResourceServer } from "@okxweb3/app-x402-core/server";
+import { x402HTTPResourceServer, type HTTPAdapter } from "@okxweb3/app-x402-core/http";
 
 import { AccessProofVerifier } from "./access-verifier";
 import { PermitSubscriptionScheme } from "./scheme";
@@ -455,7 +456,7 @@ test("verifyAccess: happy + tier ok", async () => {
   await store.put(sub);
   const scheme = makeScheme({ store });
   const proof = await signAccessProof(Math.floor(Date.now() / 1000));
-  const r = await scheme.verifyAccess(proof, { acceptedPlanIds: ["pro_monthly"] });
+  const r = await scheme.verifyAccess(proof, { acceptedPlanIds: ["pro_monthly"], accepts: [makeRequirements()] });
   assert(r.ok, `must allow; got ${JSON.stringify(r)}`);
 });
 
@@ -479,7 +480,7 @@ test("verifyAccess: payer_mismatch when claimed payer != stored sub.payer", asyn
   });
   const scheme = makeScheme({ store });
   const proof = await signAccessProof(Math.floor(Date.now() / 1000));
-  const r = await scheme.verifyAccess(proof, {});
+  const r = await scheme.verifyAccess(proof, { accepts: [makeRequirements()] });
   assert(!r.ok && (r as any).error === "payer_mismatch", "expected payer_mismatch");
 });
 
@@ -516,7 +517,7 @@ test("verifyAccess: planId not in route's acceptedPlanIds → subscription_not_a
 test("verifyAccess: no record → subscription_not_active", async () => {
   const scheme = makeScheme();
   const proof = await signAccessProof(Math.floor(Date.now() / 1000));
-  const r = await scheme.verifyAccess(proof, {});
+  const r = await scheme.verifyAccess(proof, { accepts: [makeRequirements()] });
   assert(!r.ok && (r as any).error === "subscription_not_active", "subscription_not_active");
 });
 
@@ -541,7 +542,7 @@ test("verifyAccess: pre-start (startAt in future) → subscription_not_yet_activ
   });
   const scheme = makeScheme({ store });
   const proof = await signAccessProof(Math.floor(Date.now() / 1000));
-  const r = await scheme.verifyAccess(proof, {});
+  const r = await scheme.verifyAccess(proof, { accepts: [makeRequirements()] });
   assert(
     !r.ok && (r as any).error === "subscription_not_yet_active",
     `expected subscription_not_yet_active; got ${JSON.stringify(r)}`,
@@ -570,7 +571,7 @@ test("verifyAccess: local behind → fetches GET, allows when remote caught up",
   });
   const scheme = makeScheme({ store });
   const proof = await signAccessProof(Math.floor(Date.now() / 1000));
-  const r = await scheme.verifyAccess(proof, {});
+  const r = await scheme.verifyAccess(proof, { accepts: [makeRequirements()] });
   assert(r.ok, `must allow after GET refresh; got ${JSON.stringify(r)}`);
 });
 
@@ -1081,6 +1082,106 @@ test("settleCancel: facilitator code != 0 → success:false", async () => {
   const auth = await signCancelAuth(0, PAYER, SUB_ID, 1_900_000_000);
   const r = await scheme.settleCancel(auth, SUB_ID);
   assert(!r.success, "fail");
+});
+
+// A signed payer proof is authenticated, but access must also belong to this merchant.
+const OTHER_MERCHANT = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+for (const merchant of [MERCHANT, OTHER_MERCHANT, ""]) {
+  test(`verifyAccess: cached merchant ${merchant || "missing"} is bound to current payTo`, async () => {
+    const store = new InMemoryStore();
+    await seedSub(store, { startAt: Math.floor(Date.now() / 1000) - 10,
+      lastChargedPeriod: 1, merchant });
+    const scheme = makeScheme({ store, fetchFn: makeMockFetch({ getSubscription: async () => ({
+      json: { code: 0, data: { subId: SUB_ID, payer: PAYER, merchant: MERCHANT,
+        planId: "pro_monthly", planTier: 2, state: 1, periodMode: 0, periodSec: 3600,
+        startAt: Math.floor(Date.now() / 1000) - 10, elapsedPeriods: 1, lastChargedPeriod: 1 } },
+    }) }) });
+    const proof = await signAccessProof(Math.floor(Date.now() / 1000));
+    const result = await scheme.verifyAccess(proof, {
+      acceptedPlanIds: ["pro_monthly"], accepts: [makeRequirements()],
+    });
+    eq(result.ok, merchant !== OTHER_MERCHANT, "merchant scope (legacy entry refreshes)");
+    if (merchant === OTHER_MERCHANT) eq((result as any).error, "merchant_mismatch", "reason");
+    if (!merchant) eq((await store.get(SUB_ID))?.merchant, MERCHANT, "rehydrated merchant");
+  });
+}
+
+test("verifyAccess: A's paid subscription is rejected for B with the same plan", async () => {
+  const store = new InMemoryStore();
+  await seedSub(store, { startAt: Math.floor(Date.now() / 1000) - 10, lastChargedPeriod: 1 });
+  const scheme = makeScheme({ store });
+  const proof = await signAccessProof(Math.floor(Date.now() / 1000));
+  const r = await scheme.verifyAccess(proof, { acceptedPlanIds: ["pro_monthly"],
+    accepts: [makeRequirements({ payTo: OTHER_MERCHANT })] });
+  assert(!r.ok && r.error === "merchant_mismatch", "B must reject A subscription");
+});
+
+test("verifyAccess: merchant and plan cannot match different options", async () => {
+  const store = new InMemoryStore();
+  await seedSub(store, { startAt: Math.floor(Date.now() / 1000) - 10, lastChargedPeriod: 1 });
+  const scheme = makeScheme({ store });
+  const proof = await signAccessProof(Math.floor(Date.now() / 1000));
+  const r = await scheme.verifyAccess(proof, { acceptedPlanIds: ["basic", "pro_monthly"],
+    accepts: [makeRequirements({ extra: makeExtra({ plan: { id: "basic", tier: 1 } }) }),
+      makeRequirements({ payTo: OTHER_MERCHANT })] });
+  assert(!r.ok, "split matches must not grant");
+});
+
+test("verifyAccess: missing current route requirements fails closed", async () => {
+  const store = new InMemoryStore();
+  await seedSub(store, { startAt: Math.floor(Date.now() / 1000) - 10, lastChargedPeriod: 1 });
+  const r = await makeScheme({ store }).verifyAccess(
+    await signAccessProof(Math.floor(Date.now() / 1000)), { acceptedPlanIds: ["pro_monthly"] });
+  assert(!r.ok && r.error === "merchant_mismatch", "route merchant is mandatory");
+});
+
+for (const phase of ["legacy", "period-refresh"]) {
+  for (const merchant of [OTHER_MERCHANT, ""]) {
+    test(`verifyAccess: ${phase} authoritative merchant ${merchant || "missing"} cannot grant`, async () => {
+      const store = new InMemoryStore();
+      await seedSub(store, { startAt: Math.floor(Date.now() / 1000) - 100,
+        periodSec: 60, lastChargedPeriod: 1, merchant: phase === "legacy" ? "" : MERCHANT });
+      const scheme = makeScheme({ store, fetchFn: makeMockFetch({ getSubscription: async () => ({
+        json: { code: 0, data: { subId: SUB_ID, payer: PAYER, merchant,
+          planId: "pro_monthly", planTier: 2, state: 1, periodMode: 0, periodSec: 60,
+          startAt: Math.floor(Date.now() / 1000) - 100, elapsedPeriods: 2, lastChargedPeriod: 2 } },
+      }) }) });
+      const r = await scheme.verifyAccess(await signAccessProof(Math.floor(Date.now() / 1000)), {
+        acceptedPlanIds: ["pro_monthly"], accepts: [makeRequirements()],
+      });
+      assert(!r.ok && r.error === "merchant_mismatch", "refreshed merchant must still match");
+    });
+  }
+}
+
+test("HTTP access: resolves current dynamic payTo and passes it to the scheme", async () => {
+  const store = new InMemoryStore();
+  await seedSub(store, { startAt: Math.floor(Date.now() / 1000) - 10, lastChargedPeriod: 1 });
+  const scheme = makeScheme({ store });
+  const facilitator = new HTTPFacilitatorClient({ url: "https://facilitator.test", fetchFn: makeMockFetch({}) });
+  const resource = new x402ResourceServer(facilitator).register("eip155:196", scheme);
+  await resource.initialize();
+  let resolved = 0;
+  const http = new x402HTTPResourceServer(resource, { "GET /content": { accepts: {
+    scheme: "period", network: "eip155:196", price: { asset: TOKEN, amount: "5000000" },
+    payTo: context => { resolved++; return context.adapter.getHeader("x-tenant") === "B" ? OTHER_MERCHANT : MERCHANT; },
+    extra: makeExtra(),
+  } } });
+  const header = encodeAccessProof(await signAccessProof(Math.floor(Date.now() / 1000)));
+  for (const tenant of ["A", "B", "A"]) {
+    const adapter: HTTPAdapter = {
+      getHeader: name => name.toLowerCase() === "app-access" ? header : name === "x-tenant" ? tenant : undefined,
+      getMethod: () => "GET", getPath: () => "/content", getUrl: () => "https://seller.test/content",
+      getAcceptHeader: () => "application/json", getUserAgent: () => "subscription-merchant-unit-test",
+    };
+    const result = await http.processHTTPRequest({ adapter, path: "/content", method: "GET" });
+    if (tenant === "A") eq(result.type, "access-verified", "merchant A keeps access");
+    else {
+      eq(result.type, "payment-error", "merchant B denies access");
+      if (result.type === "payment-error") eq(result.response.status, 402, "status");
+    }
+  }
+  eq(resolved, 3, "dynamic payTo resolves once per request");
 });
 
 // ── unused vars guard for tsconfig strict ─────────────────────────────

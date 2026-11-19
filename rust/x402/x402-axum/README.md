@@ -11,7 +11,7 @@ Published as `okxweb3-app-x402-axum`; `use` path is `x402_axum::*`.
 
 ```toml
 [dependencies]
-okxweb3-app-x402-axum = "0.2"
+okxweb3-app-x402-axum = "0.4"
 ```
 
 ```rust
@@ -20,6 +20,10 @@ use x402_axum::payment_middleware;
 
 `x402-core` and `x402-evm` are pulled in transitively — you don't need
 to depend on them directly unless you're extending the protocol.
+
+When upgrading to 0.4, update any direct x402 core and evm dependencies to 0.4
+as well. Custom subscription stores must follow the
+[subscription cache migration notes](../x402-core/README.md#subscription-cache-compatibility).
 
 ## Quickstart
 

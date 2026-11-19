@@ -1098,7 +1098,7 @@ export class x402HTTPResourceServer {
       if (!opt.network || !opt.scheme) continue;
       const scheme = await this.resolveSubscriptionScheme(opt.network, opt.scheme);
       if (!scheme) continue;
-      const result = await scheme.verifyAccess(proof, { acceptedPlanIds });
+      const result = await scheme.verifyAccess(proof, { acceptedPlanIds, accepts: paymentRequired.accepts });
       if (!result.ok) {
         // 402: PAYMENT-REQUIRED header carries the route's accepts (so buyer
         // can subscribe / change to a satisfying plan); body carries the

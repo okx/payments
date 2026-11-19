@@ -321,6 +321,13 @@ export class PermitSubscriptionScheme implements SchemeNetworkServer, Subscripti
 
     let sub = await this.store.get(proof.subId);
     if (!sub) return { ok: false, error: ErrorCode.SubscriptionNotActive };
+    // Legacy records without merchant cannot authorize a tenant; refresh them first.
+    if (!sub.merchant) {
+      const detail = await this.getDetailOnce(proof.subId);
+      if (!detail?.merchant) return { ok: false, error: ErrorCode.MerchantMismatch };
+      sub = this.subscriptionFromGetResp(detail);
+      await this.store.put(sub);
+    }
 
     if (sub.payer.toLowerCase() !== proof.payer.toLowerCase()) {
       return { ok: false, error: ErrorCode.PayerMismatch };
@@ -329,6 +336,9 @@ export class PermitSubscriptionScheme implements SchemeNetworkServer, Subscripti
       return { ok: false, error: ErrorCode.SubscriptionNotActive };
     }
 
+    if (!this.matchesAccessRoute(sub, route)) {
+      return { ok: false, error: ErrorCode.MerchantMismatch };
+    }
     const now = Math.floor(Date.now() / 1000);
     const currentCalculatePeriod = computeElapsedPeriods(
       sub.periodMode,
@@ -349,11 +359,32 @@ export class PermitSubscriptionScheme implements SchemeNetworkServer, Subscripti
     if (!detail) return { ok: false, error: ErrorCode.SubscriptionNotActive };
     sub = this.subscriptionFromGetResp(detail);
     await this.store.put(sub);
+    // Refreshed data must satisfy the same ownership and route checks as a cache hit.
+    if (sub.payer.toLowerCase() !== proof.payer.toLowerCase()) {
+      return { ok: false, error: ErrorCode.PayerMismatch };
+    }
+    if (route.acceptedPlanIds && !route.acceptedPlanIds.includes(sub.planId)) {
+      return { ok: false, error: ErrorCode.SubscriptionNotActive };
+    }
+    if (!this.matchesAccessRoute(sub, route)) {
+      return { ok: false, error: ErrorCode.MerchantMismatch };
+    }
 
     const remoteElapsed = detail.elapsedPeriods ?? 0;
     if (remoteElapsed === 0) return { ok: false, error: ErrorCode.SubscriptionNotYetActive };
     if (sub.lastChargedPeriod >= remoteElapsed) return { ok: true, subscription: sub };
     return { ok: false, error: ErrorCode.SubscriptionNotActive };
+  }
+
+  private matchesAccessRoute(sub: Subscription, route: AccessRouteRequirements): boolean {
+    if (!sub.merchant) return false;
+    return route.accepts?.some((accept) => {
+      if (accept.scheme !== this.scheme || !accept.payTo ||
+          accept.payTo.toLowerCase() !== sub.merchant.toLowerCase()) return false;
+      const plan = accept.extra?.plan as { id?: string } | undefined;
+      // Match merchant and plan on one option, never across separate accepts.
+      return plan?.id ? plan.id === sub.planId : route.acceptedPlanIds === undefined;
+    }) ?? false;
   }
 
   // ── SubscriptionCapability: getSubscription (chain query) ──────────────
