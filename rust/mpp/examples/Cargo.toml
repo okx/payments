@@ -8,7 +8,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
-mpp-evm = { package = "okxweb3-app-mpp", version = "0.2", path = "..", features = ["handlers"] }
+mpp-evm = { package = "okxweb3-app-mpp", version = "0.3", path = "..", features = ["handlers"] }
 mpp = { version = "0.10", features = ["server", "evm", "tower", "axum"] }
 axum = { workspace = true }
 tokio = { workspace = true }

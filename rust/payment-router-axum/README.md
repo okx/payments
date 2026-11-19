@@ -18,10 +18,11 @@ trait surface and route-matching contract.
 ## Install
 
 Published as `okxweb3-app-payment-router-axum`; `use` path is `payment_router_axum::*`.
+Requires Rust 1.91 or newer.
 
 ```toml
 [dependencies]
-okxweb3-app-payment-router-axum = "0.2"
+okxweb3-app-payment-router-axum = "0.4"
 ```
 
 ```rust
@@ -29,6 +30,15 @@ use payment_router_axum::PaymentRouterLayer;
 ```
 
 `okxweb3-app-mpp`, `okxweb3-app-x402-axum`, `okxweb3-app-x402-core`, and `mpp` are pulled in transitively.
+
+### Upgrading from 0.3
+
+This release depends on MPP 0.3. If the application also directly constructs
+`mpp_evm::EvmMpp` for `MppAdapter::new`, update its dependency to
+`okxweb3-app-mpp = "0.3"`; an MPP 0.2 value cannot be passed to the new adapter.
+`MppRouteConfig` fields and adapter constructor arguments are unchanged.
+Direct calls to the MPP facade must follow the
+[MPP migration notes](../mpp/README.md#route-amount-and-currency-verification-migration).
 
 ## Runnable example
 

@@ -2899,7 +2899,7 @@ dependencies = [
 
 [[package]]
 name = "okxweb3-app-mpp"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "alloy-primitives",
  "alloy-signer",
@@ -2926,7 +2926,7 @@ dependencies = [
 
 [[package]]
 name = "okxweb3-app-payment-router-axum"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "alloy-signer-local",
  "async-trait",
