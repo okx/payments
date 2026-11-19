@@ -9,9 +9,9 @@ license.workspace = true
 publish = false
 
 [dependencies]
-x402-core = { package = "okxweb3-app-x402-core", version = "0.3", path = "../x402-core" }
-x402-axum = { package = "okxweb3-app-x402-axum", version = "0.3", path = "../x402-axum" }
-x402-evm = { package = "okxweb3-app-x402-evm", version = "0.3", path = "../x402-evm" }
+x402-core = { package = "okxweb3-app-x402-core", version = "0.4", path = "../x402-core" }
+x402-axum = { package = "okxweb3-app-x402-axum", version = "0.4", path = "../x402-axum" }
+x402-evm = { package = "okxweb3-app-x402-evm", version = "0.4", path = "../x402-evm" }
 axum = { workspace = true }
 tokio = { workspace = true }
 serde_json = { workspace = true }

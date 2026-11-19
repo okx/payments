@@ -156,6 +156,8 @@ export interface AccessRouteRequirements {
   acceptedPlanIds?: string[];
 
   /**
+   * Required for merchant authorization: pass the current request-resolved
+   * requirements. Missing accepts fail closed in the built-in scheme.
    * Full `PaymentRequirements` for every plan the route accepts — the same
    * list the seller declared as `RouteConfig.accepts`, resolved to wire
    * format. Each entry carries the plan metadata in `extra.plan`

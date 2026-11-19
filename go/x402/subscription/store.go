@@ -13,6 +13,7 @@ type SubscriptionRecord struct {
 	SubID            string  `json:"subId"`
 	State            uint8   `json:"state"`
 	Payer            string  `json:"payer"`
+	Merchant         string  `json:"merchant,omitempty"`
 	PlanID           string  `json:"planId,omitempty"`
 	PlanTier         uint8   `json:"planTier,omitempty"`
 	NextChargeableAt *uint64 `json:"nextChargeableAt,omitempty"`

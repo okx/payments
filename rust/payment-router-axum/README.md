@@ -40,6 +40,11 @@ This release depends on MPP 0.3. If the application also directly constructs
 Direct calls to the MPP facade must follow the
 [MPP migration notes](../mpp/README.md#route-amount-and-currency-verification-migration).
 
+The x402 dependencies are now 0.4. Update any direct x402 core, evm, and axum
+dependencies to 0.4 as well; types from 0.3 and 0.4 are not interchangeable.
+Custom subscription stores must follow the
+[subscription cache migration notes](../x402/x402-core/README.md#subscription-cache-compatibility).
+
 ## Runnable example
 
 [`examples/dual_protocol_server.rs`](examples/dual_protocol_server.rs) —

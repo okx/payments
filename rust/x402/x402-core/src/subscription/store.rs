@@ -26,6 +26,9 @@ pub struct SubscriptionRecord {
     /// 4 changed / 99 failed).
     pub state: u8,
     pub payer: String,
+    /// Authoritative merchant; old records without it must be refreshed before access.
+    #[serde(default)]
+    pub merchant: String,
     /// Business plan id from `SubscriptionTerms.planId`; empty = unknown. Drives
     /// route-level plan gating on `APP-Access`.
     #[serde(default)]
@@ -132,6 +135,7 @@ mod tests {
             sub_id: sub_id.into(),
             state,
             payer: "0xpayer".into(),
+            merchant: String::new(),
             plan_id: String::new(),
             plan_tier: 0,
             next_chargeable_at: next,

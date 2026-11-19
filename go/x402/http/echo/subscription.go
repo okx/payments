@@ -78,6 +78,10 @@ func handleNormalAccess(c echo.Context, next echo.HandlerFunc, server *x402http.
 		}
 	}
 
+	if !subscription.AccessAccepted(accepts, result) {
+		return write402WithOffer(c, server, accepts, resource, "subscription merchant or plan does not match this resource")
+	}
+
 	return next(c)
 }
 

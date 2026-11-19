@@ -21,7 +21,7 @@ Published as `okxweb3-app-x402-evm`; `use` path is `x402_evm::*`.
 
 ```toml
 [dependencies]
-okxweb3-app-x402-evm = "0.2"
+okxweb3-app-x402-evm = "0.4"
 ```
 
 ```rust

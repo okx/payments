@@ -25,7 +25,7 @@ x402 protocol:
 
 ```toml
 [dependencies]
-okxweb3-app-x402-axum = "0.2"
+okxweb3-app-x402-axum = "0.4"
 ```
 
 **Only MPP** — OKX merchants integrating the Machine Payments Protocol

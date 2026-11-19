@@ -133,6 +133,12 @@ public class AccessProofHook implements PaymentHooks.OnProtectedRequestHook {
             }
         }
 
+        // Old cache entries must recover merchant before they can authorize a resource.
+        if (sub.merchant == null || sub.merchant.isEmpty()) {
+            QueryResp latest = fetchDetail(proof.subId);
+            if (latest != null) refreshStore(sub, latest);
+        }
+
         // Plan gate: buyer's planId must be one of the route's accepted plans. A miss falls
         // through as abort → the processor answers 402 + PAYMENT-REQUIRED with this error code,
         // prompting the buyer to (re)subscribe or /changePlan.
@@ -154,18 +160,24 @@ public class AccessProofHook implements PaymentHooks.OnProtectedRequestHook {
             }
         }
 
+        if (!matchesRoute(sub, config)) {
+            return PaymentHooks.ProtectedRequestResult.abort(SubscriptionErrorCodes.MERCHANT_MISMATCH,
+                    PaymentHooks.ProtectedRequestResult.AbortClass.DENIED);
+        }
+
         // A store row whose payer is unknown or stale is NOT a hard deny —
         // it merely disqualifies the local fast path. The slow path re-checks ownership against
         // the authoritative detail (and skips only when the backend omits payer). Computed after
         // the plan-gate refresh so a just-backfilled payer counts.
         boolean ownerOk = sub.payer != null && sub.payer.equalsIgnoreCase(proof.payer);
 
-        return judgePeriod(sub, proof, ownerOk);
+        return judgePeriod(sub, proof, ownerOk, config);
     }
 
     private PaymentHooks.ProtectedRequestResult judgePeriod(StoredSubscription sub,
                                                             AccessProof proof,
-                                                            boolean ownerOk) {
+                                                            boolean ownerOk,
+                                                            PaymentProcessor.RouteConfig config) {
         long now = System.currentTimeMillis() / 1000;
 
         // Local fast path preconditions:
@@ -216,6 +228,11 @@ public class AccessProofHook implements PaymentHooks.OnProtectedRequestHook {
                     PaymentHooks.ProtectedRequestResult.AbortClass.UNAUTHORIZED);
         }
 
+        if (!matchesRoute(sub, config)) {
+            return PaymentHooks.ProtectedRequestResult.abort(SubscriptionErrorCodes.MERCHANT_MISMATCH,
+                    PaymentHooks.ProtectedRequestResult.AbortClass.DENIED);
+        }
+
         // Shared judgment with the settle poller: prefers the backend's elapsedPeriods and
         // falls back to local period math when an older backend omits it — an omitted
         // elapsedPeriods must never deny a paid subscriber.
@@ -264,6 +281,28 @@ public class AccessProofHook implements PaymentHooks.OnProtectedRequestHook {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    private static boolean matchesRoute(StoredSubscription sub, PaymentProcessor.RouteConfig config) {
+        if (config == null || sub.merchant == null || sub.merchant.isEmpty()) return false;
+        if (config.accepts == null || config.accepts.isEmpty()) {
+            return isSubscription(config.scheme) && config.payTo != null
+                    && config.payTo.equalsIgnoreCase(sub.merchant);
+        }
+        boolean gated = !acceptedPlanIds(config).isEmpty();
+        for (AcceptOption option : config.accepts) {
+            String scheme = option.scheme != null ? option.scheme : config.scheme;
+            String merchant = option.payTo != null ? option.payTo : config.payTo;
+            if (!isSubscription(scheme) || merchant == null || !merchant.equalsIgnoreCase(sub.merchant)) continue;
+            if (!gated) return true;
+            Object plan = option.extra == null ? null : option.extra.get("plan");
+            if (plan instanceof Map<?, ?> fields && Objects.equals(fields.get("id"), sub.planId)) return true;
+        }
+        return false;
+    }
+
+    private static boolean isSubscription(String scheme) {
+        return "period".equals(scheme) || "permit2_subscription".equals(scheme);
     }
 
     private static Set<String> acceptedPlanIds(PaymentProcessor.RouteConfig config) {

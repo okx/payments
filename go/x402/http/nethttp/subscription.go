@@ -86,6 +86,11 @@ func handleNormalAccess(w http.ResponseWriter, r *http.Request, next http.Handle
 		}
 	}
 
+	if !subscription.AccessAccepted(accepts, result) {
+		write402WithOffer(w, server, accepts, resource, "subscription merchant or plan does not match this resource")
+		return
+	}
+
 	next.ServeHTTP(w, r)
 }
 

@@ -109,6 +109,19 @@ app.post("/summarize", (req, res) => {
 
 Client (and facilitator) wire up the same way as Exact, using `UptoEvmScheme` from `@okxweb3/app-x402-evm/upto/client` and `/upto/facilitator`.
 
+## Subscription access authorization
+
+The built-in HTTP server passes the current request's resolved `accepts` to
+`PermitSubscriptionScheme.verifyAccess`. The subscription's authoritative
+`merchant` must match that option's `payTo`, and its plan must match the same
+option. This also applies when `payTo` is resolved dynamically.
+
+If calling `verifyAccess` directly, supply `route.accepts` with the trusted,
+request-resolved payment requirements. Passing only `acceptedPlanIds` no longer
+authorizes access. Old cache entries without `merchant` are refreshed from the
+facilitator; access is denied if the merchant remains unknown. Custom stores
+must retain the authoritative merchant when persisting subscriptions.
+
 ## Asset Transfer Method
 
 Tokens on X Layer use **EIP-3009** (`transferWithAuthorization`) by default, which provides gasless, single-signature token transfers. The default stablecoin is USDT0.

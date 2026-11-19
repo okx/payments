@@ -176,7 +176,7 @@ func TestVerifyAccessGrantsChargedSubscription(t *testing.T) {
 
 	fake := &fakeFacilitator{
 		statuses: map[string]*SubscriptionStatus{
-			subID: {SubID: subID, State: StateActive, Payer: payer, PlanID: "pro", PlanTier: 2, ElapsedPeriods: 1, LastChargedPeriod: 1, StartAt: 1000, PeriodSec: 100},
+			subID: {SubID: subID, State: StateActive, Payer: payer, Merchant: "0xmerchant", PlanID: "pro", PlanTier: 2, ElapsedPeriods: 1, LastChargedPeriod: 1, StartAt: 1000, PeriodSec: 100},
 		},
 	}
 	support := NewSupport(fake, AccessWindowSecs).WithStore(NewInMemoryStore())
@@ -195,7 +195,7 @@ func TestVerifyAccessNotActiveWhenUnpaid(t *testing.T) {
 
 	fake := &fakeFacilitator{
 		statuses: map[string]*SubscriptionStatus{
-			subID: {SubID: subID, State: StateActive, Payer: payer, PlanID: "pro", PlanTier: 2, ElapsedPeriods: 3, LastChargedPeriod: 1, StartAt: 1000, PeriodSec: 100},
+			subID: {SubID: subID, State: StateActive, Payer: payer, Merchant: "0xmerchant", PlanID: "pro", PlanTier: 2, ElapsedPeriods: 3, LastChargedPeriod: 1, StartAt: 1000, PeriodSec: 100},
 		},
 	}
 	support := NewSupport(fake, AccessWindowSecs)
@@ -376,14 +376,14 @@ func TestVerifyAccessCacheFastPathSkipsFacilitator(t *testing.T) {
 	lcp := uint32(3)
 	store := NewInMemoryStore()
 	require.NoError(t, store.Put(context.Background(), &SubscriptionRecord{
-		SubID: subID, State: StateActive, Payer: payer, PlanID: "pro", PlanTier: 2,
+		SubID: subID, State: StateActive, Payer: payer, Merchant: "0xmerchant", PlanID: "pro", PlanTier: 2,
 		StartAt: startAt, PeriodSec: 100, PeriodMode: PeriodModeFixed,
 		LastChargedPeriod: &lcp, UpdatedAt: uint64(now),
 	}))
 	fake := &fakeFacilitator{}
 	support := NewSupport(fake, AccessWindowSecs).WithStore(store)
 
-	result, aerr := support.VerifyAccess(context.Background(), accessHeader(t, proof), nil, now)
+	result, aerr := support.VerifyAccess(context.Background(), accessHeader(t, proof), []types.PaymentRequirements{planAccept("pro", 2, true)}, now)
 	require.Nil(t, aerr)
 	require.NotNil(t, result)
 	assert.Equal(t, "pro", result.PlanID)
@@ -399,16 +399,16 @@ func TestVerifyAccessCacheMissWhenStale(t *testing.T) {
 	lcp := uint32(3)
 	store := NewInMemoryStore()
 	require.NoError(t, store.Put(context.Background(), &SubscriptionRecord{
-		SubID: subID, State: StateActive, Payer: payer, PlanID: "pro", PlanTier: 2,
+		SubID: subID, State: StateActive, Payer: payer, Merchant: "0xmerchant", PlanID: "pro", PlanTier: 2,
 		StartAt: startAt, PeriodSec: 100, PeriodMode: PeriodModeFixed,
 		LastChargedPeriod: &lcp, UpdatedAt: uint64(now) - 1000, // older than the 30s TTL
 	}))
 	fake := &fakeFacilitator{statuses: map[string]*SubscriptionStatus{
-		subID: {SubID: subID, State: StateActive, Payer: payer, PlanID: "pro", PlanTier: 2, ElapsedPeriods: 3, LastChargedPeriod: 3, StartAt: startAt, PeriodSec: 100},
+		subID: {SubID: subID, State: StateActive, Payer: payer, Merchant: "0xmerchant", PlanID: "pro", PlanTier: 2, ElapsedPeriods: 3, LastChargedPeriod: 3, StartAt: startAt, PeriodSec: 100},
 	}}
 	support := NewSupport(fake, AccessWindowSecs).WithStore(store)
 
-	result, aerr := support.VerifyAccess(context.Background(), accessHeader(t, proof), nil, now)
+	result, aerr := support.VerifyAccess(context.Background(), accessHeader(t, proof), []types.PaymentRequirements{planAccept("pro", 2, true)}, now)
 	require.Nil(t, aerr)
 	require.NotNil(t, result)
 	assert.NotEmpty(t, fake.getCalls, "a stale cache record must fall through to the facilitator")
@@ -447,4 +447,53 @@ func TestVerifyTermsMatchOfferAcceptsJSONRoundTrippedOffer(t *testing.T) {
 
 	terms := honestTerms()
 	assert.NoError(t, support.VerifyTermsMatchOffer(&terms, []types.PaymentRequirements{decoded}, "0xtok"))
+}
+
+// A valid payer signature and a paid period do not authorize another merchant.
+func TestVerifyAccessMerchantBinding(t *testing.T) {
+	for _, cache := range []string{"cold", "warm", "legacy"} {
+		for _, remoteMerchant := range []string{"0xmerchant", "0xother", ""} {
+			t.Run(cache+"/"+remoteMerchant, func(t *testing.T) {
+				ctx := context.Background()
+				now := int64(1_700_000_000)
+				subID := "0x" + strings.Repeat("ab", 32)
+				proof, payer := signedProof(t, subID, uint64(now))
+				store := NewInMemoryStore()
+				lcp := uint32(1)
+				if cache != "cold" {
+					merchant := remoteMerchant
+					if cache == "legacy" {
+						merchant = ""
+					}
+					require.NoError(t, store.Put(ctx, &SubscriptionRecord{
+						SubID: subID, State: StateActive, Payer: payer, Merchant: merchant,
+						PlanID: "pro", PlanTier: 2, StartAt: uint64(now) - 10, PeriodSec: 100,
+						LastChargedPeriod: &lcp, UpdatedAt: uint64(now),
+					}))
+				}
+				fake := &fakeFacilitator{statuses: map[string]*SubscriptionStatus{
+					subID: {SubID: subID, State: StateActive, Payer: payer, Merchant: remoteMerchant,
+						PlanID: "pro", PlanTier: 2, StartAt: uint64(now) - 10, PeriodSec: 100,
+						ElapsedPeriods: 1, LastChargedPeriod: 1},
+				}}
+				support := NewSupport(fake, AccessWindowSecs).WithStore(store)
+				// Current plan is deliberately absent: VerifyAccess is also used for change offers.
+				accepts := []types.PaymentRequirements{planAccept("target_plan", 3, true)}
+				result, aerr := support.VerifyAccess(ctx, accessHeader(t, proof), accepts, now)
+				if remoteMerchant == "0xmerchant" {
+					require.Nil(t, aerr)
+					require.NotNil(t, result)
+					assert.Equal(t, remoteMerchant, result.Merchant)
+				} else {
+					require.NotNil(t, aerr)
+					assert.Equal(t, AccessDenied, aerr.Kind)
+				}
+				if cache == "warm" && remoteMerchant != "" {
+					assert.Empty(t, fake.getCalls)
+				} else {
+					assert.Len(t, fake.getCalls, 1)
+				}
+			})
+		}
+	}
 }

@@ -1,6 +1,10 @@
 package subscription
 
-import "github.com/okx/payments/go/x402/types"
+import (
+	"strings"
+
+	"github.com/okx/payments/go/x402/types"
+)
 
 // Change direction and effective-at markers written into a change offer's
 // extra.changeFrom.
@@ -96,4 +100,36 @@ func cloneExtra(extra map[string]interface{}) map[string]interface{} {
 		clone[k] = v
 	}
 	return clone
+}
+
+// MerchantAccepted binds an access proof to the current request's resolved merchant.
+// Change-plan routes use this check without requiring the current plan to be a target plan.
+func MerchantAccepted(accepts []types.PaymentRequirements, merchant string) bool {
+	if merchant == "" {
+		return false
+	}
+	for _, accept := range accepts {
+		if accept.Scheme == SchemePeriod && strings.EqualFold(accept.PayTo, merchant) {
+			return true
+		}
+	}
+	return false
+}
+
+// AccessAccepted matches the merchant and plan on the same payment option.
+func AccessAccepted(accepts []types.PaymentRequirements, result *AccessResult) bool {
+	if result == nil || result.Merchant == "" {
+		return false
+	}
+	gated := len(AcceptedPlanIDs(accepts)) > 0
+	for _, accept := range accepts {
+		if accept.Scheme != SchemePeriod || !strings.EqualFold(accept.PayTo, result.Merchant) {
+			continue
+		}
+		id, _ := planFields(accept.Extra)
+		if !gated || (id != "" && id == result.PlanID) {
+			return true
+		}
+	}
+	return false
 }
