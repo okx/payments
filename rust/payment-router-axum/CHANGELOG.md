@@ -1,0 +1,25 @@
+# Changelog
+
+All notable changes to `okxweb3-app-payment-router-axum` are documented in this file.
+
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.4.0] - 2026-11-19
+
+### Changed
+- Improve MPP payment verification robustness.
+- Update `okxweb3-app-mpp` to 0.3. Upgrade any direct MPP dependency to 0.3 as well.
+  See the README upgrade guide before upgrading.
+- Update x402 dependencies to 0.4. Upgrade any direct x402 core, evm, and axum
+  dependencies to 0.4 as well.
+- Require Rust 1.91 or newer.
+
+## [0.3.0] - 2026-07-03
+
+### Changed
+- Track x402 0.3: the x402 adapter compiles `RoutePaymentConfig` with the new `operation` field; bumped `x402-core` / `x402-evm` / `x402-axum` dependencies to `0.3`.
+
+## [0.2.0] - 2026-05-28
+
+First release on crates.io.

@@ -1,0 +1,46 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "okxweb3-app-paymentrouter"
+version = "0.1.0"
+description = "Unified multi-protocol payment middleware for Python web frameworks"
+readme = {content-type = "text/markdown", text = """
+# okxweb3-app-paymentrouter
+
+Dual-protocol payment middleware that routes a single HTTP endpoint to both [x402](https://github.com/coinbase/x402) and [MPP](https://github.com/tempoxyz/pympp) clients. The seller writes one route; the router negotiates which protocol the caller speaks and emits the matching challenge/response headers.
+
+## Install
+
+```bash
+pip install okxweb3-app-paymentrouter[fastapi]
+```
+
+## What it provides
+
+- **`paymentrouter.router`** — request inspector that detects protocol (`x402`/`mpp`) from headers and dispatches to the right adapter.
+- **`paymentrouter.adapter`** — pluggable adapters for `okxweb3-app-x402` and `okxweb3-app-mpp`.
+- **`paymentrouter.fastapi`** — drop-in FastAPI `Depends()` integration.
+
+## Why
+
+Two payment protocols, one URL. Lets you accept payment from any client without forcing a protocol choice or duplicating endpoints. The challenge response carries both `WWW-Authenticate` (MPP) and `payment-required` (x402) headers — the client picks.
+"""}
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+fastapi = [
+    "fastapi>=0.100.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "httpx",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/paymentrouter"]

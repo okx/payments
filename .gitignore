@@ -1,0 +1,35 @@
+.env
+.env.local
+node_modules/
+dist/
+.turbo/
+.next/
+proxy
+.env
+# Python build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+
+**/.DS_Store
+.pnpm-store/
+
+# Agent artifacts
+TASK.md
+.claude/
+skills/
+REVIEW_PROMPT.md
+
+# Design docs / spec drafts (per global rule: never commit)
+specs/
+plans/
+
+# IDE
+.idea/
+.vscode/

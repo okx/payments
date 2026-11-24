@@ -1,0 +1,6 @@
+{
+  "monorepo": {
+    "level": "workspace"
+  },
+  "types": ["application"]
+}

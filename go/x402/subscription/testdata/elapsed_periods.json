@@ -1,0 +1,14 @@
+[
+  {"name": "fixed_at_start", "periodMode": 0, "startAt": 1000000, "billingAnchorAt": 0, "periodSec": 100, "now": 1000000, "expected": 1},
+  {"name": "fixed_mid_first_period", "periodMode": 0, "startAt": 1000000, "billingAnchorAt": 0, "periodSec": 100, "now": 1000099, "expected": 1},
+  {"name": "fixed_second_boundary", "periodMode": 0, "startAt": 1000000, "billingAnchorAt": 0, "periodSec": 100, "now": 1000100, "expected": 2},
+  {"name": "fixed_before_start", "periodMode": 0, "startAt": 1000000, "billingAnchorAt": 0, "periodSec": 100, "now": 999999, "expected": 0},
+  {"name": "fixed_zero_period_sec", "periodMode": 0, "startAt": 1000000, "billingAnchorAt": 0, "periodSec": 0, "now": 1000500, "expected": 0},
+  {"name": "calendar_before_start", "periodMode": 1, "startAt": 1612051200, "billingAnchorAt": 0, "periodSec": 0, "now": 1610712000, "expected": 0},
+  {"name": "calendar_at_start", "periodMode": 1, "startAt": 1612051200, "billingAnchorAt": 0, "periodSec": 0, "now": 1612051200, "expected": 1},
+  {"name": "calendar_jan31_to_feb27", "periodMode": 1, "startAt": 1612051200, "billingAnchorAt": 0, "periodSec": 0, "now": 1614384000, "expected": 1},
+  {"name": "calendar_feb28_boundary_is_next", "periodMode": 1, "startAt": 1612051200, "billingAnchorAt": 0, "periodSec": 0, "now": 1614470400, "expected": 2},
+  {"name": "calendar_mar31", "periodMode": 1, "startAt": 1612051200, "billingAnchorAt": 0, "periodSec": 0, "now": 1617148800, "expected": 3},
+  {"name": "calendar_leap_feb29", "periodMode": 1, "startAt": 1580428800, "billingAnchorAt": 0, "periodSec": 0, "now": 1582934400, "expected": 2},
+  {"name": "calendar_anchor_inherit_aligned", "periodMode": 1, "startAt": 1615809600, "billingAnchorAt": 1610712000, "periodSec": 0, "now": 1618920000, "expected": 2}
+]
